@@ -27,9 +27,9 @@ struct HomeDashboardView: View {
 
                         DashboardPanel(
                             title: "模型连接",
-                            subtitle: "预留 OpenAI 兼容模式，支持 API Key 与 Base URL。"
+                            subtitle: "模型供应商和凭证已经收进原生设置窗口。"
                         ) {
-                            ModelConnectionPanel(appState: appState)
+                            ModelConnectionSummaryCard(appState: appState)
                         }
 
                         DashboardPanel(
@@ -81,7 +81,7 @@ struct HomeDashboardView: View {
                     .foregroundStyle(Color(red: 0.13, green: 0.15, blue: 0.24))
                     .fixedSize(horizontal: false, vertical: true)
 
-                Text("这是首版 macOS 主页原型：左侧边栏负责入口导航，主区同时展示创作概览、最近项目和模型连接，为后续章节编辑器与 AI 工作流预留结构。")
+                Text("这是首版 macOS 主页原型：顶部工具栏只保留系统风格的全局操作与设置入口，左侧边栏负责工作区导航，主区同时展示创作概览、最近项目和模型状态，为后续章节编辑器与 AI 工作流预留结构。")
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: 700, alignment: .leading)
@@ -341,36 +341,6 @@ struct HomeDashboardView: View {
     }
 }
 
-struct ModelWorkspaceView: View {
-    @Bindable var appState: AppState
-
-    var body: some View {
-        ZStack {
-            PageBackground()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    Text("模型连接")
-                        .font(.system(size: 34, weight: .bold, design: .serif))
-
-                    Text("这里先把 OpenAI 兼容接口的关键入口做好：供应商选择、Base URL、API Key 与本地格式校验。下一步就可以接真实网络层和 Keychain。")
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: 760, alignment: .leading)
-
-                    DashboardPanel(
-                        title: "连接配置",
-                        subtitle: "当前先做 UI 与输入结构，不在本阶段落真实联网逻辑。"
-                    ) {
-                        ModelConnectionPanel(appState: appState)
-                    }
-                }
-                .padding(32)
-            }
-        }
-        .navigationTitle("模型连接")
-    }
-}
-
 struct PlaceholderWorkspaceView: View {
     let item: SidebarItem
     @Bindable var appState: AppState
@@ -393,7 +363,7 @@ struct PlaceholderWorkspaceView: View {
                 ) {
                     VStack(alignment: .leading, spacing: 12) {
                         Label("保留当前侧边栏结构，方便后续把页面逐个补齐。", systemImage: "checkmark.circle")
-                        Label("模型连接已能承接 API Key 与 Base URL 输入。", systemImage: "network")
+                        Label("模型连接已收进原生设置窗口，和外观模式一起管理。", systemImage: "gearshape")
                         Label("项目页下一步建议优先接章节编辑器与项目列表。", systemImage: "square.grid.2x2")
                     }
                     .font(.subheadline)
@@ -408,62 +378,42 @@ struct PlaceholderWorkspaceView: View {
     }
 }
 
-struct ModelConnectionPanel: View {
+struct ModelConnectionSummaryCard: View {
     @Bindable var appState: AppState
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Picker("接口类型", selection: $appState.selectedProvider) {
-                ForEach(ModelProvider.allCases) { provider in
-                    Text(provider.title).tag(provider)
-                }
-            }
-            .pickerStyle(.segmented)
+            HStack(spacing: 10) {
+                Image(systemName: appState.connectionStatus.symbolName)
+                    .foregroundStyle(statusColor)
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Base URL")
-                    .font(.subheadline.weight(.semibold))
+                Text(appState.connectionStatus.label)
+                    .font(.headline)
 
-                TextField(
-                    "https://api.openai.com/v1",
-                    text: $appState.baseURL
-                )
-                .textFieldStyle(.roundedBorder)
-            }
+                Spacer()
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("API Key")
-                    .font(.subheadline.weight(.semibold))
-
-                SecureField("sk-...", text: $appState.apiKey)
-                    .textFieldStyle(.roundedBorder)
-            }
-
-            Toggle("启动时自动检查格式", isOn: $appState.autoValidateOnLaunch)
-                .toggleStyle(.switch)
-
-            HStack {
-                Button("验证配置") {
-                    appState.validateConfiguration()
+                SettingsLink {
+                    Label("设置", systemImage: "gearshape")
                 }
                 .buttonStyle(.borderedProminent)
-
-                statusLine
             }
 
-            Text("说明：当前阶段先完成 macOS 原生首页和配置入口，后续再把 Keychain 持久化与真实 API 请求接上。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var statusLine: some View {
-        HStack(spacing: 8) {
-            Image(systemName: appState.connectionStatus.symbolName)
-                .foregroundStyle(statusColor)
+            summaryRow(label: "接口类型", value: appState.selectedProvider.title)
+            summaryRow(
+                label: "Base URL",
+                value: appState.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未填写" : appState.baseURL
+            )
+            summaryRow(
+                label: "API Key",
+                value: appState.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未填写" : "已填写"
+            )
 
             Text(appState.validationMessage)
                 .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Text("跟随 Apple 的原生偏好结构，供应商选择和凭证录入都放在设置窗口，不再占用首页编辑空间。")
+                .font(.caption)
                 .foregroundStyle(.secondary)
         }
     }
@@ -477,6 +427,23 @@ struct ModelConnectionPanel: View {
         case .needsAttention:
             return Color(red: 0.83, green: 0.45, blue: 0.20)
         }
+    }
+
+    @ViewBuilder
+    private func summaryRow(label: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+                .font(.subheadline.weight(.semibold))
+
+            Spacer()
+
+            Text(value)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .padding(.vertical, 2)
     }
 }
 
@@ -581,5 +548,5 @@ struct PageBackground: View {
 }
 
 #Preview {
-    AppRootView()
+    AppRootView(appState: AppState())
 }

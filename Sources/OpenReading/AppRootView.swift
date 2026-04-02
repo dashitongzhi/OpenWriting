@@ -1,8 +1,12 @@
+import Observation
 import SwiftUI
+import AppKit
 
 struct AppRootView: View {
+    @AppStorage("appAppearance") private var appAppearanceRawValue = AppAppearance.system.rawValue
+    @Bindable var appState: AppState
     @State private var selectedItem: SidebarItem? = .home
-    @State private var appState = AppState()
+    @State private var didConfigureWindow = false
 
     var body: some View {
         NavigationSplitView {
@@ -11,6 +15,27 @@ struct AppRootView: View {
             detailContent
         }
         .navigationSplitViewStyle(.balanced)
+        .background {
+            WindowAccessor { window in
+                configureMainWindowIfNeeded(window)
+            }
+        }
+        .toolbar {
+            if #available(macOS 26.0, *) {
+                ToolbarSpacer(.flexible, placement: .primaryAction)
+            }
+
+            ToolbarItem(placement: .primaryAction) {
+                SettingsLink {
+                    Label("设置", systemImage: "gearshape")
+                }
+                .labelStyle(.iconOnly)
+                .help("打开设置")
+            }
+        }
+        .task(id: appAppearanceRawValue) {
+            AppAppearance.apply(selectedAppearance)
+        }
     }
 
     private var sidebar: some View {
@@ -21,10 +46,6 @@ struct AppRootView: View {
 
             Section("创作资源") {
                 sidebarRows([.library, .prompts])
-            }
-
-            Section("系统") {
-                sidebarRows([.models, .settings])
             }
         }
         .navigationTitle("OpenReading")
@@ -48,9 +69,7 @@ struct AppRootView: View {
         switch selectedItem ?? .home {
         case .home:
             HomeDashboardView(appState: appState)
-        case .models:
-            ModelWorkspaceView(appState: appState)
-        case .projects, .outline, .library, .prompts, .settings:
+        case .projects, .outline, .library, .prompts:
             PlaceholderWorkspaceView(item: selectedItem ?? .home, appState: appState)
         }
     }
@@ -82,6 +101,46 @@ struct AppRootView: View {
         .padding(.vertical, 14)
         .background(.regularMaterial)
     }
+
+    private var selectedAppearance: AppAppearance {
+        AppAppearance(rawValue: appAppearanceRawValue) ?? .system
+    }
+    @MainActor
+    private func configureMainWindowIfNeeded(_ window: NSWindow) {
+        guard !didConfigureWindow else { return }
+        didConfigureWindow = true
+
+        window.collectionBehavior.formUnion([.fullScreenPrimary, .fullScreenAllowsTiling])
+        window.isReleasedWhenClosed = false
+
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+    }
+}
+
+private struct WindowAccessor: NSViewRepresentable {
+    let onResolve: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+
+        DispatchQueue.main.async {
+            if let window = view.window {
+                onResolve(window)
+            }
+        }
+
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            if let window = nsView.window {
+                onResolve(window)
+            }
+        }
+    }
 }
 
 enum SidebarItem: String, CaseIterable, Identifiable {
@@ -90,8 +149,6 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case outline
     case library
     case prompts
-    case models
-    case settings
 
     var id: Self { self }
 
@@ -107,10 +164,6 @@ enum SidebarItem: String, CaseIterable, Identifiable {
             return "素材库"
         case .prompts:
             return "提示工作流"
-        case .models:
-            return "模型连接"
-        case .settings:
-            return "应用设置"
         }
     }
 
@@ -126,10 +179,6 @@ enum SidebarItem: String, CaseIterable, Identifiable {
             return "books.vertical"
         case .prompts:
             return "sparkles.rectangle.stack"
-        case .models:
-            return "network"
-        case .settings:
-            return "slider.horizontal.3"
         }
     }
 
@@ -145,10 +194,6 @@ enum SidebarItem: String, CaseIterable, Identifiable {
             return "这里会集中管理人物、地点、组织和世界观素材。"
         case .prompts:
             return "这里会编排设定补完、续写和润色等 AI 工作流。"
-        case .models:
-            return "这里会做供应商切换、凭证管理和连接测试。"
-        case .settings:
-            return "这里会放主题、同步、快捷键和本地存储策略。"
         }
     }
 }

@@ -16,10 +16,11 @@
 | 路径 | 作用 | Git | 备注 |
 | --- | --- | --- | --- |
 | `Package.swift` | Swift Package 清单 | `YES` | 定义 macOS 可执行应用与平台版本 |
-| `Sources/OpenReading/OpenReadingApp.swift` | 应用入口 | `YES` | 配置窗口和 Settings 场景 |
-| `Sources/OpenReading/AppRootView.swift` | 根视图与侧边栏 | `YES` | 使用 `NavigationSplitView` 管理首页和工作区入口 |
+| `Sources/OpenReading/OpenReadingApp.swift` | 应用入口 | `YES` | 持有全局应用状态，配置窗口激活与原生 `Settings` 场景 |
+| `Sources/OpenReading/AppRootView.swift` | 根视图、侧边栏、工具栏与主窗口行为 | `YES` | 管理工作区入口，将设置按钮固定在右上角，并在启动时前置窗口与保留系统原生全屏支持 |
 | `Sources/OpenReading/AppState.swift` | 应用状态与示例数据 | `YES` | 包含模型配置、本地校验和首页展示数据 |
-| `Sources/OpenReading/HomeDashboardView.swift` | 首页与主内容组件 | `YES` | 包含首页、模型连接页、占位工作区和共用卡片 |
+| `Sources/OpenReading/HomeDashboardView.swift` | 首页与主内容组件 | `YES` | 包含首页、模型状态摘要、占位工作区和共用卡片 |
+| `Sources/OpenReading/AppearanceSettingsView.swift` | 设置视图与主题模式定义 | `YES` | 提供跟随系统、浅色、深色三种原生外观模式，并承接模型连接设置 |
 | `.vscode/launch.json` | 调试启动配置 | `YES` | 本地 Swift 调试预设，可随工程共享 |
 | `.gitignore` | Git 忽略规则 | `YES` | 忽略构建产物和本地缓存 |
 | `INDEX.md` | 项目索引文件 | `YES` | 后续每次改动都要同步更新 |
