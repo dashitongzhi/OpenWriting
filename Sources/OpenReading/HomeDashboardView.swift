@@ -586,7 +586,7 @@ struct PageBackground: View {
 }
 
 #Preview {
-    AppRootView(appState: AppState())
+    AppRootView(appState: AppState(), openSettings: {})
 }
 
 private struct HeroMinYPreferenceKey: PreferenceKey {

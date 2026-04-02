@@ -2,18 +2,20 @@ import SwiftUI
 
 @main
 struct OpenReadingApp: App {
-    @State private var appState = AppState()
     @NSApplicationDelegateAdaptor(OpenReadingAppDelegate.self) private var appDelegate
+    private let runtime = AppRuntime.shared
 
     var body: some Scene {
-        WindowGroup {
-            AppRootView(appState: appState)
-        }
-        .defaultSize(width: 1_440, height: 900)
-        .windowToolbarStyle(.unified(showsTitle: false))
-
         Settings {
-            AppearanceSettingsView(appState: appState)
+            EmptyView()
+        }
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("设置...") {
+                    runtime.windowCoordinator.showSettingsWindow()
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
         }
     }
 }
@@ -21,6 +23,14 @@ struct OpenReadingApp: App {
 @MainActor
 final class OpenReadingAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.activate(ignoringOtherApps: true)
+        AppRuntime.shared.windowCoordinator.showMainWindow()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            AppRuntime.shared.windowCoordinator.showMainWindow()
+        }
+
+        return true
     }
 }

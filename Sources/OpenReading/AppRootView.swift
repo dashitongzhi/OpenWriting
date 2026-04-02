@@ -1,67 +1,100 @@
 import Observation
 import SwiftUI
-import AppKit
 
 struct AppRootView: View {
     @AppStorage("appAppearance") private var appAppearanceRawValue = AppAppearance.system.rawValue
     @Bindable var appState: AppState
+    let openSettings: () -> Void
     @State private var selectedItem: SidebarItem? = .home
-    @State private var didConfigureWindow = false
 
     var body: some View {
         NavigationSplitView {
             sidebar
+                .navigationSplitViewColumnWidth(min: 250, ideal: 286, max: 332)
         } detail: {
             detailContent
         }
         .navigationSplitViewStyle(.balanced)
-        .background {
-            WindowAccessor { window in
-                configureMainWindowIfNeeded(window)
-            }
-        }
-        .toolbar {
-            if #available(macOS 26.0, *) {
-                ToolbarSpacer(.flexible, placement: .primaryAction)
-            }
-
-            ToolbarItem(placement: .primaryAction) {
-                SettingsLink {
-                    Label("设置", systemImage: "gearshape")
-                }
-                .labelStyle(.iconOnly)
-                .help("打开设置")
-            }
-        }
-        .toolbarBackground(.hidden, for: .windowToolbar)
         .task(id: appAppearanceRawValue) {
             AppAppearance.apply(selectedAppearance)
         }
     }
 
     private var sidebar: some View {
-        List(selection: $selectedItem) {
-            Section("工作台") {
-                sidebarRows([.home, .projects, .outline])
-            }
+        VStack(spacing: 0) {
+            sidebarTopBar
 
-            Section("创作资源") {
-                sidebarRows([.library, .prompts])
+            List(selection: $selectedItem) {
+                Section {
+                    sidebarRows([.home, .projects, .outline])
+                } header: {
+                    SidebarSectionHeader(title: "工作台")
+                }
+
+                Section {
+                    sidebarRows([.library, .prompts])
+                } header: {
+                    SidebarSectionHeader(title: "创作资源")
+                }
             }
-        }
-        .navigationTitle("OpenReading")
-        .listStyle(.sidebar)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .background(.clear)
+
             sidebarFooter
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(nsColor: .underPageBackgroundColor).opacity(0.94),
+                    Color(nsColor: .windowBackgroundColor)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+    }
+
+    private var sidebarTopBar: some View {
+        HStack {
+            Spacer()
+
+            Button(action: openSettings) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.primary.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            )
+            .help("打开设置")
+        }
+        .padding(.top, 14)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
     }
 
     @ViewBuilder
     private func sidebarRows(_ items: [SidebarItem]) -> some View {
         ForEach(items) { item in
-            Label(item.title, systemImage: item.symbolName)
+            Label {
+                Text(item.title)
+                    .font(.system(size: 17, weight: .semibold))
+            } icon: {
+                Image(systemName: item.symbolName)
+                    .font(.system(size: 18, weight: .medium))
+                    .frame(width: 24)
+            }
                 .tag(item)
-                .padding(.vertical, 3)
+                .padding(.vertical, 8)
+                .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
         }
     }
 
@@ -106,41 +139,17 @@ struct AppRootView: View {
     private var selectedAppearance: AppAppearance {
         AppAppearance(rawValue: appAppearanceRawValue) ?? .system
     }
-    @MainActor
-    private func configureMainWindowIfNeeded(_ window: NSWindow) {
-        guard !didConfigureWindow else { return }
-        didConfigureWindow = true
-
-        window.collectionBehavior.formUnion([.fullScreenPrimary, .fullScreenAllowsTiling])
-        window.isReleasedWhenClosed = false
-
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
-        window.orderFrontRegardless()
-    }
 }
 
-private struct WindowAccessor: NSViewRepresentable {
-    let onResolve: (NSWindow) -> Void
+private struct SidebarSectionHeader: View {
+    let title: String
 
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-
-        DispatchQueue.main.async {
-            if let window = view.window {
-                onResolve(window)
-            }
-        }
-
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async {
-            if let window = nsView.window {
-                onResolve(window)
-            }
-        }
+    var body: some View {
+        Text(title)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .textCase(nil)
+            .padding(.top, 10)
     }
 }
 
