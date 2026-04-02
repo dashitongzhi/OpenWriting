@@ -67,7 +67,6 @@ struct HomeDashboardView: View {
             }
             .coordinateSpace(name: "dashboardScroll")
         }
-        .navigationTitle("首页")
         .onPreferenceChange(HeroMinYPreferenceKey.self) { minY in
             heroMinY = minY
 

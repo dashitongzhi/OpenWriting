@@ -91,16 +91,32 @@ final class MainWindowController: NSWindowController {
         nil
     }
 
+    @objc
+    private func openSettingsWindow() {
+        openSettings()
+    }
+
     private func configureWindow(_ window: NSWindow) {
         window.title = "OpenReading"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
+        window.toolbarStyle = .unified
         window.collectionBehavior.insert(.fullScreenPrimary)
         window.isReleasedWhenClosed = false
         window.isMovableByWindowBackground = true
         window.setFrameAutosaveName("OpenReading.MainWindow")
         window.minSize = NSSize(width: 1_180, height: 760)
         window.center()
+
+        if #available(macOS 11.0, *) {
+            window.titlebarSeparatorStyle = .none
+        }
+
+        let toolbar = NSToolbar(identifier: "OpenReading.MainToolbar")
+        toolbar.displayMode = .iconOnly
+        toolbar.allowsUserCustomization = false
+        toolbar.showsBaselineSeparator = false
+        window.toolbar = toolbar
     }
 }
 

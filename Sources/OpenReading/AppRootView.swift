@@ -10,40 +10,45 @@ struct AppRootView: View {
     var body: some View {
         NavigationSplitView {
             sidebar
-                .navigationSplitViewColumnWidth(min: 250, ideal: 286, max: 332)
+                .navigationSplitViewColumnWidth(min: 220, ideal: 244, max: 266)
         } detail: {
             detailContent
         }
         .navigationSplitViewStyle(.balanced)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button(action: openSettings) {
+                    Image(systemName: "gearshape")
+                }
+                .help("打开设置")
+            }
+        }
+        .toolbarBackground(.hidden, for: .windowToolbar)
         .task(id: appAppearanceRawValue) {
             AppAppearance.apply(selectedAppearance)
         }
     }
 
     private var sidebar: some View {
-        VStack(spacing: 0) {
-            sidebarTopBar
-
-            List(selection: $selectedItem) {
-                Section {
-                    sidebarRows([.home, .projects, .outline])
-                } header: {
-                    SidebarSectionHeader(title: "工作台")
-                }
-
-                Section {
-                    sidebarRows([.library, .prompts])
-                } header: {
-                    SidebarSectionHeader(title: "创作资源")
-                }
+        List(selection: $selectedItem) {
+            Section {
+                sidebarRows([.home, .projects, .outline])
+            } header: {
+                SidebarSectionHeader(title: "工作台")
             }
-            .listStyle(.sidebar)
-            .scrollContentBackground(.hidden)
-            .background(.clear)
 
+            Section {
+                sidebarRows([.library, .prompts])
+            } header: {
+                SidebarSectionHeader(title: "创作资源")
+            }
+        }
+        .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
+        .background(.clear)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             sidebarFooter
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
             LinearGradient(
                 colors: [
@@ -54,31 +59,6 @@ struct AppRootView: View {
                 endPoint: .bottomTrailing
             )
         )
-    }
-
-    private var sidebarTopBar: some View {
-        HStack {
-            Spacer()
-
-            Button(action: openSettings) {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 30, height: 30)
-            }
-            .buttonStyle(.plain)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.primary.opacity(0.08))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-            )
-            .help("打开设置")
-        }
-        .padding(.top, 14)
-        .padding(.horizontal, 16)
-        .padding(.bottom, 8)
     }
 
     @ViewBuilder

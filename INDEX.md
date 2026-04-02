@@ -17,10 +17,10 @@
 | --- | --- | --- | --- |
 | `Package.swift` | Swift Package 清单 | `YES` | 定义 macOS 可执行应用与平台版本 |
 | `Sources/OpenReading/OpenReadingApp.swift` | 应用入口 | `YES` | 启动 AppKit 窗口协调器，并把偏好设置菜单交给原生设置窗口 |
-| `Sources/OpenReading/AppWindowCoordinator.swift` | AppKit 窗口协调器 | `YES` | 直接管理主窗口、设置窗口、标题栏一体化窗口样式、前置聚焦与系统全屏能力 |
-| `Sources/OpenReading/AppRootView.swift` | 根视图、侧边栏与主内容布局 | `YES` | 负责 SwiftUI 内容布局、参考系统相册式侧边栏排布，并在侧边栏顶部提供设置入口 |
+| `Sources/OpenReading/AppWindowCoordinator.swift` | AppKit 窗口协调器 | `YES` | 直接管理主窗口、设置窗口、透明标题栏样式、前置聚焦与系统全屏能力 |
+| `Sources/OpenReading/AppRootView.swift` | 根视图、侧边栏与主内容布局 | `YES` | 负责 SwiftUI 内容布局与更紧凑的系统风格侧边栏，并在每页工具栏右上角提供设置按钮 |
 | `Sources/OpenReading/AppState.swift` | 应用状态与示例数据 | `YES` | 包含模型配置、本地校验和首页展示数据 |
-| `Sources/OpenReading/HomeDashboardView.swift` | 首页与主内容组件 | `YES` | 包含首页、模型状态摘要、顶部主视觉滚动淡出效果、占位工作区和共用卡片 |
+| `Sources/OpenReading/HomeDashboardView.swift` | 首页与主内容组件 | `YES` | 包含首页、模型状态摘要、顶部主视觉滚动淡出效果、占位工作区和共用卡片，并移除主页顶部导航标题 |
 | `Sources/OpenReading/AppearanceSettingsView.swift` | 设置视图与主题模式定义 | `YES` | 提供跟随系统、浅色、深色三种原生外观模式，并承接模型连接设置 |
 | `.vscode/launch.json` | 调试启动配置 | `YES` | 本地 Swift 调试预设，可随工程共享 |
 | `.gitignore` | Git 忽略规则 | `YES` | 忽略构建产物和本地缓存 |
