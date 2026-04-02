@@ -4,7 +4,6 @@ import SwiftUI
 struct AppRootView: View {
     @AppStorage("appAppearance") private var appAppearanceRawValue = AppAppearance.system.rawValue
     @Bindable var appState: AppState
-    let openSettings: () -> Void
     @State private var selectedItem: SidebarItem? = .home
 
     var body: some View {
@@ -15,15 +14,6 @@ struct AppRootView: View {
             detailContent
         }
         .navigationSplitViewStyle(.balanced)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button(action: openSettings) {
-                    Image(systemName: "gearshape")
-                }
-                .help("打开设置")
-            }
-        }
-        .toolbarBackground(.hidden, for: .windowToolbar)
         .task(id: appAppearanceRawValue) {
             AppAppearance.apply(selectedAppearance)
         }

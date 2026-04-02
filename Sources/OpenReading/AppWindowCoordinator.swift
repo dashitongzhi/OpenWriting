@@ -66,14 +66,15 @@ final class AppWindowCoordinator {
 }
 
 @MainActor
-final class MainWindowController: NSWindowController {
+final class MainWindowController: NSWindowController, NSToolbarDelegate {
     private let openSettings: () -> Void
 
     init(appState: AppState, openSettings: @escaping () -> Void) {
         self.openSettings = openSettings
 
-        let rootView = AppRootView(appState: appState, openSettings: openSettings)
+        let rootView = AppRootView(appState: appState)
         let hostingController = NSHostingController(rootView: rootView)
+        _ = hostingController.view
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1_440, height: 900),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -96,6 +97,37 @@ final class MainWindowController: NSWindowController {
         openSettings()
     }
 
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.flexibleSpace, .toggleSidebar, .sidebarDividerTracking, .flexibleSpace, .openSettings]
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.flexibleSpace, .toggleSidebar, .sidebarDividerTracking, .flexibleSpace, .openSettings]
+    }
+
+    func toolbar(
+        _ toolbar: NSToolbar,
+        itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
+        willBeInsertedIntoToolbar flag: Bool
+    ) -> NSToolbarItem? {
+        if itemIdentifier == .sidebarDividerTracking {
+            return makeSidebarTrackingSeparatorItem(itemIdentifier: itemIdentifier)
+        }
+
+        guard itemIdentifier == .openSettings else { return nil }
+
+        let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+        item.label = "设置"
+        item.paletteLabel = "设置"
+        item.toolTip = "打开设置"
+        item.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "打开设置")
+        item.target = self
+        item.action = #selector(openSettingsWindow)
+        item.isBordered = true
+        item.visibilityPriority = .high
+        return item
+    }
+
     private func configureWindow(_ window: NSWindow) {
         window.title = "OpenReading"
         window.titleVisibility = .hidden
@@ -113,10 +145,47 @@ final class MainWindowController: NSWindowController {
         }
 
         let toolbar = NSToolbar(identifier: "OpenReading.MainToolbar")
+        toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = false
         toolbar.showsBaselineSeparator = false
         window.toolbar = toolbar
+    }
+
+    private func makeSidebarTrackingSeparatorItem(itemIdentifier: NSToolbarItem.Identifier) -> NSToolbarItem? {
+        guard
+            let splitView = window?.contentViewController?.view.firstDescendantSplitView,
+            splitView.subviews.count > 1
+        else {
+            return nil
+        }
+
+        return NSTrackingSeparatorToolbarItem(
+            identifier: itemIdentifier,
+            splitView: splitView,
+            dividerIndex: 0
+        )
+    }
+}
+
+private extension NSToolbarItem.Identifier {
+    static let sidebarDividerTracking = NSToolbarItem.Identifier("OpenReading.Toolbar.SidebarDividerTracking")
+    static let openSettings = NSToolbarItem.Identifier("OpenReading.Toolbar.OpenSettings")
+}
+
+private extension NSView {
+    var firstDescendantSplitView: NSSplitView? {
+        if let splitView = self as? NSSplitView {
+            return splitView
+        }
+
+        for subview in subviews {
+            if let splitView = subview.firstDescendantSplitView {
+                return splitView
+            }
+        }
+
+        return nil
     }
 }
 
