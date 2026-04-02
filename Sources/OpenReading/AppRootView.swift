@@ -33,6 +33,7 @@ struct AppRootView: View {
                 .help("打开设置")
             }
         }
+        .toolbarBackground(.hidden, for: .windowToolbar)
         .task(id: appAppearanceRawValue) {
             AppAppearance.apply(selectedAppearance)
         }

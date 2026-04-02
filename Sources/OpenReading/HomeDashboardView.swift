@@ -3,6 +3,8 @@ import SwiftUI
 
 struct HomeDashboardView: View {
     @Bindable var appState: AppState
+    @State private var heroMinY: CGFloat = 0
+    @State private var heroRestingMinY: CGFloat?
 
     private let columns = [
         GridItem(.flexible(minimum: 320), spacing: 20, alignment: .top),
@@ -63,8 +65,20 @@ struct HomeDashboardView: View {
                 }
                 .padding(32)
             }
+            .coordinateSpace(name: "dashboardScroll")
         }
         .navigationTitle("首页")
+        .onPreferenceChange(HeroMinYPreferenceKey.self) { minY in
+            heroMinY = minY
+
+            if let restingMinY = heroRestingMinY {
+                if minY > restingMinY {
+                    heroRestingMinY = minY
+                }
+            } else {
+                heroRestingMinY = minY
+            }
+        }
     }
 
     private var heroSection: some View {
@@ -146,6 +160,30 @@ struct HomeDashboardView: View {
             RoundedRectangle(cornerRadius: 34, style: .continuous)
                 .stroke(Color.white.opacity(0.75), lineWidth: 1)
         )
+        .opacity(heroOpacity)
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: HeroMinYPreferenceKey.self,
+                    value: proxy.frame(in: .named("dashboardScroll")).minY
+                )
+            }
+        }
+    }
+
+    private var heroOpacity: CGFloat {
+        let fadeDistance: CGFloat = 220
+        let travel = heroTravelDistance
+        let progress = min(max(travel / fadeDistance, 0), 1)
+        return 1 - progress
+    }
+
+    private var heroTravelDistance: CGFloat {
+        guard let restingMinY = heroRestingMinY else {
+            return 0
+        }
+
+        return max(0, restingMinY - heroMinY)
     }
 
     private var statusBadge: some View {
@@ -549,4 +587,12 @@ struct PageBackground: View {
 
 #Preview {
     AppRootView(appState: AppState())
+}
+
+private struct HeroMinYPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
 }
