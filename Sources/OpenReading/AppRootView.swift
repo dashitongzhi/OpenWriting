@@ -14,6 +14,12 @@ struct AppRootView: View {
             detailContent
         }
         .navigationSplitViewStyle(.balanced)
+        .modifier(WindowToolbarChromeModifier())
+        .background(
+            WindowChromeRefreshView(
+                refreshToken: selectedItem?.rawValue ?? SidebarItem.home.rawValue
+            )
+        )
         .task(id: appAppearanceRawValue) {
             AppAppearance.apply(selectedAppearance)
         }
@@ -120,6 +126,44 @@ private struct SidebarSectionHeader: View {
             .foregroundStyle(.secondary)
             .textCase(nil)
             .padding(.top, 10)
+    }
+}
+
+private struct WindowToolbarChromeModifier: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content
+                .toolbar(removing: .title)
+                .toolbarBackground(.hidden, for: .windowToolbar)
+        } else {
+            content
+                .toolbarBackground(.hidden, for: .windowToolbar)
+        }
+    }
+}
+
+private struct WindowChromeRefreshView: NSViewRepresentable {
+    let refreshToken: String
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        view.isHidden = true
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        _ = refreshToken
+
+        DispatchQueue.main.async {
+            guard let window = nsView.window else { return }
+            if let controller = window.windowController as? MainWindowController {
+                controller.refreshWindowChromeFromSwiftUI(for: window)
+            } else {
+                MainWindowController.applyWindowChrome(to: window)
+                window.toolbar?.validateVisibleItems()
+            }
+        }
     }
 }
 

@@ -411,7 +411,6 @@ struct PlaceholderWorkspaceView: View {
             .padding(32)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .navigationTitle(item.title)
     }
 }
 

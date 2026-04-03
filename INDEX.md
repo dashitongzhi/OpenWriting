@@ -1,6 +1,6 @@
 # OpenReading Index
 
-最后更新：2026-04-02
+最后更新：2026-04-04
 
 ## 维护规则
 
@@ -17,10 +17,10 @@
 | --- | --- | --- | --- |
 | `Package.swift` | Swift Package 清单 | `YES` | 定义 macOS 可执行应用与平台版本 |
 | `Sources/OpenReading/OpenReadingApp.swift` | 应用入口 | `YES` | 启动 AppKit 窗口协调器，并把偏好设置菜单交给原生设置窗口 |
-| `Sources/OpenReading/AppWindowCoordinator.swift` | AppKit 窗口协调器 | `YES` | 直接管理主窗口、设置窗口、首帧即生效并通过跟踪分隔线贴近侧边栏右上边框的原生工具栏按钮、透明标题栏样式、前置聚焦与系统全屏能力 |
-| `Sources/OpenReading/AppRootView.swift` | 根视图、侧边栏与主内容布局 | `YES` | 负责 SwiftUI 内容布局与更紧凑的系统风格侧边栏，不再承担工具栏按钮挂载 |
+| `Sources/OpenReading/AppWindowCoordinator.swift` | AppKit 窗口协调器 | `YES` | 直接管理主窗口、设置窗口、首帧即生效并通过跟踪分隔线贴近侧边栏右上边框的原生工具栏按钮、透明标题栏样式、透明窗口背景、切页与全屏切换后的窗口 chrome 兜底刷新、工具栏 delegate/配置重挂、前置聚焦与系统全屏能力 |
+| `Sources/OpenReading/AppRootView.swift` | 根视图、侧边栏与主内容布局 | `YES` | 负责 SwiftUI 内容布局、更紧凑的系统风格侧边栏，以及隐藏窗口工具栏标题/背景并在页面切换时请求刷新原生窗口样式 |
 | `Sources/OpenReading/AppState.swift` | 应用状态与示例数据 | `YES` | 包含模型配置、本地校验和首页展示数据 |
-| `Sources/OpenReading/HomeDashboardView.swift` | 首页与主内容组件 | `YES` | 包含首页、模型状态摘要、顶部主视觉滚动淡出效果、占位工作区和共用卡片，并移除主页顶部导航标题 |
+| `Sources/OpenReading/HomeDashboardView.swift` | 首页与主内容组件 | `YES` | 包含首页、模型状态摘要、顶部主视觉滚动淡出效果、占位工作区和共用卡片，并移除各工作区写入标题栏的导航标题 |
 | `Sources/OpenReading/AppearanceSettingsView.swift` | 设置视图与主题模式定义 | `YES` | 提供跟随系统、浅色、深色三种原生外观模式，并承接模型连接设置 |
 | `.vscode/launch.json` | 调试启动配置 | `YES` | 本地 Swift 调试预设，可随工程共享 |
 | `.gitignore` | Git 忽略规则 | `YES` | 忽略构建产物和本地缓存 |

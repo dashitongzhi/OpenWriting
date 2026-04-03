@@ -66,15 +66,18 @@ final class AppWindowCoordinator {
 }
 
 @MainActor
-final class MainWindowController: NSWindowController, NSToolbarDelegate {
+final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindowDelegate {
+    private static let toolbarIdentifier = NSToolbar.Identifier("OpenReading.MainToolbar")
     private let openSettings: () -> Void
 
     init(appState: AppState, openSettings: @escaping () -> Void) {
         self.openSettings = openSettings
 
         let rootView = AppRootView(appState: appState)
-        let hostingController = NSHostingController(rootView: rootView)
+        let hostingController = MainWindowHostingController(rootView: rootView)
         _ = hostingController.view
+        hostingController.view.wantsLayer = true
+        hostingController.view.layer?.backgroundColor = NSColor.clear.cgColor
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1_440, height: 900),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -95,6 +98,21 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
     @objc
     private func openSettingsWindow() {
         openSettings()
+    }
+
+    static func applyWindowChrome(to window: NSWindow) {
+        window.title = ""
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.toolbarStyle = .unified
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.contentView?.wantsLayer = true
+        window.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
+        window.contentView?.superview?.wantsLayer = true
+        window.contentView?.superview?.layer?.backgroundColor = NSColor.clear.cgColor
+        window.toolbar?.displayMode = .iconOnly
+        window.toolbar?.showsBaselineSeparator = false
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -124,15 +142,28 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
         item.target = self
         item.action = #selector(openSettingsWindow)
         item.isBordered = true
-        item.visibilityPriority = .high
+        item.visibilityPriority = .user
         return item
     }
 
+    func windowWillEnterFullScreen(_ notification: Notification) {
+        refreshWindowChrome()
+    }
+
+    func windowDidEnterFullScreen(_ notification: Notification) {
+        refreshWindowChrome()
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        refreshWindowChrome()
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        refreshWindowChrome()
+    }
+
     private func configureWindow(_ window: NSWindow) {
-        window.title = "OpenReading"
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.toolbarStyle = .unified
+        window.delegate = self
         window.collectionBehavior.insert(.fullScreenPrimary)
         window.isReleasedWhenClosed = false
         window.isMovableByWindowBackground = true
@@ -144,12 +175,15 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
             window.titlebarSeparatorStyle = .none
         }
 
-        let toolbar = NSToolbar(identifier: "OpenReading.MainToolbar")
-        toolbar.delegate = self
-        toolbar.displayMode = .iconOnly
-        toolbar.allowsUserCustomization = false
-        toolbar.showsBaselineSeparator = false
-        window.toolbar = toolbar
+        ensureToolbarConfiguration(for: window)
+
+        Self.applyWindowChrome(to: window)
+
+        DispatchQueue.main.async {
+            self.ensureToolbarConfiguration(for: window)
+            Self.applyWindowChrome(to: window)
+            window.toolbar?.validateVisibleItems()
+        }
     }
 
     private func makeSidebarTrackingSeparatorItem(itemIdentifier: NSToolbarItem.Identifier) -> NSToolbarItem? {
@@ -165,6 +199,70 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
             splitView: splitView,
             dividerIndex: 0
         )
+    }
+
+    private func refreshWindowChrome() {
+        guard let window else { return }
+        ensureToolbarConfiguration(for: window)
+        Self.applyWindowChrome(to: window)
+        window.toolbar?.validateVisibleItems()
+    }
+
+    func refreshWindowChromeFromSwiftUI(for window: NSWindow) {
+        ensureToolbarConfiguration(for: window)
+        Self.applyWindowChrome(to: window)
+        window.toolbar?.validateVisibleItems()
+    }
+
+    private func ensureToolbarConfiguration(for window: NSWindow) {
+        let needsToolbarRebuild =
+            window.toolbar == nil ||
+            !(window.toolbar?.items.contains(where: { $0.itemIdentifier == .openSettings }) ?? false)
+
+        let toolbar = needsToolbarRebuild ? makeToolbar() : (window.toolbar ?? makeToolbar())
+        toolbar.delegate = self
+        toolbar.displayMode = .iconOnly
+        toolbar.allowsUserCustomization = false
+        toolbar.autosavesConfiguration = false
+        toolbar.showsBaselineSeparator = false
+
+        if window.toolbar !== toolbar {
+            window.toolbar = toolbar
+        }
+    }
+
+    private func makeToolbar() -> NSToolbar {
+        let toolbar = NSToolbar(identifier: Self.toolbarIdentifier)
+        toolbar.delegate = self
+        toolbar.displayMode = .iconOnly
+        toolbar.allowsUserCustomization = false
+        toolbar.autosavesConfiguration = false
+        toolbar.showsBaselineSeparator = false
+        return toolbar
+    }
+}
+
+@MainActor
+private final class MainWindowHostingController: NSHostingController<AppRootView> {
+    override var title: String? {
+        get { nil }
+        set { super.title = nil }
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        DispatchQueue.main.async { [weak self] in
+            self?.refreshWindowChrome()
+        }
+    }
+
+    private func refreshWindowChrome() {
+        guard let window = view.window else { return }
+        if let controller = window.windowController as? MainWindowController {
+            controller.refreshWindowChromeFromSwiftUI(for: window)
+        } else {
+            MainWindowController.applyWindowChrome(to: window)
+        }
     }
 }
 
