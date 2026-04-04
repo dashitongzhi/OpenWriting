@@ -66,6 +66,10 @@ final class AppState {
         InspirationSignal(title: "章节节奏盘", description: "观察高潮、低潮与信息释放的密度。")
     ]
 
+    var activeProject: NovelProject? {
+        recentProjects.first(where: { $0.title == activeWorkspaceName }) ?? recentProjects.first
+    }
+
     var isConfigurationReady: Bool {
         hasValidBaseURL && !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
