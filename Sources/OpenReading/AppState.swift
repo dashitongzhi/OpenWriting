@@ -10,6 +10,7 @@ final class AppState {
     var autoValidateOnLaunch = true
     var connectionStatus: ConnectionStatus = .idle
     var validationMessage = "填入 API Key 与 Base URL 后即可验证。"
+    let quoteSeed = Int.random(in: 0 ..< Int.max)
 
     let activeWorkspaceName = "雾港纪事"
     let dashboardStats: [DashboardStat] = [

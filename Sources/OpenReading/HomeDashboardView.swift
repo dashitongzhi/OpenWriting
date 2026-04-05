@@ -1,3 +1,4 @@
+import AppKit
 import Observation
 import SwiftUI
 
@@ -6,6 +7,10 @@ struct HomeDashboardView: View {
     @Bindable var appState: AppState
     @State private var heroMinY: CGFloat = 0
     @State private var heroRestingMinY: CGFloat?
+
+    private let contentTopPadding: CGFloat = 18
+    private let contentHorizontalPadding: CGFloat = 32
+    private let contentBottomPadding: CGFloat = 32
 
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
@@ -25,8 +30,11 @@ struct HomeDashboardView: View {
                     topWorkbenchSection
                     bottomWorkbenchSection
                 }
-                .padding(32)
+                .padding(.top, contentTopPadding)
+                .padding(.horizontal, contentHorizontalPadding)
+                .padding(.bottom, contentBottomPadding)
             }
+            .background(TopAnchorBounceLockView())
             .coordinateSpace(name: "dashboardScroll")
         }
         .onPreferenceChange(HeroMinYPreferenceKey.self) { minY in
@@ -524,12 +532,20 @@ struct PlaceholderWorkspaceView: View {
     let item: SidebarItem
     @Bindable var appState: AppState
 
+    private let contentTopPadding: CGFloat = 18
+    private let contentHorizontalPadding: CGFloat = 32
+    private let contentBottomPadding: CGFloat = 32
+
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
     }
 
     private var activeProject: NovelProject? {
         appState.activeProject
+    }
+
+    private var featuredQuote: LiteraryQuote? {
+        LiteraryQuoteLibrary.quote(for: item, seed: appState.quoteSeed)
     }
 
     var body: some View {
@@ -549,7 +565,11 @@ struct PlaceholderWorkspaceView: View {
                                 .foregroundStyle(palette.textSecondary)
                                 .lineSpacing(4)
 
-                            Spacer(minLength: 28)
+                            if let featuredQuote {
+                                writingQuotePanel(featuredQuote)
+                            }
+
+                            Spacer(minLength: 18)
 
                             HStack(spacing: 10) {
                                 PillTag(text: item.title)
@@ -596,9 +616,12 @@ struct PlaceholderWorkspaceView: View {
                         .foregroundStyle(palette.textPrimary)
                     }
                 }
-                .padding(32)
+                .padding(.top, contentTopPadding)
+                .padding(.horizontal, contentHorizontalPadding)
+                .padding(.bottom, contentBottomPadding)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
+            .background(TopAnchorBounceLockView())
         }
     }
 
@@ -616,6 +639,68 @@ struct PlaceholderWorkspaceView: View {
                 ),
                 lineWidth: 1
             )
+    }
+
+    private func writingQuotePanel(_ quote: LiteraryQuote) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Label("写作引句", systemImage: "quote.opening")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(palette.textSecondary)
+
+                Spacer()
+
+                Text("\(LiteraryQuoteLibrary.totalCount) 条名言库")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(palette.coolAccent)
+            }
+
+            ZStack(alignment: .topLeading) {
+                Text("“")
+                    .font(.system(size: 78, weight: .bold, design: .serif))
+                    .foregroundStyle(palette.coolAccent.opacity(palette.isDark ? 0.28 : 0.18))
+                    .offset(x: -4, y: -18)
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(quote.text)
+                        .font(.system(size: 24, weight: .bold, design: .serif))
+                        .foregroundStyle(palette.textPrimary)
+                        .lineSpacing(4)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    HStack(spacing: 8) {
+                        Text(quote.author)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(palette.textPrimary)
+
+                        Text("·")
+                            .foregroundStyle(palette.textSecondary)
+
+                        Text(quote.country)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(palette.textSecondary)
+                    }
+
+                    if !quote.source.isEmpty {
+                        Text(quote.source)
+                            .font(.caption)
+                            .foregroundStyle(palette.textSecondary)
+                            .lineLimit(2)
+                    }
+                }
+                .padding(.leading, 24)
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(palette.panelBase.opacity(palette.isDark ? 0.84 : 0.72))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(palette.stroke, lineWidth: 1)
+        )
     }
 
     private func workspaceContextStrip(for project: NovelProject) -> some View {
@@ -1090,6 +1175,96 @@ private struct DashboardSplitSection<Primary: View, Secondary: View>: View {
                 primary
                 secondary
             }
+        }
+    }
+}
+
+private struct TopAnchorBounceLockView: NSViewRepresentable {
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        view.isHidden = true
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            context.coordinator.attachIfNeeded(from: nsView)
+        }
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.detach()
+    }
+
+    @MainActor
+    final class Coordinator {
+        private weak var scrollView: NSScrollView?
+        private var liveScrollEndObserver: NSObjectProtocol?
+
+        func attachIfNeeded(from view: NSView) {
+            guard let discoveredScrollView = view.enclosingScrollView else { return }
+            guard scrollView !== discoveredScrollView else { return }
+
+            detach()
+            scrollView = discoveredScrollView
+
+            liveScrollEndObserver = NotificationCenter.default.addObserver(
+                forName: NSScrollView.didEndLiveScrollNotification,
+                object: discoveredScrollView,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.snapBackToTopIfNeeded()
+                }
+            }
+        }
+
+        func detach() {
+            if let liveScrollEndObserver {
+                NotificationCenter.default.removeObserver(liveScrollEndObserver)
+            }
+
+            liveScrollEndObserver = nil
+            scrollView = nil
+        }
+
+        private func snapBackToTopIfNeeded() {
+            guard let scrollView, let documentView = scrollView.documentView else { return }
+
+            let clipView = scrollView.contentView
+            let targetTopY = topOriginY(for: scrollView, documentView: documentView)
+            let currentY = clipView.bounds.origin.y
+
+            let needsSnapBack: Bool
+            if documentView.isFlipped {
+                needsSnapBack = currentY < targetTopY - 0.5
+            } else {
+                needsSnapBack = currentY > targetTopY + 0.5
+            }
+
+            guard needsSnapBack else { return }
+
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.22
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                clipView.animator().setBoundsOrigin(NSPoint(x: clipView.bounds.origin.x, y: targetTopY))
+            }
+
+            scrollView.reflectScrolledClipView(clipView)
+        }
+
+        private func topOriginY(for scrollView: NSScrollView, documentView: NSView) -> CGFloat {
+            if documentView.isFlipped {
+                return 0
+            }
+
+            let visibleHeight = scrollView.contentView.bounds.height
+            let documentHeight = documentView.bounds.height
+            return max(0, documentHeight - visibleHeight)
         }
     }
 }
