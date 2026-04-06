@@ -73,7 +73,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     init(appState: AppState, openSettings: @escaping () -> Void) {
         self.openSettings = openSettings
 
-        let rootView = AppRootView(appState: appState)
+        let rootView = AppRootView(appState: appState, openSettings: openSettings)
         let hostingController = MainWindowHostingController(rootView: rootView)
         _ = hostingController.view
         hostingController.view.wantsLayer = true

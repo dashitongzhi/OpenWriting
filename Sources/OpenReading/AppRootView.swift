@@ -4,7 +4,12 @@ import SwiftUI
 struct AppRootView: View {
     @AppStorage("appAppearance") private var appAppearanceRawValue = AppAppearance.system.rawValue
     @Bindable var appState: AppState
-    @State private var selectedItem: SidebarItem? = .home
+    let openSettings: () -> Void
+
+    init(appState: AppState, openSettings: @escaping () -> Void = {}) {
+        self.appState = appState
+        self.openSettings = openSettings
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -17,7 +22,7 @@ struct AppRootView: View {
         .modifier(WindowToolbarChromeModifier())
         .background(
             WindowChromeRefreshView(
-                refreshToken: selectedItem?.rawValue ?? SidebarItem.home.rawValue
+                refreshToken: appState.selectedSidebarItem.rawValue
             )
         )
         .task(id: appAppearanceRawValue) {
@@ -26,7 +31,7 @@ struct AppRootView: View {
     }
 
     private var sidebar: some View {
-        List(selection: $selectedItem) {
+        List(selection: sidebarSelection) {
             Section {
                 sidebarRows([.home, .projects, .outline])
             } header: {
@@ -76,11 +81,11 @@ struct AppRootView: View {
 
     @ViewBuilder
     private var detailContent: some View {
-        switch selectedItem ?? .home {
+        switch appState.selectedSidebarItem {
         case .home:
-            HomeDashboardView(appState: appState)
+            HomeDashboardView(appState: appState, openSettings: openSettings)
         case .projects, .outline, .library, .prompts:
-            PlaceholderWorkspaceView(item: selectedItem ?? .home, appState: appState)
+            PlaceholderWorkspaceView(item: appState.selectedSidebarItem, appState: appState, openSettings: openSettings)
         }
     }
 
@@ -114,6 +119,13 @@ struct AppRootView: View {
 
     private var selectedAppearance: AppAppearance {
         AppAppearance(rawValue: appAppearanceRawValue) ?? .system
+    }
+
+    private var sidebarSelection: Binding<SidebarItem?> {
+        Binding(
+            get: { appState.selectedSidebarItem },
+            set: { appState.selectedSidebarItem = $0 ?? .home }
+        )
     }
 }
 
@@ -209,7 +221,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     var summary: String {
         switch self {
         case .home:
-            return "总览写作进度、模型配置和快速开始入口。"
+            return "总览当前章节、模型配置和快速开始入口。"
         case .projects:
             return "这里会放项目列表、筛选器和最近打开的手稿。"
         case .outline:

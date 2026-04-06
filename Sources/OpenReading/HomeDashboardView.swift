@@ -5,8 +5,10 @@ import SwiftUI
 struct HomeDashboardView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Bindable var appState: AppState
+    let openSettings: () -> Void
     @State private var heroMinY: CGFloat = 0
     @State private var heroRestingMinY: CGFloat?
+    @State private var isNewProjectSheetPresented = false
 
     private let contentTopPadding: CGFloat = 18
     private let contentHorizontalPadding: CGFloat = 32
@@ -19,6 +21,11 @@ struct HomeDashboardView: View {
 
     private var activeProject: NovelProject? {
         appState.activeProject
+    }
+
+    init(appState: AppState, openSettings: @escaping () -> Void = {}) {
+        self.appState = appState
+        self.openSettings = openSettings
     }
 
     var body: some View {
@@ -47,6 +54,11 @@ struct HomeDashboardView: View {
                 }
             } else {
                 heroRestingMinY = minY
+            }
+        }
+        .sheet(isPresented: $isNewProjectSheetPresented) {
+            NewProjectSheet { title in
+                appState.createProject(named: title)
             }
         }
     }
@@ -115,12 +127,12 @@ struct HomeDashboardView: View {
                 .lineSpacing(4)
 
             HStack(spacing: 12) {
-                Button("新建长篇项目") {}
+                Button("新建长篇项目", action: presentNewProjectSheet)
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .tint(palette.coolAccent)
 
-                Button("导入世界观") {}
+                Button("导入世界观", action: openLibraryWorkspace)
                     .buttonStyle(.bordered)
                     .controlSize(.large)
                     .tint(palette.textPrimary.opacity(0.9))
@@ -143,7 +155,10 @@ struct HomeDashboardView: View {
             }
 
             if let activeProject {
-                CurrentProjectSnapshotCard(project: activeProject)
+                CurrentProjectSnapshotCard(
+                    project: activeProject,
+                    action: openProjectsWorkspace
+                )
             }
 
             Text("下一步建议：从首页进入“项目空间”，再把角色卡、章节树和写作面板串成完整流。")
@@ -239,16 +254,20 @@ struct HomeDashboardView: View {
     }
 
     private var statusBadge: some View {
-        HStack(spacing: 8) {
-            Image(systemName: appState.connectionStatus.symbolName)
-            Text(appState.connectionStatus.label)
-                .fontWeight(.semibold)
+        Button(action: openSettings) {
+            HStack(spacing: 8) {
+                Image(systemName: appState.connectionStatus.symbolName)
+                Text(appState.connectionStatus.label)
+                    .fontWeight(.semibold)
+            }
+            .font(.subheadline)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 9)
+            .background(statusBackground, in: Capsule())
+            .foregroundStyle(statusForeground)
         }
-        .font(.subheadline)
-        .padding(.horizontal, 13)
-        .padding(.vertical, 9)
-        .background(statusBackground, in: Capsule())
-        .foregroundStyle(statusForeground)
+        .buttonStyle(.plain)
+        .help("打开设置，检查模型连接")
     }
 
     private var statusBackground: Color {
@@ -323,19 +342,22 @@ struct HomeDashboardView: View {
             QuickActionRow(
                 title: "新建作品骨架",
                 subtitle: "先输入一句 logline，再自动拆出角色、冲突和三幕结构。",
-                symbolName: "wand.and.stars"
+                symbolName: "wand.and.stars",
+                action: presentNewProjectSheet
             )
 
             QuickActionRow(
                 title: "继续上次写作",
                 subtitle: "直接回到最近一次停下的章节和世界观笔记。",
-                symbolName: "arrow.clockwise"
+                symbolName: "arrow.clockwise",
+                action: continueWriting
             )
 
             QuickActionRow(
                 title: "导入设定资料",
                 subtitle: "支持把已有大纲、角色卡和碎片灵感整理进素材库。",
-                symbolName: "square.and.arrow.down"
+                symbolName: "square.and.arrow.down",
+                action: openLibraryWorkspace
             )
         }
     }
@@ -343,60 +365,65 @@ struct HomeDashboardView: View {
     private var recentProjectsSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             ForEach(appState.recentProjects.prefix(2)) { project in
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .firstTextBaseline) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(project.title)
-                                .font(.headline)
-                                .foregroundStyle(palette.textPrimary)
+                Button {
+                    appState.openProjectSpace(for: project.id)
+                } label: {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .firstTextBaseline) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(project.title)
+                                    .font(.headline)
+                                    .foregroundStyle(palette.textPrimary)
 
-                            Text(project.genre)
-                                .font(.caption.weight(.medium))
+                                Text(project.genre)
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(palette.textSecondary)
+                            }
+
+                            Spacer()
+
+                            Text(project.updatedAt)
+                                .font(.caption)
                                 .foregroundStyle(palette.textSecondary)
                         }
 
-                        Spacer()
-
-                        Text(project.updatedAt)
-                            .font(.caption)
+                        Text(project.summary)
+                            .font(.subheadline)
                             .foregroundStyle(palette.textSecondary)
+                            .lineLimit(2)
+                            .lineSpacing(3)
+
+                        HStack(spacing: 10) {
+                            ProjectChapterPill(
+                                label: "当前创作",
+                                value: project.currentChapterSummary
+                            )
+
+                            ProjectChapterPill(
+                                label: "已创作",
+                                value: "\(project.writtenChapters) 章"
+                            )
+                        }
                     }
-
-                    Text(project.summary)
-                        .font(.subheadline)
-                        .foregroundStyle(palette.textSecondary)
-                        .lineLimit(2)
-                        .lineSpacing(3)
-
-                    HStack {
-                        ProgressView(value: project.progress)
-                            .tint(palette.warmAccent)
-
-                        Text("\(Int(project.progress * 100))%")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(palette.textSecondary)
-                    }
-
-                    Text("已规划 \(project.chapters) 章")
-                        .font(.caption)
-                        .foregroundStyle(palette.textSecondary.opacity(0.8))
-                }
-                .padding(18)
-                .background(
-                    GlassPanelBackground(
-                        cornerRadius: 22,
-                        palette: palette,
-                        tint: LinearGradient(
-                            colors: [
-                                palette.warmAccent.opacity(palette.isDark ? 0.14 : 0.09),
-                                .clear
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
+                    .padding(18)
+                    .background(
+                        GlassPanelBackground(
+                            cornerRadius: 22,
+                            palette: palette,
+                            tint: LinearGradient(
+                                colors: [
+                                    palette.warmAccent.opacity(palette.isDark ? 0.14 : 0.09),
+                                    .clear
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
                         )
                     )
-                )
-                .overlay(panelStroke(cornerRadius: 22))
+                    .overlay(panelStroke(cornerRadius: 22))
+                }
+                .buttonStyle(.plain)
+                .help("打开 \(project.title) 并定位到项目空间")
             }
 
             HStack(spacing: 12) {
@@ -417,15 +444,15 @@ struct HomeDashboardView: View {
                     )
 
                     homeMiniMetricCard(
-                        title: "当前进度",
-                        value: "\(Int((activeProject?.progress ?? 0) * 100))%",
-                        detail: "延续当前章节推进"
+                        title: "当前章节",
+                        value: activeProject?.currentChapterLabel ?? "未开始",
+                        detail: activeProject?.currentChapterTitle ?? "等待落笔"
                     )
 
                     homeMiniMetricCard(
-                        title: "最近更新",
-                        value: activeProject?.updatedAt ?? "未记录",
-                        detail: "保持写作节奏"
+                        title: "已创作章节",
+                        value: "\(activeProject?.writtenChapters ?? 0) 章",
+                        detail: "和项目空间保持同步"
                     )
                 }
 
@@ -438,21 +465,21 @@ struct HomeDashboardView: View {
 
                     HStack(spacing: 12) {
                         homeMiniMetricCard(
-                            title: "当前进度",
-                            value: "\(Int((activeProject?.progress ?? 0) * 100))%",
-                            detail: "延续当前章节推进"
+                            title: "当前章节",
+                            value: activeProject?.currentChapterLabel ?? "未开始",
+                            detail: activeProject?.currentChapterTitle ?? "等待落笔"
                         )
 
                         homeMiniMetricCard(
-                            title: "最近更新",
-                            value: activeProject?.updatedAt ?? "未记录",
-                            detail: "保持写作节奏"
+                            title: "已创作章节",
+                            value: "\(activeProject?.writtenChapters ?? 0) 章",
+                            detail: "和项目空间保持同步"
                         )
                     }
                 }
             }
 
-            Text("把首页当作当天写作的起跑线：先看指标，再回到当前项目和章节推进。")
+            Text("把首页当作当天写作的起跑线：先看当前章节，再回到当前项目和项目空间继续推进。")
                 .font(.caption)
                 .foregroundStyle(palette.textSecondary)
                 .lineSpacing(3)
@@ -462,45 +489,61 @@ struct HomeDashboardView: View {
     private var writingPillarsSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             ForEach(appState.writingPillars) { pillar in
-                HStack(alignment: .top, spacing: 14) {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [palette.coolAccent, palette.successAccent],
+                Button {
+                    switch appState.navigationDestination(for: pillar) {
+                    case .projects:
+                        appState.openProjectSpace()
+                    case .outline:
+                        appState.openOutline()
+                    case .prompts:
+                        appState.openPrompts()
+                    case .library:
+                        appState.openLibrary()
+                    case .home:
+                        appState.selectedSidebarItem = .home
+                    }
+                } label: {
+                    HStack(alignment: .top, spacing: 14) {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [palette.coolAccent, palette.successAccent],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 10, height: 36)
+                            .shadow(color: palette.coolAccent.opacity(0.35), radius: 10, y: 4)
+
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(pillar.title)
+                                .font(.headline)
+                                .foregroundStyle(palette.textPrimary)
+
+                            Text(pillar.detail)
+                                .font(.subheadline)
+                                .foregroundStyle(palette.textSecondary)
+                                .lineSpacing(3)
+                        }
+                    }
+                    .padding(16)
+                    .background(
+                        GlassPanelBackground(
+                            cornerRadius: 22,
+                            palette: palette,
+                            tint: LinearGradient(
+                                colors: [
+                                    palette.coolAccent.opacity(palette.isDark ? 0.12 : 0.08),
+                                    .clear
+                                ],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
                         )
-                        .frame(width: 10, height: 36)
-                        .shadow(color: palette.coolAccent.opacity(0.35), radius: 10, y: 4)
-
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(pillar.title)
-                            .font(.headline)
-                            .foregroundStyle(palette.textPrimary)
-
-                        Text(pillar.detail)
-                            .font(.subheadline)
-                            .foregroundStyle(palette.textSecondary)
-                            .lineSpacing(3)
-                    }
-                }
-                .padding(16)
-                .background(
-                    GlassPanelBackground(
-                        cornerRadius: 22,
-                        palette: palette,
-                        tint: LinearGradient(
-                            colors: [
-                                palette.coolAccent.opacity(palette.isDark ? 0.12 : 0.08),
-                                .clear
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
                     )
-                )
-                .overlay(panelStroke(cornerRadius: 22))
+                    .overlay(panelStroke(cornerRadius: 22))
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -570,23 +613,41 @@ struct HomeDashboardView: View {
 
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) {
-                    workflowStepTag(index: "01", title: "项目空间")
+                    Button(action: openProjectsWorkspace) {
+                        workflowStepTag(index: "01", title: "项目空间")
+                    }
+                    .buttonStyle(.plain)
                     Image(systemName: "arrow.right")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(palette.textSecondary)
 
-                    workflowStepTag(index: "02", title: "章节树")
+                    Button(action: openOutlineWorkspace) {
+                        workflowStepTag(index: "02", title: "章节树")
+                    }
+                    .buttonStyle(.plain)
                     Image(systemName: "arrow.right")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(palette.textSecondary)
 
-                    workflowStepTag(index: "03", title: "继续写作")
+                    Button(action: continueWriting) {
+                        workflowStepTag(index: "03", title: "继续写作")
+                    }
+                    .buttonStyle(.plain)
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    workflowStepTag(index: "01", title: "项目空间")
-                    workflowStepTag(index: "02", title: "章节树")
-                    workflowStepTag(index: "03", title: "继续写作")
+                    Button(action: openProjectsWorkspace) {
+                        workflowStepTag(index: "01", title: "项目空间")
+                    }
+                    .buttonStyle(.plain)
+                    Button(action: openOutlineWorkspace) {
+                        workflowStepTag(index: "02", title: "章节树")
+                    }
+                    .buttonStyle(.plain)
+                    Button(action: continueWriting) {
+                        workflowStepTag(index: "03", title: "继续写作")
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
@@ -604,13 +665,19 @@ struct HomeDashboardView: View {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 10) {
                         ForEach(appState.inspirationSignals) { signal in
-                            homeSignalChip(signal.title)
+                            Button(action: openLibraryWorkspace) {
+                                homeSignalChip(signal.title)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
 
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(appState.inspirationSignals) { signal in
-                            homeSignalChip(signal.title)
+                            Button(action: openLibraryWorkspace) {
+                                homeSignalChip(signal.title)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -717,12 +784,33 @@ struct HomeDashboardView: View {
                 lineWidth: 1
             )
     }
+
+    private func presentNewProjectSheet() {
+        isNewProjectSheetPresented = true
+    }
+
+    private func openLibraryWorkspace() {
+        appState.openLibrary()
+    }
+
+    private func openProjectsWorkspace() {
+        appState.openProjectSpace()
+    }
+
+    private func openOutlineWorkspace() {
+        appState.openOutline()
+    }
+
+    private func continueWriting() {
+        appState.continueWriting()
+    }
 }
 
 struct PlaceholderWorkspaceView: View {
     @Environment(\.colorScheme) private var colorScheme
     let item: SidebarItem
     @Bindable var appState: AppState
+    let openSettings: () -> Void
 
     private let contentTopPadding: CGFloat = 18
     private let contentHorizontalPadding: CGFloat = 32
@@ -740,80 +828,86 @@ struct PlaceholderWorkspaceView: View {
         LiteraryQuoteLibrary.quote(for: item, seed: appState.quoteSeed)
     }
 
+    init(item: SidebarItem, appState: AppState, openSettings: @escaping () -> Void = {}) {
+        self.item = item
+        self.appState = appState
+        self.openSettings = openSettings
+    }
+
     var body: some View {
         ZStack {
             PageBackground()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    DashboardSplitSection {
-                        VStack(alignment: .leading, spacing: 18) {
-                            Text(item.title)
-                                .font(.system(size: 42, weight: .bold, design: .serif))
-                                .foregroundStyle(palette.textPrimary)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        DashboardSplitSection {
+                            VStack(alignment: .leading, spacing: 18) {
+                                Text(item.title)
+                                    .font(.system(size: 42, weight: .bold, design: .serif))
+                                    .foregroundStyle(palette.textPrimary)
 
-                            Text(item.summary)
-                                .font(.title3)
-                                .foregroundStyle(palette.textSecondary)
-                                .lineSpacing(4)
+                                Text(item.summary)
+                                    .font(.title3)
+                                    .foregroundStyle(palette.textSecondary)
+                                    .lineSpacing(4)
 
-                            if let featuredQuote {
-                                writingQuotePanel(featuredQuote)
+                                if let featuredQuote {
+                                    writingQuotePanel(featuredQuote)
+                                }
+
+                                Spacer(minLength: 18)
+
+                                HStack(spacing: 10) {
+                                    PillTag(text: item.title)
+                                    PillTag(text: appState.activeWorkspaceName)
+                                }
+
+                                if let activeProject {
+                                    workspaceContextStrip(for: activeProject)
+                                }
                             }
-
-                            Spacer(minLength: 18)
-
-                            HStack(spacing: 10) {
-                                PillTag(text: item.title)
-                                PillTag(text: appState.activeWorkspaceName)
-                            }
-
-                            if let activeProject {
-                                workspaceContextStrip(for: activeProject)
-                            }
-                        }
-                        .padding(30)
-                        .frame(maxWidth: .infinity, minHeight: 370, alignment: .topLeading)
-                        .background(
-                            GlassPanelBackground(
-                                cornerRadius: 32,
-                                palette: palette,
-                                tint: LinearGradient(
-                                    colors: [
-                                        palette.warmAccent.opacity(palette.isDark ? 0.18 : 0.12),
-                                        palette.coolAccent.opacity(palette.isDark ? 0.18 : 0.12),
-                                        .clear
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
+                            .padding(30)
+                            .frame(maxWidth: .infinity, minHeight: 370, alignment: .topLeading)
+                            .background(
+                                GlassPanelBackground(
+                                    cornerRadius: 32,
+                                    palette: palette,
+                                    tint: LinearGradient(
+                                        colors: [
+                                            palette.warmAccent.opacity(palette.isDark ? 0.18 : 0.12),
+                                            palette.coolAccent.opacity(palette.isDark ? 0.18 : 0.12),
+                                            .clear
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
                                 )
                             )
-                        )
-                        .overlay(panelStroke(cornerRadius: 32))
-                    } secondary: {
-                        WorkspaceUtilityCard(appState: appState, item: item)
-                            .frame(minHeight: 260)
-                    }
-
-                    DashboardPanel(
-                        title: "下一步规划",
-                        subtitle: "主页已经先把信息架构立住，下面这些区域可以继续扩展。"
-                    ) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Label("保留当前侧边栏结构，方便后续把页面逐个补齐。", systemImage: "checkmark.circle")
-                            Label("模型连接已收进原生设置窗口，和外观模式一起管理。", systemImage: "gearshape")
-                            Label("项目页下一步建议优先接章节编辑器与项目列表。", systemImage: "square.grid.2x2")
+                            .overlay(panelStroke(cornerRadius: 32))
+                        } secondary: {
+                            WorkspaceUtilityCard(appState: appState, item: item, openSettings: openSettings)
+                                .frame(minHeight: 260)
                         }
-                        .font(.subheadline)
-                        .foregroundStyle(palette.textPrimary)
+
+                        workspaceDetailSection
                     }
+                    .padding(.top, contentTopPadding)
+                    .padding(.horizontal, contentHorizontalPadding)
+                    .padding(.bottom, contentBottomPadding)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
-                .padding(.top, contentTopPadding)
-                .padding(.horizontal, contentHorizontalPadding)
-                .padding(.bottom, contentBottomPadding)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .background(TopAnchorBounceLockView())
+                .onAppear {
+                    scrollToSelectedProject(using: proxy, animated: false)
+                }
+                .onChange(of: item) {
+                    scrollToSelectedProject(using: proxy, animated: false)
+                }
+                .onChange(of: appState.projectSpaceSelectionPulse) {
+                    scrollToSelectedProject(using: proxy, animated: true)
+                }
             }
-            .background(TopAnchorBounceLockView())
         }
     }
 
@@ -914,7 +1008,7 @@ struct PlaceholderWorkspaceView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(palette.textSecondary)
 
-                Text("已规划 \(project.chapters) 章")
+                Text("已创作 \(project.writtenChapters) 章")
                     .font(.caption)
                     .foregroundStyle(palette.textSecondary)
             }
@@ -930,86 +1024,121 @@ struct PlaceholderWorkspaceView: View {
                 .strokeBorder(palette.stroke, lineWidth: 1)
         )
     }
+
+    @ViewBuilder
+    private var workspaceDetailSection: some View {
+        if item == .projects {
+            ProjectsWorkspacePanel(appState: appState)
+        } else {
+            DashboardPanel(
+                title: "下一步规划",
+                subtitle: "主页已经先把信息架构立住，下面这些区域可以继续扩展。"
+            ) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("保留当前侧边栏结构，方便后续把页面逐个补齐。", systemImage: "checkmark.circle")
+                    Label("模型连接已收进原生设置窗口，和外观模式一起管理。", systemImage: "gearshape")
+                    Label("项目页下一步建议优先接章节编辑器与项目列表。", systemImage: "square.grid.2x2")
+                }
+                .font(.subheadline)
+                .foregroundStyle(palette.textPrimary)
+            }
+        }
+    }
+
+    private func scrollToSelectedProject(using proxy: ScrollViewProxy, animated: Bool) {
+        guard item == .projects else { return }
+        guard let projectID = appState.projectSpaceScrollTarget ?? appState.selectedProjectID else { return }
+
+        DispatchQueue.main.async {
+            if animated {
+                withAnimation(.easeInOut(duration: 0.24)) {
+                    proxy.scrollTo(projectID, anchor: .center)
+                }
+            } else {
+                proxy.scrollTo(projectID, anchor: .center)
+            }
+        }
+    }
 }
 
 private struct CurrentProjectSnapshotCard: View {
     @Environment(\.colorScheme) private var colorScheme
     let project: NovelProject
+    let action: () -> Void
 
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            coverView
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 16) {
+                coverView
 
-            VStack(alignment: .leading, spacing: 10) {
-                Text("当前创作")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(palette.textSecondary)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("当前创作")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(palette.textSecondary)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(project.title)
-                        .font(.title3.weight(.bold))
-                        .foregroundStyle(palette.textPrimary)
-
-                    Text(project.genre)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(palette.coolAccent)
-                }
-
-                Text(project.summary)
-                    .font(.subheadline)
-                    .foregroundStyle(palette.textSecondary)
-                    .lineLimit(3)
-                    .lineSpacing(3)
-
-                HStack(spacing: 14) {
-                    Label(project.updatedAt, systemImage: "clock")
-                    Label("已规划 \(project.chapters) 章", systemImage: "text.book.closed")
-                }
-                .font(.caption)
-                .foregroundStyle(palette.textSecondary)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("创作进度")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(palette.textSecondary)
-
-                        Spacer()
-
-                        Text("\(Int(project.progress * 100))%")
-                            .font(.caption.weight(.semibold))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(project.title)
+                            .font(.title3.weight(.bold))
                             .foregroundStyle(palette.textPrimary)
+
+                        Text(project.genre)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(palette.coolAccent)
                     }
 
-                    ProgressView(value: project.progress)
-                        .tint(palette.warmAccent)
+                    Text(project.summary)
+                        .font(.subheadline)
+                        .foregroundStyle(palette.textSecondary)
+                        .lineLimit(3)
+                        .lineSpacing(3)
+
+                    HStack(spacing: 14) {
+                        Label(project.updatedAt, systemImage: "clock")
+                        Label("已创作 \(project.writtenChapters) 章", systemImage: "text.book.closed")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
+
+                    HStack(spacing: 10) {
+                        ProjectChapterPill(
+                            label: "当前创作",
+                            value: project.currentChapterSummary
+                        )
+
+                        ProjectChapterPill(
+                            label: "已创作",
+                            value: "\(project.writtenChapters) 章"
+                        )
+                    }
                 }
             }
-        }
-        .padding(18)
-        .background(
-            GlassPanelBackground(
-                cornerRadius: 24,
-                palette: palette,
-                tint: LinearGradient(
-                    colors: [
-                        palette.warmAccent.opacity(palette.isDark ? 0.12 : 0.08),
-                        palette.coolAccent.opacity(palette.isDark ? 0.10 : 0.06),
-                        .clear
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
+            .padding(18)
+            .background(
+                GlassPanelBackground(
+                    cornerRadius: 24,
+                    palette: palette,
+                    tint: LinearGradient(
+                        colors: [
+                            palette.warmAccent.opacity(palette.isDark ? 0.12 : 0.08),
+                            palette.coolAccent.opacity(palette.isDark ? 0.10 : 0.06),
+                            .clear
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
                 )
             )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(palette.stroke, lineWidth: 1)
-        )
+            .overlay(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .strokeBorder(palette.stroke, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .help("打开当前项目并定位到项目空间")
     }
 
     private var coverView: some View {
@@ -1221,63 +1350,69 @@ struct QuickActionRow: View {
     let title: String
     let subtitle: String
     let symbolName: String
+    let action: () -> Void
 
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(
-                    LinearGradient(
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 14) {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                palette.coolAccent.opacity(0.92),
+                                palette.successAccent.opacity(0.88)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 42, height: 42)
+                    .overlay(
+                        Image(systemName: symbolName)
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.95))
+                    )
+                    .rotation3DEffect(.degrees(18), axis: (x: 1, y: -1, z: 0))
+                    .shadow(color: palette.coolAccent.opacity(0.28), radius: 12, y: 8)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(title)
+                        .font(.headline)
+                        .foregroundStyle(palette.textPrimary)
+
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(palette.textSecondary)
+                        .lineSpacing(3)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(16)
+            .background(
+                GlassPanelBackground(
+                    cornerRadius: 22,
+                    palette: palette,
+                    tint: LinearGradient(
                         colors: [
-                            palette.coolAccent.opacity(0.92),
-                            palette.successAccent.opacity(0.88)
+                            palette.successAccent.opacity(palette.isDark ? 0.10 : 0.06),
+                            .clear
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
                 )
-                .frame(width: 42, height: 42)
-                .overlay(
-                    Image(systemName: symbolName)
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.95))
-                )
-                .rotation3DEffect(.degrees(18), axis: (x: 1, y: -1, z: 0))
-                .shadow(color: palette.coolAccent.opacity(0.28), radius: 12, y: 8)
-
-            VStack(alignment: .leading, spacing: 5) {
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(palette.textPrimary)
-
-                Text(subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(palette.textSecondary)
-                    .lineSpacing(3)
-            }
-        }
-        .padding(16)
-        .background(
-            GlassPanelBackground(
-                cornerRadius: 22,
-                palette: palette,
-                tint: LinearGradient(
-                    colors: [
-                        palette.successAccent.opacity(palette.isDark ? 0.10 : 0.06),
-                        .clear
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
             )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(palette.stroke, lineWidth: 1)
-        )
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(palette.stroke, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -1482,6 +1617,7 @@ private struct WorkspaceUtilityCard: View {
     @Environment(\.colorScheme) private var colorScheme
     @Bindable var appState: AppState
     let item: SidebarItem
+    let openSettings: () -> Void
 
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
@@ -1578,7 +1714,7 @@ private struct WorkspaceUtilityCard: View {
 
             HStack(spacing: 12) {
                 WorkspaceMetricBadge(label: "活跃项目", value: "\(appState.recentProjects.count)")
-                WorkspaceMetricBadge(label: "当前进度", value: "\(Int((activeProject?.progress ?? 0) * 100))%")
+                WorkspaceMetricBadge(label: "已创作章节", value: "\(activeProject?.writtenChapters ?? 0) 章")
             }
 
             WorkspaceChecklist(
@@ -1591,13 +1727,10 @@ private struct WorkspaceUtilityCard: View {
     private var outlineUtilityContent: some View {
         VStack(alignment: .leading, spacing: 16) {
             if let activeProject {
-                let firstActEnd = max(3, activeProject.chapters / 3)
-                let secondActEnd = max(firstActEnd + 3, (activeProject.chapters * 2) / 3)
-
                 utilityFeatureCard(
                     eyebrow: "结构分布",
-                    title: "已规划 \(activeProject.chapters) 章",
-                    subtitle: "开篇 1-\(firstActEnd) · 推进 \(firstActEnd + 1)-\(secondActEnd) · 收束 \(secondActEnd + 1)-\(activeProject.chapters)",
+                    title: activeProject.currentChapterSummary,
+                    subtitle: "已创作 \(activeProject.writtenChapters) 章，可继续拆分场景目标、转折节点和伏笔回收。",
                     trailing: activeProject.title
                 )
             }
@@ -1661,6 +1794,10 @@ private struct WorkspaceUtilityCard: View {
                     "对白润色：统一角色语气和信息密度"
                 ]
             )
+
+            Button("打开模型设置", action: openSettings)
+                .buttonStyle(.borderedProminent)
+                .tint(palette.coolAccent)
         }
     }
 
@@ -1740,6 +1877,216 @@ private struct WorkspaceUtilityCard: View {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .strokeBorder(palette.stroke, lineWidth: 1)
         )
+    }
+}
+
+private struct ProjectsWorkspacePanel: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @Bindable var appState: AppState
+
+    private var palette: DashboardPalette {
+        DashboardPalette(colorScheme: colorScheme)
+    }
+
+    var body: some View {
+        DashboardPanel(
+            title: "项目列表",
+            subtitle: "首页的最近项目、继续写作和新建项目都会直接落到这里的对应位置。"
+        ) {
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(appState.recentProjects) { project in
+                    Button {
+                        appState.selectProject(project.id)
+                    } label: {
+                        ProjectSpaceProjectRow(
+                            project: project,
+                            isSelected: appState.selectedProjectID == project.id
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .id(project.id)
+                }
+            }
+        }
+    }
+}
+
+private struct ProjectSpaceProjectRow: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let project: NovelProject
+    let isSelected: Bool
+
+    private var palette: DashboardPalette {
+        DashboardPalette(colorScheme: colorScheme)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(project.title)
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(palette.textPrimary)
+
+                    Text(project.genre)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(isSelected ? palette.coolAccent : palette.textSecondary)
+                }
+
+                Spacer()
+
+                if isSelected {
+                    Text("当前工作区")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(palette.coolAccent)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule()
+                                .fill(palette.coolAccent.opacity(palette.isDark ? 0.16 : 0.10))
+                        )
+                }
+
+                Text(project.updatedAt)
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
+            }
+
+            Text(project.summary)
+                .font(.subheadline)
+                .foregroundStyle(palette.textSecondary)
+                .lineSpacing(3)
+
+            HStack(spacing: 12) {
+                ProjectChapterPill(
+                    label: "当前创作",
+                    value: project.currentChapterSummary
+                )
+                WorkspaceMetricBadge(label: "已创作章节", value: "\(project.writtenChapters) 章")
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(background)
+        .overlay(stroke)
+        .shadow(color: isSelected ? palette.shadow.opacity(palette.isDark ? 0.40 : 0.18) : .clear, radius: 12, y: 8)
+    }
+
+    private var background: some View {
+        GlassPanelBackground(
+            cornerRadius: 24,
+            palette: palette,
+            tint: LinearGradient(
+                colors: [
+                    (isSelected ? palette.coolAccent : palette.warmAccent).opacity(palette.isDark ? 0.14 : 0.08),
+                    .clear
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+    }
+
+    private var stroke: some View {
+        RoundedRectangle(cornerRadius: 24, style: .continuous)
+            .strokeBorder(
+                isSelected
+                    ? palette.coolAccent.opacity(palette.isDark ? 0.48 : 0.36)
+                    : palette.stroke,
+                lineWidth: isSelected ? 1.4 : 1
+            )
+    }
+}
+
+private struct ProjectChapterPill: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let label: String
+    let value: String
+
+    private var palette: DashboardPalette {
+        DashboardPalette(colorScheme: colorScheme)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(palette.textSecondary)
+
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(palette.textPrimary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(palette.panelBase.opacity(palette.isDark ? 0.82 : 0.72))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(palette.stroke, lineWidth: 1)
+        )
+    }
+}
+
+private struct NewProjectSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var isNameFieldFocused: Bool
+    @State private var projectTitle = ""
+    let onCreate: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("新建项目")
+                .font(.title2.weight(.semibold))
+
+            Text("先输入项目名称，再进入项目空间继续补齐设定、章节树和写作面板。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineSpacing(3)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("项目名称")
+                    .font(.subheadline.weight(.semibold))
+
+                TextField("例如：雾港纪事", text: $projectTitle)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($isNameFieldFocused)
+                    .onSubmit(createProject)
+            }
+
+            HStack {
+                Spacer()
+
+                Button("取消") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Button("创建", action: createProject)
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(projectTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(width: 420)
+        .onAppear {
+            DispatchQueue.main.async {
+                isNameFieldFocused = true
+            }
+        }
+    }
+
+    private func createProject() {
+        let trimmedTitle = projectTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty else { return }
+        onCreate(trimmedTitle)
+        dismiss()
     }
 }
 
