@@ -10,6 +10,8 @@ final class AppState {
         static let modelName = "OpenReading.modelName"
         static let baseURL = "OpenReading.baseURL"
         static let autoValidateOnLaunch = "OpenReading.autoValidateOnLaunch"
+        static let showWritingDeskCachePanel = "OpenReading.showWritingDeskCachePanel"
+        static let showWritingDeskTimeline = "OpenReading.showWritingDeskTimeline"
         static let activeProjectID = "OpenReading.activeProjectID"
         static let recentProjects = "OpenReading.recentProjects"
     }
@@ -50,6 +52,16 @@ final class AppState {
     var autoValidateOnLaunch: Bool {
         didSet {
             persistAutoValidatePreference()
+        }
+    }
+    var showWritingDeskCachePanel: Bool {
+        didSet {
+            persistWritingDeskDisplayPreferences()
+        }
+    }
+    var showWritingDeskTimeline: Bool {
+        didSet {
+            persistWritingDeskDisplayPreferences()
         }
     }
     var connectionStatus: ConnectionStatus
@@ -102,6 +114,8 @@ final class AppState {
         self.apiKey = Self.loadAPIKeyFromKeychain() ?? ""
         self.baseURL = userDefaults.string(forKey: StorageKey.baseURL) ?? "https://api.openai.com/v1"
         self.autoValidateOnLaunch = userDefaults.object(forKey: StorageKey.autoValidateOnLaunch) as? Bool ?? true
+        self.showWritingDeskCachePanel = userDefaults.object(forKey: StorageKey.showWritingDeskCachePanel) as? Bool ?? true
+        self.showWritingDeskTimeline = userDefaults.object(forKey: StorageKey.showWritingDeskTimeline) as? Bool ?? true
         self.recentProjects = Self.loadRecentProjects(from: userDefaults) ?? Self.defaultRecentProjects
         self.connectionStatus = .idle
         self.validationMessage = Self.emptyConfigurationMessage
@@ -199,6 +213,9 @@ final class AppState {
             chapterFocus: "先写出开篇场景的情绪、主角目标和第一个冲突钩子。",
             draftText: "",
             outlineText: "",
+            referenceContextText: "",
+            specialRequirements: "",
+            wordTargetText: "例如：本章 1800-2200 字；全书约 80 万字；关键情节可上浮 20%",
             continuityNotes: "先把主角动机、冲突来源和章节语气稳定下来，再逐步扩展世界观。",
             referenceDocuments: []
         )
@@ -271,6 +288,27 @@ final class AppState {
         }
     }
 
+    func updateReferenceContextText(_ text: String, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.referenceContextText = text
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func updateSpecialRequirements(_ text: String, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.specialRequirements = text
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func updateWordTargetText(_ text: String, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.wordTargetText = text
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
     func updateContinuityNotes(_ text: String, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.continuityNotes = text
@@ -286,6 +324,12 @@ final class AppState {
             } else {
                 project.draftText += "\n\n" + text.trimmingCharacters(in: .whitespacesAndNewlines)
             }
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func touchProject(_ projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
             project.updatedAt = Self.currentTimestampLabel()
         }
     }
@@ -370,6 +414,11 @@ final class AppState {
 
     private func persistAutoValidatePreference() {
         userDefaults.set(autoValidateOnLaunch, forKey: StorageKey.autoValidateOnLaunch)
+    }
+
+    private func persistWritingDeskDisplayPreferences() {
+        userDefaults.set(showWritingDeskCachePanel, forKey: StorageKey.showWritingDeskCachePanel)
+        userDefaults.set(showWritingDeskTimeline, forKey: StorageKey.showWritingDeskTimeline)
     }
 
     private func persistActiveProjectID() {
@@ -490,6 +539,9 @@ final class AppState {
             chapterFocus: "让主角在钟楼退潮的片刻发现新的证词，并把港口谎言与失踪案并到同一条线索里。",
             draftText: "钟楼的钟声在退潮前第三次敲响，雾像一张被谁悄悄掀开的幕布，沿着码头的木板一层层退开。\n\n顾临站在潮痕线外，靴底沾着盐粒。她知道这座城总在钟声之后说真话，但真话从不完整。今天留下来的，是一枚被海水反复冲刷却还带着体温的铜纽扣。\n\n她把纽扣放进掌心，抬头望向钟楼。那扇面朝港口的小窗刚刚关上，像有人在她看见之前，先一步把秘密收了回去。",
             outlineText: "第一卷：港雾与钟楼\n1. 失踪案在退潮夜启动\n2. 顾临发现钟楼与谎言节律有关\n3. 港务局、钟楼守夜人和失踪名单逐渐并线\n4. 第一卷结尾揭开钟楼记录真话的方式",
+            referenceContextText: "保持海雾、潮声、金属与钟楼的意象，风格克制、悬疑感慢慢推进。",
+            specialRequirements: "不要让线索一次性说透，继续保留港口谎言的回声感。",
+            wordTargetText: "本章建议 1800-2200 字，重点放在证词出现与线索并线。",
             continuityNotes: "顾临说话克制、观察敏锐，不轻易下判断。海港城市本身像有生命的旁观者，叙事要保留潮湿、冷白和金属感。",
             referenceDocuments: [
                 ReferenceDocument(title: "港口气氛参考", content: "海雾、潮声、木栈桥与铜钟的意象要反复出现，让城市像一座会呼吸的谜宫。", importedAt: "示例素材")
@@ -507,6 +559,9 @@ final class AppState {
             chapterFocus: "把“未来来信”的内容和制图师记忆缺口对应起来，推进她上山的决定。",
             draftText: "信纸在灯下泛出很浅的银光，像山脊上的雪线。陆遥盯着最后那句“请在山雾到来之前回信”，忽然意识到这不是提醒，而像一次迟到多年的邀请。\n\n她摊开地图，把自己重新标在玻璃山以南的旧驿站。那里明明早该废弃，却在信封背面的速写里，被画成一座仍有人居住的小屋。",
             outlineText: "第一幕：收到未来来信并确认地图异常\n第二幕：沿着旧驿站与山径上行，逐步恢复记忆\n第三幕：在玻璃山顶完成回信，也理解山脉真实形状",
+            referenceContextText: "保持玻璃、雪线和失真地图的视觉感，句子可稍微更轻更空灵。",
+            specialRequirements: "让记忆恢复通过景物和动作显现，不要直接解释。",
+            wordTargetText: "本章建议 1600-2000 字，推进上山决定即可。",
             continuityNotes: "文本要有玻璃、雪线和失真地图的视觉感。陆遥偏内省，情绪波动要通过景物和动作慢慢显出来。",
             referenceDocuments: [
                 ReferenceDocument(title: "山脉意象参考", content: "玻璃山的质感像被风吹亮的冰层，远看透明，近看却遍布细密裂纹。", importedAt: "示例素材")
@@ -524,6 +579,9 @@ final class AppState {
             chapterFocus: "写清第一次见到“拷贝体”的震撼感，并让主角意识到今晚的选择会被重复三次。",
             draftText: "天边那道橘金色迟迟不肯沉下去，像有人把整座城按在同一秒里反复播放。沈渡在轻轨站台看见了第二个自己。\n\n那个人站在对面，衣角、姿势、甚至抬头看时间的动作都和他分毫不差。唯一不同的是，对方的手背上多了一道刚愈合的伤，像某个还没来得及发生在他身上的决定。",
             outlineText: "序章：共享黄昏开始覆盖整座城\n第一幕：沈渡发现时间复制现象\n第二幕：每次黄昏都会产生一个不同选择的自己\n第三幕：必须决定保留哪个版本的人生",
+            referenceContextText: "科技感要克制，把黄昏残影和轻轨金属光泽写得更冷一些。",
+            specialRequirements: "优先强化第一次遇到拷贝体的生理反应和理性压制恐惧的矛盾。",
+            wordTargetText: "本章建议 1800 字左右，重点是建立规则与惊异感。",
             continuityNotes: "城市科技感要克制，重点是时间错位带来的陌生和压迫。沈渡的第一反应是理性压制恐惧，但身体会先于语言暴露异常。",
             referenceDocuments: [
                 ReferenceDocument(title: "近未来城市场景", content: "黄昏停留太久后，玻璃幕墙和轻轨金属边缘会出现像复制残影一样的重影。", importedAt: "示例素材")
@@ -599,6 +657,9 @@ struct NovelProject: Identifiable, Codable {
     var chapterFocus: String
     var draftText: String
     var outlineText: String
+    var referenceContextText: String
+    var specialRequirements: String
+    var wordTargetText: String
     var continuityNotes: String
     var referenceDocuments: [ReferenceDocument]
 
@@ -614,6 +675,9 @@ struct NovelProject: Identifiable, Codable {
         case chapterFocus
         case draftText
         case outlineText
+        case referenceContextText
+        case specialRequirements
+        case wordTargetText
         case continuityNotes
         case referenceDocuments
         case chapters
@@ -631,6 +695,9 @@ struct NovelProject: Identifiable, Codable {
         chapterFocus: String,
         draftText: String,
         outlineText: String,
+        referenceContextText: String,
+        specialRequirements: String,
+        wordTargetText: String,
         continuityNotes: String,
         referenceDocuments: [ReferenceDocument]
     ) {
@@ -645,6 +712,9 @@ struct NovelProject: Identifiable, Codable {
         self.chapterFocus = chapterFocus
         self.draftText = draftText
         self.outlineText = outlineText
+        self.referenceContextText = referenceContextText
+        self.specialRequirements = specialRequirements
+        self.wordTargetText = wordTargetText
         self.continuityNotes = continuityNotes
         self.referenceDocuments = referenceDocuments
     }
@@ -665,6 +735,9 @@ struct NovelProject: Identifiable, Codable {
             ?? "继续补齐当前章节的目标、冲突和场景节奏。"
         draftText = try container.decodeIfPresent(String.self, forKey: .draftText) ?? ""
         outlineText = try container.decodeIfPresent(String.self, forKey: .outlineText) ?? ""
+        referenceContextText = try container.decodeIfPresent(String.self, forKey: .referenceContextText) ?? ""
+        specialRequirements = try container.decodeIfPresent(String.self, forKey: .specialRequirements) ?? ""
+        wordTargetText = try container.decodeIfPresent(String.self, forKey: .wordTargetText) ?? ""
         continuityNotes = try container.decodeIfPresent(String.self, forKey: .continuityNotes) ?? ""
         referenceDocuments = try container.decodeIfPresent([ReferenceDocument].self, forKey: .referenceDocuments) ?? []
     }
@@ -682,6 +755,9 @@ struct NovelProject: Identifiable, Codable {
         try container.encode(chapterFocus, forKey: .chapterFocus)
         try container.encode(draftText, forKey: .draftText)
         try container.encode(outlineText, forKey: .outlineText)
+        try container.encode(referenceContextText, forKey: .referenceContextText)
+        try container.encode(specialRequirements, forKey: .specialRequirements)
+        try container.encode(wordTargetText, forKey: .wordTargetText)
         try container.encode(continuityNotes, forKey: .continuityNotes)
         try container.encode(referenceDocuments, forKey: .referenceDocuments)
     }

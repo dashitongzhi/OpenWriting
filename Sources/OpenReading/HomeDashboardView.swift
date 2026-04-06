@@ -827,11 +827,11 @@ struct PlaceholderWorkspaceView: View {
     }
 
     private var workspaceHeaderHeight: CGFloat? {
-        item == .projects ? 560 : nil
+        472
     }
 
     private var workspaceHeaderAlignment: VerticalAlignment {
-        item == .projects ? .top : .bottom
+        .top
     }
 
     private var featuredQuote: LiteraryQuote? {
@@ -866,10 +866,6 @@ struct PlaceholderWorkspaceView: View {
                                     writingQuotePanel(featuredQuote)
                                 }
 
-                                if workspaceHeaderHeight != nil {
-                                    Spacer(minLength: 0)
-                                }
-
                                 HStack(spacing: 10) {
                                     PillTag(text: item.title)
                                     PillTag(text: appState.activeWorkspaceName)
@@ -879,7 +875,7 @@ struct PlaceholderWorkspaceView: View {
                                     workspaceContextStrip(for: activeProject)
                                 }
                             }
-                            .padding(28)
+                            .padding(24)
                             .frame(
                                 maxWidth: .infinity,
                                 minHeight: workspaceHeaderHeight,

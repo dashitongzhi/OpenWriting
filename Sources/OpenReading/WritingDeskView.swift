@@ -7,20 +7,28 @@ struct WritingDeskView: View {
     @Bindable var appState: AppState
     let openSettings: () -> Void
 
-    @FocusState private var isEditorFocused: Bool
+    @FocusState private var focusedArea: FocusArea?
     @State private var isImportingReferences = false
     @State private var isImportingOutline = false
-    @State private var additionalInstruction = ""
-    @State private var selectedLength: AIWritingLength = .medium
-    @State private var selectedMode: AIWritingMode = .continueScene
     @State private var aiSuggestion = ""
-    @State private var aiStatusMessage = "准备就绪，可先导入参考文本或作品大纲，再让 AI 接续当前章节。"
+    @State private var draftBufferText = ""
+    @State private var aiStatusMessage = "准备就绪，可先补大纲、参考文本和特殊要求，再开始当前章节写作。"
+    @State private var saveMessage = "自动保存已开启"
     @State private var isGenerating = false
+    @State private var isCacheCollapsed = false
+    @State private var autoScrollLocked = false
+    @State private var pendingScrollAnchor: WritingDeskScrollAnchor?
+    @State private var timingSnapshot = AIWriterTimingSnapshot.idle
 
     private let contentTopPadding: CGFloat = 18
     private let contentHorizontalPadding: CGFloat = 32
     private let contentBottomPadding: CGFloat = 32
-    private let headerPanelHeight: CGFloat = 560
+    private let workspaceSpacing: CGFloat = 22
+
+    private enum FocusArea: Hashable {
+        case draft
+        case ai
+    }
 
     private var activeProject: NovelProject? {
         appState.activeProject
@@ -36,33 +44,37 @@ struct WritingDeskView: View {
     }
 
     var body: some View {
-        ZStack {
-            PageBackground()
+        ScrollViewReader { proxy in
+            ZStack {
+                PageBackground()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    if let activeProject {
-                        writingDeskHeader(for: activeProject)
-                        writingDeskWorkspace(for: activeProject)
-                        referencesLibraryPanel(for: activeProject)
-                    } else {
-                        emptyState
+                ScrollView {
+                    VStack(alignment: .leading, spacing: workspaceSpacing) {
+                        if let activeProject {
+                            writingDeskWorkspace(for: activeProject)
+                        } else {
+                            emptyState
+                        }
                     }
+                    .padding(.top, contentTopPadding)
+                    .padding(.horizontal, contentHorizontalPadding)
+                    .padding(.bottom, contentBottomPadding)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
-                .padding(.top, contentTopPadding)
-                .padding(.horizontal, contentHorizontalPadding)
-                .padding(.bottom, contentBottomPadding)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .background(WritingDeskBounceLockView())
+                .onChange(of: pendingScrollAnchor) { _, target in
+                    guard let target else { return }
+
+                    withAnimation(.easeOut(duration: 0.22)) {
+                        proxy.scrollTo(target.rawValue, anchor: target == .cache ? .bottom : .top)
+                    }
+
+                    pendingScrollAnchor = nil
+                }
             }
-            .background(WritingDeskBounceLockView())
         }
         .task(id: activeProject?.id) {
-            focusEditor()
-            aiSuggestion = ""
-            additionalInstruction = ""
-            selectedMode = .continueScene
-            selectedLength = .medium
-            aiStatusMessage = "准备就绪，可先导入参考文本或作品大纲，再让 AI 接续当前章节。"
+            resetSessionState()
         }
         .fileImporter(
             isPresented: $isImportingReferences,
@@ -79,437 +91,350 @@ struct WritingDeskView: View {
     }
 
     @ViewBuilder
-    private func writingDeskHeader(for project: NovelProject) -> some View {
-        WritingDeskSplitSection(alignment: .bottom) {
-            writingDeskOverviewCard(for: project)
-        } secondary: {
-            writingDeskControlCard(for: project)
+    private func writingDeskWorkspace(for project: NovelProject) -> some View {
+        VStack(alignment: .leading, spacing: workspaceSpacing) {
+            writingDeskConfigurationRow(for: project)
+            writingDeskCreationRow(for: project)
         }
     }
 
-    private func writingDeskOverviewCard(for project: NovelProject) -> some View {
-        DashboardPanel(
-            title: "写作台",
-            subtitle: "把当前项目、当前章节和写作上下文钉在顶部，再在正文区持续推进当前章节。",
-            fixedHeight: headerPanelHeight
+    private func writingDeskConfigurationRow(for project: NovelProject) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: workspaceSpacing) {
+                writingDeskOutlineCard(for: project)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                writingDeskReferenceCard(for: project)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                writingDeskRequirementsCard(for: project)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+
+            VStack(alignment: .leading, spacing: workspaceSpacing) {
+                writingDeskOutlineCard(for: project)
+                writingDeskReferenceCard(for: project)
+                writingDeskRequirementsCard(for: project)
+            }
+        }
+    }
+
+    private func writingDeskCreationRow(for project: NovelProject) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: workspaceSpacing) {
+                writingDeskDraftColumn(for: project)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .layoutPriority(1)
+
+                writingDeskAIColumn(for: project)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .layoutPriority(1)
+            }
+
+            VStack(alignment: .leading, spacing: workspaceSpacing) {
+                writingDeskDraftColumn(for: project)
+                writingDeskAIColumn(for: project)
+            }
+        }
+    }
+
+    private func writingDeskOutlineCard(for project: NovelProject) -> some View {
+        WritingDeskSectionCard(
+            title: "大纲设定",
+            actions: [
+                .init(
+                    symbolName: "square.and.arrow.down",
+                    accessibilityLabel: "导入大纲"
+                ) {
+                    isImportingOutline = true
+                }
+            ]
         ) {
-            VStack(alignment: .leading, spacing: 16) {
-                Text(project.title)
-                    .font(.system(size: 42, weight: .bold, design: .serif))
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .center, spacing: 10) {
+                PillTag(text: project.title)
+                PillTag(text: project.currentChapterSummary)
+            }
 
-                Text(project.summary)
-                    .font(.title3)
+            WritingDeskTextSurface(
+                text: outlineBinding(for: project.id),
+                placeholder: "输入小说大纲、卷章结构或本章计划…",
+                minHeight: 210
+            )
+
+            Text(project.hasOutline ? "当前大纲已接入，AI 会优先参考这里的结构。" : "可直接粘贴大纲，或从文本文件导入。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func writingDeskReferenceCard(for project: NovelProject) -> some View {
+        WritingDeskSectionCard(
+            title: "参考文本",
+            actions: [
+                .init(
+                    symbolName: "square.and.arrow.down",
+                    accessibilityLabel: "导入参考文本"
+                ) {
+                    isImportingReferences = true
+                }
+            ]
+        ) {
+            WritingDeskTextSurface(
+                text: referenceContextBinding(for: project.id),
+                placeholder: "输入风格参考、上下文片段或你希望 AI 靠近的语气样文…",
+                minHeight: 210
+            )
+
+            Text(referenceImportSummary(for: project))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func writingDeskRequirementsCard(for project: NovelProject) -> some View {
+        WritingDeskSectionCard(title: "特殊要求") {
+            WritingDeskTextSurface(
+                text: specialRequirementsBinding(for: project.id),
+                placeholder: "输入本章特殊要求、语气限制、不能违背的设定或必须保留的伏笔…",
+                minHeight: 152
+            )
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("字数设定")
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
-                    .lineSpacing(4)
-                    .lineLimit(3)
 
-                HStack(spacing: 10) {
-                    PillTag(text: project.genre)
-                    PillTag(text: project.currentChapterLabel)
+                WritingDeskTextSurface(
+                    text: wordTargetBinding(for: project.id),
+                    placeholder: "例如：本章 1800-2200 字；全书约 80 万字；关键情节可上浮 20%",
+                    minHeight: 84
+                )
+            }
+
+            Text("这些约束会和连续性笔记一起送进 AI，写作和润色都会参考。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func writingDeskDraftColumn(for project: NovelProject) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            WritingDeskSectionCard(
+                title: "草稿箱",
+                badgeText: "\(project.draftWordCount) 字",
+                actions: [
+                    .init(
+                        symbolName: "wand.and.stars",
+                        accessibilityLabel: "润色当前草稿",
+                        isEnabled: !isGenerating && project.draftWordCount > 0
+                    ) {
+                        polishDraft(for: project)
+                    },
+                    .init(
+                        symbolName: "square.and.arrow.down",
+                        accessibilityLabel: "保存草稿"
+                    ) {
+                        saveDraft(for: project)
+                    }
+                ]
+            ) {
+                HStack(alignment: .center, spacing: 10) {
+                    PillTag(text: project.title)
+                    PillTag(text: project.currentChapterSummary)
                     PillTag(text: "已创作 \(project.writtenChapters) 章")
                 }
 
-                WritingDeskFeatureCard(
-                    eyebrow: "当前续写锚点",
-                    title: project.currentChapterSummary,
-                    subtitle: project.chapterFocus,
-                    trailing: project.updatedAt
-                )
-
-                Text("正文 \(project.draftWordCount) 字 · 参考文本 \(project.referenceStatusLabel) · 大纲 \(project.outlineStatusLabel)")
-                    .font(.caption)
+                Text("采纳后的内容会进入草稿箱，可继续键盘编辑；润色会把结果先送到右侧 AI 作家。")
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineSpacing(3)
 
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 12) {
-                        Button("进入项目空间") {
-                            appState.openProjectSpace(for: project.id)
+                TextEditor(text: draftBinding(for: project.id))
+                    .font(.system(size: 16, weight: .regular, design: .serif))
+                    .lineSpacing(5)
+                    .scrollContentBackground(.hidden)
+                    .padding(18)
+                    .frame(minHeight: 720, alignment: .topLeading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 26, style: .continuous)
+                            .fill(.ultraThinMaterial)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 26, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                    )
+                    .overlay(alignment: .topLeading) {
+                        if project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text("从当前章节的第一句开始写，或先让右侧 AI 作家为你生成一段可接续的草稿。")
+                                .font(.subheadline)
+                                .foregroundStyle(.tertiary)
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 22)
+                                .allowsHitTesting(false)
                         }
-                        .buttonStyle(.bordered)
-
-                        Button("聚焦正文") {
-                            focusEditor()
-                        }
-                        .buttonStyle(.borderedProminent)
                     }
+                    .focused($focusedArea, equals: .draft)
+                    .id(WritingDeskScrollAnchor.draft.rawValue)
 
-                    VStack(alignment: .leading, spacing: 10) {
-                        Button("进入项目空间") {
-                            appState.openProjectSpace(for: project.id)
-                        }
-                        .buttonStyle(.bordered)
+                HStack {
+                    Text(saveMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
-                        Button("聚焦正文") {
-                            focusEditor()
+                    Spacer()
+
+                    Text(project.updatedAt)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if appState.showWritingDeskCachePanel {
+                WritingDeskSectionCard(
+                    title: "缓存区",
+                    badgeText: isCacheCollapsed ? "已收起" : "临时暂存",
+                    headerTapAction: {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            isCacheCollapsed.toggle()
                         }
-                        .buttonStyle(.borderedProminent)
+                    }
+                ) {
+                    if isCacheCollapsed {
+                        Text("点击上方标题可重新展开缓存区。")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        WritingDeskCacheSurface(
+                            text: $draftBufferText,
+                            placeholder: "AI 结果送到缓存区后，会先停在这里，确认无误再采纳进草稿箱。",
+                            minHeight: 152
+                        )
+                        .id(WritingDeskScrollAnchor.cache.rawValue)
+
+                        HStack(spacing: 10) {
+                            Button("采纳到草稿箱") {
+                                acceptCacheIntoDraft(for: project)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(draftBufferText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                            Button("清空缓存") {
+                                draftBufferText = ""
+                                aiStatusMessage = "缓存区已清空。"
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(draftBufferText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                            Spacer()
+
+                            Text(draftBufferText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "暂无缓存内容" : "可继续编辑后再采纳")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
         }
     }
 
-    private func writingDeskControlCard(for project: NovelProject) -> some View {
-        DashboardPanel(
-            title: "连续性控制台",
-            subtitle: "把大纲、设定和参考文本都放在同一条工作线上，AI 才能稳定接续长篇。",
-            fixedHeight: headerPanelHeight
+    private func writingDeskAIColumn(for project: NovelProject) -> some View {
+        WritingDeskSectionCard(
+            title: "AI 作家",
+            statusLabel: aiStatusLabel,
+            statusColor: aiStatusColor,
+            actions: [
+                .init(
+                    symbolName: "play.fill",
+                    accessibilityLabel: "开始写作",
+                    isEnabled: !isGenerating && appState.aiConfiguration != nil,
+                    isPrimary: true
+                ) {
+                    startWriting(for: project)
+                },
+                .init(
+                    symbolName: autoScrollLocked ? "lock.fill" : "lock.open.fill",
+                    accessibilityLabel: autoScrollLocked ? "解锁自动滑动" : "锁定自动滑动"
+                ) {
+                    autoScrollLocked.toggle()
+                    aiStatusMessage = autoScrollLocked ? "已锁定自动滑动，生成后不会自动跳转模块。" : "已恢复自动滑动，生成后会自动定位到结果区域。"
+                }
+            ]
         ) {
-            VStack(alignment: .leading, spacing: 14) {
-                WritingDeskMetricGrid(
-                    items: [
-                        .init(label: "当前章节", value: project.currentChapterSummary, detail: project.updatedAt),
-                        .init(label: "作品大纲", value: project.outlineStatusLabel, detail: "导入后可继续手动补写"),
-                        .init(label: "连续性笔记", value: project.continuityStatusLabel, detail: "建议记录角色语气与时间线"),
-                        .init(label: "参考文本", value: project.referenceStatusLabel, detail: "样文、设定、旧稿都可导入")
-                    ]
+            if appState.showWritingDeskTimeline {
+                WritingDeskTimelineRow(snapshot: timingSnapshot)
+            }
+
+            Text(aiStatusMessage)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineSpacing(3)
+
+            TextEditor(text: $aiSuggestion)
+                .font(.system(size: 15, weight: .regular, design: .serif))
+                .lineSpacing(5)
+                .scrollContentBackground(.hidden)
+                .padding(18)
+                .frame(minHeight: 918, alignment: .topLeading)
+                .background(
+                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        .fill(.ultraThinMaterial)
                 )
-
-                WritingDeskChecklistCard(
-                    title: "进入 AI 前建议先完成",
-                    items: [
-                        "确认本章目标和当前切入点",
-                        project.hasOutline ? "作品大纲已就绪，可直接继续补细节" : "先导入或补写作品大纲",
-                        project.referenceDocuments.isEmpty ? "导入 1 到 3 份参考文本帮助统一风格" : "参考文本已导入，可继续补充样文",
-                        appState.aiConfiguration == nil ? "到设置里补完 API Key、Base URL 和模型名称" : "模型配置已就绪，可直接发起续写"
-                    ]
+                .overlay(
+                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
                 )
-
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) {
-                        Button("导入参考文本") {
-                            isImportingReferences = true
-                        }
-                        .buttonStyle(.borderedProminent)
-
-                        Button("导入作品大纲") {
-                            isImportingOutline = true
-                        }
-                        .buttonStyle(.bordered)
-
-                        Button("模型设置", action: openSettings)
-                            .buttonStyle(.bordered)
-                    }
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Button("导入参考文本") {
-                            isImportingReferences = true
-                        }
-                        .buttonStyle(.borderedProminent)
-
-                        Button("导入作品大纲") {
-                            isImportingOutline = true
-                        }
-                        .buttonStyle(.bordered)
-
-                        Button("模型设置", action: openSettings)
-                            .buttonStyle(.bordered)
+                .overlay(alignment: .topLeading) {
+                    if aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text("这里会显示 AI 生成或润色后的内容。你可以先改，再送到缓存区或直接插入草稿箱。")
+                            .font(.subheadline)
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 24)
+                            .padding(.vertical, 22)
+                            .allowsHitTesting(false)
                     }
                 }
-            }
-        }
-    }
+                .focused($focusedArea, equals: .ai)
+                .id(WritingDeskScrollAnchor.ai.rawValue)
 
-    @ViewBuilder
-    private func writingDeskWorkspace(for project: NovelProject) -> some View {
-        WritingDeskSplitSection {
-            writingEditorPanel(for: project)
-        } secondary: {
-            VStack(alignment: .leading, spacing: 22) {
-                aiContinuationPanel(for: project)
-                continuityPanel(for: project)
-            }
-        }
-    }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    Button(appState.showWritingDeskCachePanel ? "送入缓存区" : "插入草稿箱") {
+                        routeAISuggestion(for: project)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.return, modifiers: [.command, .shift])
+                    .disabled(aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-    private func writingEditorPanel(for project: NovelProject) -> some View {
-        DashboardPanel(
-            title: "正文创作",
-            subtitle: "正文持续保存在当前项目；先写本章目标，再把段落推进和 AI 建议落进同一处正文。"
-        ) {
-            VStack(alignment: .leading, spacing: 16) {
-                WritingDeskFeatureCard(
-                    eyebrow: "当前创作章节",
-                    title: project.currentChapterSummary,
-                    subtitle: project.draftPreview,
-                    trailing: "最后更新 \(project.updatedAt)"
-                )
+                    Button("清空结果") {
+                        aiSuggestion = ""
+                        aiStatusMessage = "AI 结果区已清空。"
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                WritingDeskSectionEditor(
-                    title: "本章目标",
-                    text: chapterFocusBinding(for: project.id),
-                    placeholder: "例如：让主角在本章发现新的线索，并推动冲突进入下一段。"
-                )
-                .frame(minHeight: 120)
+                    Spacer()
+
+                    Button("设置", action: openSettings)
+                        .buttonStyle(.bordered)
+                }
 
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text("正文")
-                            .font(.headline)
-                            .foregroundStyle(.primary)
-
-                        Spacer()
-
-                        Text("\(project.draftWordCount) 字 · \(project.draftParagraphCount) 段")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    Button(appState.showWritingDeskCachePanel ? "送入缓存区" : "插入草稿箱") {
+                        routeAISuggestion(for: project)
                     }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.return, modifiers: [.command, .shift])
+                    .disabled(aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                    TextEditor(text: draftBinding(for: project.id))
-                        .font(.system(size: 16, weight: .regular, design: .serif))
-                        .lineSpacing(5)
-                        .scrollContentBackground(.hidden)
-                        .padding(18)
-                        .frame(minHeight: 640, alignment: .topLeading)
-                        .background(
-                            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                .fill(.ultraThinMaterial)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
-                        )
-                        .overlay(alignment: .topLeading) {
-                            if project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                Text("从当前章节的第一句开始写，或先用右侧 AI 协作生成一个可接续的段落。")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.tertiary)
-                                    .padding(.horizontal, 24)
-                                    .padding(.vertical, 24)
-                                    .allowsHitTesting(false)
-                            }
-                        }
-                        .focused($isEditorFocused)
-                }
+                    Button("清空结果") {
+                        aiSuggestion = ""
+                        aiStatusMessage = "AI 结果区已清空。"
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) {
-                        Button("回到项目空间") {
-                            appState.openProjectSpace(for: project.id)
-                        }
+                    Button("设置", action: openSettings)
                         .buttonStyle(.bordered)
-
-                        Button("查看章节树") {
-                            appState.openOutline()
-                        }
-                        .buttonStyle(.bordered)
-
-                        Button("继续专注写作") {
-                            focusEditor()
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Button("回到项目空间") {
-                            appState.openProjectSpace(for: project.id)
-                        }
-                        .buttonStyle(.bordered)
-
-                        Button("查看章节树") {
-                            appState.openOutline()
-                        }
-                        .buttonStyle(.bordered)
-
-                        Button("继续专注写作") {
-                            focusEditor()
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-                }
-            }
-        }
-    }
-
-    private func aiContinuationPanel(for project: NovelProject) -> some View {
-        DashboardPanel(
-            title: "AI 协作续写",
-            subtitle: "围绕当前章节工作，不跳章节、不改设定；建议先补全本章目标和连续性笔记。"
-        ) {
-            VStack(alignment: .leading, spacing: 14) {
-                Picker("写作方式", selection: $selectedMode) {
-                    ForEach(AIWritingMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                Picker("续写长度", selection: $selectedLength) {
-                    ForEach(AIWritingLength.allCases) { length in
-                        Text(length.title).tag(length)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                WritingDeskSectionEditor(
-                    title: "额外指令",
-                    text: $additionalInstruction,
-                    placeholder: "例如：先把冲突顶起来，不要转场；保持港口潮湿冷白的质感。"
-                )
-                .frame(minHeight: 126)
-
-                Text("本次将按“项目摘要 → 当前章节 → 本章目标 → 大纲 → 连续性笔记 → 参考文本 → 正文尾段”的顺序组织上下文。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineSpacing(3)
-
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) {
-                        Button(isGenerating ? "AI 正在续写..." : "开始续写") {
-                            generateContinuation(for: project)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.return, modifiers: [.command])
-                        .disabled(isGenerating || appState.aiConfiguration == nil)
-
-                        Button("打开模型设置", action: openSettings)
-                            .buttonStyle(.bordered)
-
-                        if !aiSuggestion.isEmpty {
-                            Button("清空建议") {
-                                aiSuggestion = ""
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Button(isGenerating ? "AI 正在续写..." : "开始续写") {
-                            generateContinuation(for: project)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.return, modifiers: [.command])
-                        .disabled(isGenerating || appState.aiConfiguration == nil)
-
-                        Button("打开模型设置", action: openSettings)
-                            .buttonStyle(.bordered)
-
-                        if !aiSuggestion.isEmpty {
-                            Button("清空建议") {
-                                aiSuggestion = ""
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                    }
-                }
-
-                Text(aiStatusMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineSpacing(3)
-
-                if !aiSuggestion.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("AI 续写建议")
-                            .font(.headline)
-                            .foregroundStyle(.primary)
-
-                        TextEditor(text: $aiSuggestion)
-                            .font(.system(size: 14, weight: .regular, design: .serif))
-                            .lineSpacing(4)
-                            .scrollContentBackground(.hidden)
-                            .padding(14)
-                        .frame(minHeight: 180, maxHeight: 300)
-                        .background(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .fill(.ultraThinMaterial)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
-                        )
-
-                        Button("插入正文末尾") {
-                            appState.appendDraftText(aiSuggestion, for: project.id)
-                            aiStatusMessage = "AI 续写内容已插入正文末尾。"
-                            aiSuggestion = ""
-                            focusEditor()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.return, modifiers: [.command, .shift])
-                        .disabled(aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                }
-            }
-        }
-    }
-
-    private func continuityPanel(for project: NovelProject) -> some View {
-        DashboardPanel(
-            title: "大纲与连续性",
-            subtitle: "这里是长篇创作的硬约束区。角色语气、时间线、伏笔和不能违背的规则，都应写在这里。"
-        ) {
-            VStack(alignment: .leading, spacing: 16) {
-                WritingDeskFeatureCard(
-                    eyebrow: "当前约束状态",
-                    title: project.hasContinuityNotes ? "连续性已建立" : "连续性待补充",
-                    subtitle: project.hasContinuityNotes
-                        ? "AI 会优先读取这里的约束，避免角色说话方式和世界观规则突然跑偏。"
-                        : "建议先写下角色语气、当前时间线、已揭示伏笔和不能违背的规则。",
-                    trailing: project.referenceStatusLabel
-                )
-
-                WritingDeskSectionEditor(
-                    title: "作品大纲",
-                    text: outlineBinding(for: project.id),
-                    placeholder: "把卷章结构、章节安排、关键转折和回收节点写在这里，或直接导入现成大纲。"
-                )
-                .frame(minHeight: 180)
-
-                WritingDeskSectionEditor(
-                    title: "连续性笔记",
-                    text: continuityBinding(for: project.id),
-                    placeholder: "记录角色口吻、关系变化、时间线、已出现线索、不能违背的设定与后续待回收伏笔。"
-                )
-                .frame(minHeight: 180)
-            }
-        }
-    }
-
-    private func referencesLibraryPanel(for project: NovelProject) -> some View {
-        DashboardPanel(
-            title: "参考文本库",
-            subtitle: "导入样文、旧稿、设定说明、人物小传或语气参考，AI 续写时会优先抽取相关片段。"
-        ) {
-            VStack(alignment: .leading, spacing: 14) {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 12) {
-                        WritingDeskInfoBadge(label: "参考文本", value: project.referenceStatusLabel)
-                        WritingDeskInfoBadge(label: "总字数", value: "\(project.referenceDocuments.reduce(0) { $0 + $1.wordCount })")
-                        WritingDeskInfoBadge(label: "大纲", value: project.outlineStatusLabel)
-                    }
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        WritingDeskInfoBadge(label: "参考文本", value: project.referenceStatusLabel)
-                        WritingDeskInfoBadge(label: "总字数", value: "\(project.referenceDocuments.reduce(0) { $0 + $1.wordCount })")
-                        WritingDeskInfoBadge(label: "大纲", value: project.outlineStatusLabel)
-                    }
-                }
-
-                Button("继续导入参考文本") {
-                    isImportingReferences = true
-                }
-                .buttonStyle(.borderedProminent)
-
-                if project.referenceDocuments.isEmpty {
-                    WritingDeskChecklistCard(
-                        title: "建议优先导入的参考材料",
-                        items: [
-                            "当前作品的旧稿或前几章正文",
-                            "人物卡、世界观设定或组织规则",
-                            "你希望 AI 靠近的语气样文"
-                        ]
-                    )
-                } else {
-                    ForEach(project.referenceDocuments) { document in
-                        ReferenceDocumentRow(document: document) {
-                            appState.removeReferenceDocument(document.id, for: project.id)
-                            aiStatusMessage = "已移除《\(document.title)》。"
-                        }
-                    }
                 }
             }
         }
@@ -527,18 +452,22 @@ struct WritingDeskView: View {
         }
     }
 
-    private func draftBinding(for projectID: NovelProject.ID) -> Binding<String> {
-        Binding(
-            get: { appState.project(for: projectID)?.draftText ?? "" },
-            set: { appState.updateDraftText($0, for: projectID) }
-        )
+    private var aiStatusLabel: String {
+        if isGenerating {
+            return "生成中"
+        }
+
+        return appState.aiConfiguration == nil ? "待配置" : "就绪"
     }
 
-    private func chapterFocusBinding(for projectID: NovelProject.ID) -> Binding<String> {
-        Binding(
-            get: { appState.project(for: projectID)?.chapterFocus ?? "" },
-            set: { appState.updateChapterFocus($0, for: projectID) }
-        )
+    private var aiStatusColor: Color {
+        if isGenerating {
+            return .orange
+        }
+
+        return appState.aiConfiguration == nil
+            ? Color(red: 0.83, green: 0.45, blue: 0.20)
+            : Color(red: 0.18, green: 0.68, blue: 0.40)
     }
 
     private func outlineBinding(for projectID: NovelProject.ID) -> Binding<String> {
@@ -548,17 +477,227 @@ struct WritingDeskView: View {
         )
     }
 
-    private func continuityBinding(for projectID: NovelProject.ID) -> Binding<String> {
+    private func referenceContextBinding(for projectID: NovelProject.ID) -> Binding<String> {
         Binding(
-            get: { appState.project(for: projectID)?.continuityNotes ?? "" },
-            set: { appState.updateContinuityNotes($0, for: projectID) }
+            get: { appState.project(for: projectID)?.referenceContextText ?? "" },
+            set: { appState.updateReferenceContextText($0, for: projectID) }
         )
     }
 
-    private func focusEditor() {
-        DispatchQueue.main.async {
-            isEditorFocused = true
+    private func specialRequirementsBinding(for projectID: NovelProject.ID) -> Binding<String> {
+        Binding(
+            get: { appState.project(for: projectID)?.specialRequirements ?? "" },
+            set: { appState.updateSpecialRequirements($0, for: projectID) }
+        )
+    }
+
+    private func wordTargetBinding(for projectID: NovelProject.ID) -> Binding<String> {
+        Binding(
+            get: { appState.project(for: projectID)?.wordTargetText ?? "" },
+            set: { appState.updateWordTargetText($0, for: projectID) }
+        )
+    }
+
+    private func draftBinding(for projectID: NovelProject.ID) -> Binding<String> {
+        Binding(
+            get: { appState.project(for: projectID)?.draftText ?? "" },
+            set: { appState.updateDraftText($0, for: projectID) }
+        )
+    }
+
+    private func startWriting(for project: NovelProject) {
+        guard let configuration = appState.aiConfiguration else {
+            aiStatusMessage = "当前模型配置不完整，请先到设置里填写 API Key、Base URL 和模型名称。"
+            return
         }
+
+        let latestProject = appState.project(for: project.id) ?? project
+        isGenerating = true
+        aiStatusMessage = "AI 正在根据大纲、参考文本、特殊要求和当前章节状态生成正文…"
+        timingSnapshot = .queued
+
+        Task {
+            let startedAt = Date()
+
+            do {
+                let suggestion = try await AIWritingService.continueChapter(
+                    configuration: configuration,
+                    project: latestProject,
+                    mode: latestProject.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .advanceChapter : .continueScene,
+                    additionalInstruction: "请同时遵守项目中的特殊要求和字数设定。",
+                    length: preferredLength(for: latestProject.wordTargetText)
+                )
+
+                let total = Date().timeIntervalSince(startedAt)
+
+                await MainActor.run {
+                    aiSuggestion = suggestion
+                    isGenerating = false
+                    timingSnapshot = AIWriterTimingSnapshot(
+                        queue: 0.1,
+                        generate: max(total * 0.82, 0.1),
+                        finish: max(total * 0.18, 0.1),
+                        complete: max(total, 0.2)
+                    )
+                    aiStatusMessage = "AI 已生成当前章节草稿，你可以继续编辑后再送入缓存区或直接插入草稿箱。"
+                    focusAIEditor()
+                    requestAutoScroll(to: .ai)
+                }
+            } catch {
+                await MainActor.run {
+                    isGenerating = false
+                    timingSnapshot = .idle
+                    aiStatusMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func polishDraft(for project: NovelProject) {
+        guard let configuration = appState.aiConfiguration else {
+            aiStatusMessage = "当前模型配置不完整，请先到设置里填写 API Key、Base URL 和模型名称。"
+            return
+        }
+
+        let latestProject = appState.project(for: project.id) ?? project
+        let passage = polishTargetText(for: latestProject)
+        guard !passage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            aiStatusMessage = "草稿箱里还没有可润色的内容。"
+            return
+        }
+
+        isGenerating = true
+        aiStatusMessage = "AI 正在润色当前草稿尾段，尽量保持当前章节气质和叙述连续性…"
+        timingSnapshot = .queued
+
+        Task {
+            let startedAt = Date()
+
+            do {
+                let polished = try await AIWritingService.polishPassage(
+                    configuration: configuration,
+                    project: latestProject,
+                    passage: passage
+                )
+
+                let total = Date().timeIntervalSince(startedAt)
+
+                await MainActor.run {
+                    aiSuggestion = polished
+                    isGenerating = false
+                    timingSnapshot = AIWriterTimingSnapshot(
+                        queue: 0.1,
+                        generate: max(total * 0.76, 0.1),
+                        finish: max(total * 0.24, 0.1),
+                        complete: max(total, 0.2)
+                    )
+                    aiStatusMessage = "润色结果已生成。建议先在右侧检查，再决定送入缓存区或直接插入草稿箱。"
+                    focusAIEditor()
+                    requestAutoScroll(to: .ai)
+                }
+            } catch {
+                await MainActor.run {
+                    isGenerating = false
+                    timingSnapshot = .idle
+                    aiStatusMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func routeAISuggestion(for project: NovelProject) {
+        let trimmed = aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        if appState.showWritingDeskCachePanel {
+            draftBufferText = trimmed
+            aiStatusMessage = "AI 结果已送入缓存区，确认后可采纳到草稿箱。"
+            isCacheCollapsed = false
+            requestAutoScroll(to: .cache)
+        } else {
+            appState.appendDraftText(trimmed, for: project.id)
+            aiSuggestion = ""
+            saveMessage = "AI 内容已直接插入草稿箱"
+            aiStatusMessage = "AI 结果已直接插入草稿箱。"
+            focusDraftEditor()
+            requestAutoScroll(to: .draft)
+        }
+    }
+
+    private func acceptCacheIntoDraft(for project: NovelProject) {
+        let trimmed = draftBufferText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        appState.appendDraftText(trimmed, for: project.id)
+        draftBufferText = ""
+        saveMessage = "缓存内容已采纳进草稿箱"
+        aiStatusMessage = "缓存内容已采纳到草稿箱，可继续直接编辑正文。"
+        focusDraftEditor()
+        requestAutoScroll(to: .draft)
+    }
+
+    private func saveDraft(for project: NovelProject) {
+        appState.touchProject(project.id)
+        saveMessage = "已手动保存 · \(timestampLabel())"
+        aiStatusMessage = "当前项目已保存，可以继续写作或切回项目空间。"
+    }
+
+    private func referenceImportSummary(for project: NovelProject) -> String {
+        guard let latestDocument = project.referenceDocuments.first else {
+            return "还没有导入参考文件，也可以直接在上面手动粘贴上下文。"
+        }
+
+        return "已导入 \(project.referenceDocuments.count) 份 · 最近：\(latestDocument.title) · 共 \(project.referenceDocuments.reduce(0) { $0 + $1.wordCount }) 字。"
+    }
+
+    private func preferredLength(for wordTargetText: String) -> AIWritingLength {
+        let digits = wordTargetText.compactMap(\.wholeNumberValue)
+        let number = digits.reduce(0) { ($0 * 10) + $1 }
+
+        switch number {
+        case 0 ..< 900:
+            return .short
+        case 1_800...:
+            return .long
+        default:
+            return .medium
+        }
+    }
+
+    private func polishTargetText(for project: NovelProject) -> String {
+        let trimmed = project.draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        guard trimmed.count > 1_800 else { return trimmed }
+        return String(trimmed.suffix(1_800))
+    }
+
+    private func requestAutoScroll(to anchor: WritingDeskScrollAnchor) {
+        guard !autoScrollLocked else { return }
+        pendingScrollAnchor = anchor
+    }
+
+    private func focusDraftEditor() {
+        DispatchQueue.main.async {
+            focusedArea = .draft
+        }
+    }
+
+    private func focusAIEditor() {
+        DispatchQueue.main.async {
+            focusedArea = .ai
+        }
+    }
+
+    private func resetSessionState() {
+        aiSuggestion = ""
+        draftBufferText = ""
+        isGenerating = false
+        isCacheCollapsed = false
+        autoScrollLocked = false
+        timingSnapshot = .idle
+        saveMessage = "自动保存已开启"
+        aiStatusMessage = "准备就绪，可先补大纲、参考文本和特殊要求，再开始当前章节写作。"
+        focusDraftEditor()
     }
 
     private func handleReferenceImport(_ result: Result<[URL], Error>) {
@@ -568,7 +707,7 @@ struct WritingDeskView: View {
             let urls = try result.get()
             let documents = try urls.map(loadReferenceDocument)
             appState.importReferenceDocuments(documents, for: project.id)
-            aiStatusMessage = "已导入 \(documents.count) 份参考文本，AI 续写会纳入这些内容。"
+            aiStatusMessage = "已导入 \(documents.count) 份参考文本，AI 写作会同时读取这些材料。"
         } catch {
             aiStatusMessage = "导入参考文本失败：\(error.localizedDescription)"
         }
@@ -581,42 +720,9 @@ struct WritingDeskView: View {
             guard let url = try result.get().first else { return }
             let outlineText = try loadText(from: url)
             appState.updateOutlineText(outlineText, for: project.id)
-            aiStatusMessage = "作品大纲已导入，AI 续写会优先参考当前大纲。"
+            aiStatusMessage = "作品大纲已导入，可以继续补充章节目标和特殊要求。"
         } catch {
             aiStatusMessage = "导入作品大纲失败：\(error.localizedDescription)"
-        }
-    }
-
-    private func generateContinuation(for project: NovelProject) {
-        guard let configuration = appState.aiConfiguration else {
-            aiStatusMessage = "当前模型配置不完整，请先到设置里填写 Base URL、API Key 和模型名称。"
-            return
-        }
-
-        isGenerating = true
-        aiStatusMessage = "AI 正在读取大纲、连续性笔记、参考文本和正文尾段，准备续写当前章节..."
-
-        Task {
-            do {
-                let suggestion = try await AIWritingService.continueChapter(
-                    configuration: configuration,
-                    project: project,
-                    mode: selectedMode,
-                    additionalInstruction: additionalInstruction,
-                    length: selectedLength
-                )
-
-                await MainActor.run {
-                    aiSuggestion = suggestion
-                    isGenerating = false
-                    aiStatusMessage = "AI 已生成续写建议。确认后可以插入正文末尾。"
-                }
-            } catch {
-                await MainActor.run {
-                    isGenerating = false
-                    aiStatusMessage = error.localizedDescription
-                }
-            }
         }
     }
 
@@ -643,303 +749,246 @@ struct WritingDeskView: View {
     private func timestampLabel() -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_Hans_CN")
-        formatter.dateFormat = "MM-dd HH:mm"
+        formatter.dateFormat = "HH:mm"
         return formatter.string(from: Date())
     }
 }
 
-private struct WritingDeskSplitSection<Primary: View, Secondary: View>: View {
-    let alignment: VerticalAlignment
-    @ViewBuilder let primary: Primary
-    @ViewBuilder let secondary: Secondary
+private enum WritingDeskScrollAnchor: String {
+    case draft
+    case ai
+    case cache
+}
+
+private struct AIWriterTimingSnapshot {
+    var queue: Double
+    var generate: Double
+    var finish: Double
+    var complete: Double
+
+    static let idle = AIWriterTimingSnapshot(queue: 0, generate: 0, finish: 0, complete: 0)
+    static let queued = AIWriterTimingSnapshot(queue: 0.1, generate: 0, finish: 0, complete: 0.1)
+}
+
+private struct WritingDeskToolbarAction: Identifiable {
+    let id = UUID()
+    let symbolName: String
+    let accessibilityLabel: String
+    var isEnabled = true
+    var isPrimary = false
+    let action: () -> Void
+}
+
+private struct WritingDeskSectionCard<Content: View>: View {
+    let title: String
+    let badgeText: String?
+    let statusLabel: String?
+    let statusColor: Color?
+    let actions: [WritingDeskToolbarAction]
+    let headerTapAction: (() -> Void)?
+    @ViewBuilder let content: Content
 
     init(
-        alignment: VerticalAlignment = .top,
-        @ViewBuilder primary: () -> Primary,
-        @ViewBuilder secondary: () -> Secondary
+        title: String,
+        badgeText: String? = nil,
+        statusLabel: String? = nil,
+        statusColor: Color? = nil,
+        actions: [WritingDeskToolbarAction] = [],
+        headerTapAction: (() -> Void)? = nil,
+        @ViewBuilder content: () -> Content
     ) {
-        self.alignment = alignment
-        self.primary = primary()
-        self.secondary = secondary()
+        self.title = title
+        self.badgeText = badgeText
+        self.statusLabel = statusLabel
+        self.statusColor = statusColor
+        self.actions = actions
+        self.headerTapAction = headerTapAction
+        self.content = content()
     }
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: alignment, spacing: 22) {
-                primary
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                if let headerTapAction {
+                    Button(action: headerTapAction) {
+                        HStack(spacing: 8) {
+                            Text(title)
+                                .font(.title3.weight(.bold))
+                                .foregroundStyle(.primary)
 
-                secondary
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Text(title)
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(.primary)
+                }
 
-            VStack(alignment: .leading, spacing: 22) {
-                primary
-                secondary
-            }
-        }
-    }
-}
+                if let badgeText {
+                    Text(badgeText)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(Color.white.opacity(0.52))
+                        )
+                }
 
-private struct WritingDeskSignalStrip: View {
-    let project: NovelProject
+                if let statusLabel, let statusColor {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(statusColor)
+                            .frame(width: 8, height: 8)
 
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) {
-                WritingDeskInfoBadge(label: "当前章节", value: project.currentChapterSummary)
-                WritingDeskInfoBadge(label: "正文长度", value: "\(project.draftWordCount) 字")
-                WritingDeskInfoBadge(label: "参考文本", value: project.referenceStatusLabel)
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                WritingDeskInfoBadge(label: "当前章节", value: project.currentChapterSummary)
-                WritingDeskInfoBadge(label: "正文长度", value: "\(project.draftWordCount) 字")
-                WritingDeskInfoBadge(label: "参考文本", value: project.referenceStatusLabel)
-            }
-        }
-    }
-}
-
-private struct WritingDeskInfoBadge: View {
-    let label: String
-    let value: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            Text(value)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
-        )
-    }
-}
-
-private struct WritingDeskFeatureCard: View {
-    let eyebrow: String
-    let title: String
-    let subtitle: String
-    let trailing: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text(eyebrow)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                        Text(statusLabel)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                    }
+                }
 
                 Spacer()
 
-                Text(trailing)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            Text(title)
-                .font(.title3.weight(.bold))
-                .foregroundStyle(.primary)
-
-            Text(subtitle)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(3)
-                .lineSpacing(3)
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
-        )
-    }
-}
-
-private struct WritingDeskChecklistCard: View {
-    let title: String
-    let items: [String]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary)
-
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                    HStack(alignment: .top, spacing: 10) {
-                        Circle()
-                            .fill(Color.accentColor)
-                            .frame(width: 8, height: 8)
-                            .padding(.top, 6)
-
-                        Text(item)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .lineSpacing(3)
+                ForEach(actions) { action in
+                    Button(action: action.action) {
+                        Image(systemName: action.symbolName)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(action.isPrimary ? Color.blue : .primary)
+                            .frame(width: 38, height: 38)
+                            .background(
+                                Circle()
+                                    .fill(Color.white.opacity(0.72))
+                            )
                     }
+                    .buttonStyle(.plain)
+                    .disabled(!action.isEnabled)
+                    .help(action.accessibilityLabel)
+                    .opacity(action.isEnabled ? 1 : 0.45)
                 }
             }
+            .padding(.horizontal, 18)
+            .padding(.top, 18)
+            .padding(.bottom, 16)
+
+            Divider()
+                .overlay(Color.white.opacity(0.16))
+
+            VStack(alignment: .leading, spacing: 14) {
+                content
+            }
+            .padding(18)
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: 30, style: .continuous)
                 .fill(.ultraThinMaterial)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 30, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
         )
+        .shadow(color: Color.black.opacity(0.08), radius: 18, y: 12)
     }
 }
 
-private struct WritingDeskSectionEditor: View {
-    let title: String
+private struct WritingDeskTextSurface: View {
     @Binding var text: String
     let placeholder: String
+    let minHeight: CGFloat
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        TextEditor(text: $text)
+            .font(.system(size: 14, weight: .regular))
+            .scrollContentBackground(.hidden)
+            .padding(14)
+            .frame(minHeight: minHeight, alignment: .topLeading)
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(.ultraThinMaterial)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+            )
+            .overlay(alignment: .topLeading) {
+                if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(placeholder)
+                        .font(.subheadline)
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 18)
+                        .allowsHitTesting(false)
+                }
+            }
+    }
+}
+
+private struct WritingDeskCacheSurface: View {
+    @Binding var text: String
+    let placeholder: String
+    let minHeight: CGFloat
+
+    var body: some View {
+        TextEditor(text: $text)
+            .font(.system(size: 15, weight: .regular, design: .serif))
+            .lineSpacing(4)
+            .scrollContentBackground(.hidden)
+            .padding(14)
+            .frame(minHeight: minHeight, alignment: .topLeading)
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(.ultraThinMaterial)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+            )
+            .overlay(alignment: .topLeading) {
+                if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(placeholder)
+                        .font(.subheadline)
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 18)
+                        .allowsHitTesting(false)
+                }
+            }
+    }
+}
+
+private struct WritingDeskTimelineRow: View {
+    let snapshot: AIWriterTimingSnapshot
+
+    var body: some View {
+        HStack(spacing: 10) {
+            WritingDeskTimelineNode(title: "排队", value: snapshot.queue)
+            WritingDeskTimelineNode(title: "生成", value: snapshot.generate)
+            WritingDeskTimelineNode(title: "收尾", value: snapshot.finish)
+            WritingDeskTimelineNode(title: "完成", value: snapshot.complete)
+        }
+    }
+}
+
+private struct WritingDeskTimelineNode: View {
+    let title: String
+    let value: Double
+
+    var body: some View {
+        VStack(spacing: 6) {
             Text(title)
                 .font(.headline)
-                .foregroundStyle(.primary)
-
-            TextEditor(text: $text)
-                .font(.system(size: 14, weight: .regular))
-                .scrollContentBackground(.hidden)
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
-                )
-                .overlay(alignment: .topLeading) {
-                    if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(placeholder)
-                            .font(.subheadline)
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 18)
-                            .allowsHitTesting(false)
-                    }
-                }
-        }
-    }
-}
-
-private struct WritingDeskMetricGrid: View {
-    let items: [WritingDeskMetricItem]
-
-    var body: some View {
-        LazyVGrid(
-            columns: [
-                GridItem(.flexible(), spacing: 10),
-                GridItem(.flexible(), spacing: 10)
-            ],
-            spacing: 10
-        ) {
-            ForEach(items) { item in
-                WritingDeskMetricCard(label: item.label, value: item.value, detail: item.detail)
-            }
-        }
-    }
-}
-
-private struct WritingDeskMetricItem: Identifiable {
-    let label: String
-    let value: String
-    let detail: String
-
-    var id: String { label }
-}
-
-private struct WritingDeskMetricCard: View {
-    let label: String
-    let value: String
-    let detail: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label)
-                .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
 
-            Text(value)
-                .font(.headline.weight(.bold))
-                .foregroundStyle(.primary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Text(detail)
-                .font(.caption)
+            Text(String(format: "%.1fs", value))
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
-                .lineLimit(2)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
-        )
-    }
-}
-
-private struct ReferenceDocumentRow: View {
-    let document: ReferenceDocument
-    let removeAction: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(document.title)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-
-                    Text("\(document.importedAt) · \(document.wordCount) 字")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Button("移除", action: removeAction)
-                    .buttonStyle(.bordered)
-            }
-
-            Text(document.previewText)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(4)
-                .lineSpacing(3)
-        }
-        .padding(16)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(.ultraThinMaterial)

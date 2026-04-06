@@ -33,6 +33,7 @@ final class AppWindowCoordinator {
 
         guard let window = controller.window else { return }
         bringWindowToFront(window)
+        stabilizeWindowPresentation(window)
     }
 
     func showSettingsWindow() {
@@ -43,6 +44,7 @@ final class AppWindowCoordinator {
 
         guard let window = controller.window else { return }
         bringWindowToFront(window)
+        stabilizeWindowPresentation(window)
     }
 
     private func makeMainWindowController() -> MainWindowController {
@@ -59,9 +61,21 @@ final class AppWindowCoordinator {
     }
 
     private func bringWindowToFront(_ window: NSWindow) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.unhide(nil)
         NSApp.activate(ignoringOtherApps: true)
         window.deminiaturize(nil)
+        window.orderFrontRegardless()
         window.makeKeyAndOrderFront(nil)
+    }
+
+    private func stabilizeWindowPresentation(_ window: NSWindow) {
+        for delay in [0.18, 0.75] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak window] in
+                guard let self, let window else { return }
+                self.bringWindowToFront(window)
+            }
+        }
     }
 }
 

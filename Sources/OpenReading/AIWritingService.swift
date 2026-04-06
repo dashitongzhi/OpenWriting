@@ -134,6 +134,52 @@ enum AIWritingService {
         return text
     }
 
+    static func polishPassage(
+        configuration: AIConnectionConfiguration,
+        project: NovelProject,
+        passage: String
+    ) async throws -> String {
+        let endpoint = configuration.baseURL.appendingPathComponent("chat/completions")
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 120
+
+        let payload = ChatCompletionsRequest(
+            model: configuration.modelName,
+            messages: [
+                .init(role: "system", content: polishSystemPrompt),
+                .init(role: "user", content: polishUserPrompt(project: project, passage: passage))
+            ],
+            temperature: 0.65,
+            maxTokens: 1400
+        )
+
+        request.httpBody = try JSONEncoder().encode(payload)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AIWritingError.invalidResponse
+        }
+
+        guard (200 ..< 300).contains(httpResponse.statusCode) else {
+            let message = String(data: data, encoding: .utf8) ?? "未知错误"
+            throw AIWritingError.serverError(message)
+        }
+
+        let decoded = try JSONDecoder().decode(ChatCompletionsResponse.self, from: data)
+        guard
+            let text = decoded.choices.first?.message.content?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            !text.isEmpty
+        else {
+            throw AIWritingError.emptyResult
+        }
+
+        return text
+    }
+
     private static let systemPrompt = """
     你是一位擅长中文长篇小说创作的原生写作助手。
     你的任务是续写当前章节，而不是重写设定。
@@ -143,6 +189,16 @@ enum AIWritingService {
     3. 只输出可直接接在正文后的小说内容，不要解释，不要列提纲，不要加标题。
     4. 如果参考文本与当前项目冲突，以当前项目摘要、大纲、连续性笔记和已有正文为准。
     5. 保持长篇创作连续性，避免突然跳到未来情节或重复已写内容。
+    """
+
+    private static let polishSystemPrompt = """
+    你是一位擅长中文小说润色的写作助手。
+    你的任务是润色用户给出的现有正文片段，而不是续写新剧情。
+    必须遵守：
+    1. 不改变事件顺序、叙事视角、角色关系和核心信息。
+    2. 优先优化句式、节奏、氛围、动作细节和对白张力。
+    3. 保持人物口吻、世界观规则和长篇整体气质一致。
+    4. 只输出润色后的正文内容，不要解释，不要对比，不要附加说明。
     """
 
     private static func userPrompt(
@@ -177,8 +233,17 @@ enum AIWritingService {
         作品大纲：
         \(normalized(project.outlineText, fallback: "暂无大纲，请依据项目摘要和当前章节目标稳步推进。"))
 
+        手动参考文本：
+        \(normalized(project.referenceContextText, fallback: "暂无手动补充的参考文本。"))
+
         参考文本：
         \(normalized(references, fallback: "暂无导入参考文本。"))
+
+        特殊要求：
+        \(normalized(project.specialRequirements, fallback: "暂无额外特殊要求。"))
+
+        字数设定：
+        \(normalized(project.wordTargetText, fallback: "暂无专门字数设定，请按正常章节节奏展开。"))
 
         当前正文结尾：
         \(excerpt(from: project.draftText, limit: 4200))
@@ -190,6 +255,47 @@ enum AIWritingService {
         \(length.instruction)
         必须保持与当前章节位置、角色口吻、时间线状态和伏笔进度一致。
         请直接输出续写后的正文。
+        """
+    }
+
+    private static func polishUserPrompt(project: NovelProject, passage: String) -> String {
+        let references = project.referenceDocuments
+            .prefix(3)
+            .map { document in
+                "参考《\(document.title)》：\n\(excerpt(from: document.content, limit: 900))"
+            }
+            .joined(separator: "\n\n")
+
+        return """
+        项目名称：\(project.title)
+        类型：\(project.genre)
+        当前章节：\(project.currentChapterSummary)
+        本章目标：\(project.chapterFocus)
+
+        作品大纲：
+        \(normalized(project.outlineText, fallback: "暂无大纲。"))
+
+        连续性笔记：
+        \(normalized(project.continuityNotes, fallback: "暂无连续性笔记，请保持原文气质与视角。"))
+
+        手动参考文本：
+        \(normalized(project.referenceContextText, fallback: "暂无手动参考文本。"))
+
+        导入参考文本：
+        \(normalized(references, fallback: "暂无导入参考文本。"))
+
+        特殊要求：
+        \(normalized(project.specialRequirements, fallback: "以统一语气、增强流畅度为主。"))
+
+        字数设定：
+        \(normalized(project.wordTargetText, fallback: "润色时保持段落体量稳定，不额外扩写。"))
+
+        待润色正文：
+        \(normalized(passage, fallback: "暂无可润色文本。"))
+
+        输出要求：
+        在不改剧情走向和核心信息的前提下，让文字更顺、更稳、更贴近当前项目风格。
+        请直接输出润色后的正文。
         """
     }
 

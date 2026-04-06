@@ -22,8 +22,20 @@ struct OpenReadingApp: App {
 
 @MainActor
 final class OpenReadingAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.unhide(nil)
+        NSApp.activate(ignoringOtherApps: true)
         AppRuntime.shared.windowCoordinator.showMainWindow()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            NSApp.activate(ignoringOtherApps: true)
+            AppRuntime.shared.windowCoordinator.showMainWindow()
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

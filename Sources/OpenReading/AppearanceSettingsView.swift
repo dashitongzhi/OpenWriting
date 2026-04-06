@@ -92,6 +92,18 @@ struct AppearanceSettingsView: View {
                 Section("模型连接") {
                     ModelConnectionSettingsForm(appState: appState)
                 }
+
+                Section("写作台显示") {
+                    Toggle("显示缓存区", isOn: $appState.showWritingDeskCachePanel)
+                        .toggleStyle(.switch)
+
+                    Toggle("显示 AI 作家时间节点", isOn: $appState.showWritingDeskTimeline)
+                        .toggleStyle(.switch)
+
+                    Text("关闭后会隐藏对应模块，但写作台的正文编辑、导入、大纲和 AI 续写能力仍然保留。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             .formStyle(.grouped)
 
@@ -100,7 +112,7 @@ struct AppearanceSettingsView: View {
                 .foregroundStyle(.secondary)
         }
         .padding(24)
-        .frame(width: 460, height: 500, alignment: .topLeading)
+        .frame(width: 460, height: 620, alignment: .topLeading)
     }
 
     private var selectedAppearance: AppAppearance {

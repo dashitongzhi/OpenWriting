@@ -25,7 +25,7 @@ enum LiteraryQuoteLibrary {
     private static let all: [LiteraryQuote] = loadQuotes()
 
     private static func loadQuotes() -> [LiteraryQuote] {
-        guard let url = Bundle.module.url(forResource: "LiteraryQuotes.zh-Hans", withExtension: "tsv"),
+        guard let url = quotesResourceURL(),
               let content = try? String(contentsOf: url, encoding: .utf8) else {
             return []
         }
@@ -33,6 +33,20 @@ enum LiteraryQuoteLibrary {
         return content
             .split(separator: "\n", omittingEmptySubsequences: false)
             .compactMap(parseLine)
+    }
+
+    private static func quotesResourceURL() -> URL? {
+        let resourcePath = "OpenReading_OpenReading.bundle/LiteraryQuotes.zh-Hans.tsv"
+        let candidates = [
+            Bundle.main.resourceURL?.appendingPathComponent(resourcePath),
+            Bundle.main.bundleURL.appendingPathComponent(resourcePath),
+            Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent(resourcePath)
+        ]
+
+        return candidates.first(where: {
+            guard let url = $0 else { return false }
+            return FileManager.default.fileExists(atPath: url.path)
+        }) ?? nil
     }
 
     private static func parseLine(_ line: Substring) -> LiteraryQuote? {
