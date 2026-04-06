@@ -1,6 +1,7 @@
 import AppKit
 import Observation
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct HomeDashboardView: View {
     @Environment(\.colorScheme) private var colorScheme
@@ -9,6 +10,8 @@ struct HomeDashboardView: View {
     @State private var heroMinY: CGFloat = 0
     @State private var heroRestingMinY: CGFloat?
     @State private var isNewProjectSheetPresented = false
+    @State private var isImportingWorldbuilding = false
+    @State private var homeImportStatusMessage = ""
 
     private let contentTopPadding: CGFloat = 18
     private let contentHorizontalPadding: CGFloat = 32
@@ -21,6 +24,10 @@ struct HomeDashboardView: View {
 
     private var activeProject: NovelProject? {
         appState.activeProject
+    }
+
+    private var supportedImportTypes: [UTType] {
+        [.plainText, .utf8PlainText, .text, .sourceCode]
     }
 
     init(appState: AppState, openSettings: @escaping () -> Void = {}) {
@@ -61,6 +68,12 @@ struct HomeDashboardView: View {
                 appState.createProject(named: title)
             }
         }
+        .fileImporter(
+            isPresented: $isImportingWorldbuilding,
+            allowedContentTypes: supportedImportTypes,
+            allowsMultipleSelection: true,
+            onCompletion: handleWorldbuildingImport
+        )
     }
 
     private var heroSection: some View {
@@ -120,7 +133,7 @@ struct HomeDashboardView: View {
                 .foregroundStyle(palette.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text("这是首版 macOS 主页原型：顶部工具栏只保留系统风格的全局操作与设置入口，左侧边栏负责工作区导航，主区同时展示创作概览、最近项目和写作骨架，为后续章节编辑器与 AI 工作流预留结构。")
+            Text("首页现在承担当天的起手台角色：顶部工具栏保留系统风格的全局操作与设置入口，左侧边栏负责工作区导航，主区直接接通创作概览、项目续写、设定导入和写作骨架入口。")
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(palette.textSecondary)
                 .frame(maxWidth: 720, alignment: .leading)
@@ -132,7 +145,7 @@ struct HomeDashboardView: View {
                     .controlSize(.large)
                     .tint(palette.coolAccent)
 
-                Button("导入世界观", action: openLibraryWorkspace)
+                Button("导入世界观", action: presentWorldbuildingImport)
                     .buttonStyle(.bordered)
                     .controlSize(.large)
                     .tint(palette.textPrimary.opacity(0.9))
@@ -161,7 +174,7 @@ struct HomeDashboardView: View {
                 )
             }
 
-            Text("下一步建议：从首页进入“项目空间”，再把角色卡、章节树和写作面板串成完整流。")
+            Text(homeWorkspaceHint)
                 .font(.subheadline)
                 .foregroundStyle(palette.textSecondary)
                 .lineSpacing(3)
@@ -303,36 +316,42 @@ struct HomeDashboardView: View {
             spacing: 14
         ) {
             ForEach(appState.dashboardStats) { stat in
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(stat.title)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(palette.textSecondary)
+                Button {
+                    appState.navigate(to: stat.destination)
+                } label: {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label(stat.title, systemImage: stat.symbolName)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(palette.textSecondary)
 
-                    Text(stat.value)
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
-                        .foregroundStyle(palette.textPrimary)
+                        Text(stat.value)
+                            .font(.system(size: 32, weight: .bold, design: .rounded))
+                            .foregroundStyle(palette.textPrimary)
 
-                    Text(stat.detail)
-                        .font(.caption)
-                        .foregroundStyle(palette.textSecondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(18)
-                .background(
-                    GlassPanelBackground(
-                        cornerRadius: 20,
-                        palette: palette,
-                        tint: LinearGradient(
-                            colors: [
-                                palette.coolAccent.opacity(palette.isDark ? 0.18 : 0.10),
-                                .clear
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
+                        Text(stat.detail)
+                            .font(.caption)
+                            .foregroundStyle(palette.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(18)
+                    .background(
+                        GlassPanelBackground(
+                            cornerRadius: 20,
+                            palette: palette,
+                            tint: LinearGradient(
+                                colors: [
+                                    palette.coolAccent.opacity(palette.isDark ? 0.18 : 0.10),
+                                    .clear
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
                         )
                     )
-                )
-                .overlay(panelStroke(cornerRadius: 20))
+                    .overlay(panelStroke(cornerRadius: 20))
+                }
+                .buttonStyle(.plain)
+                .help(stat.detail)
             }
         }
     }
@@ -357,7 +376,7 @@ struct HomeDashboardView: View {
                 title: "导入设定资料",
                 subtitle: "支持把已有大纲、角色卡和碎片灵感整理进素材库。",
                 symbolName: "square.and.arrow.down",
-                action: openLibraryWorkspace
+                action: presentWorldbuildingImport
             )
         }
     }
@@ -428,7 +447,33 @@ struct HomeDashboardView: View {
 
             HStack(spacing: 12) {
                 WorkspaceMetricBadge(label: "全部项目", value: "\(appState.recentProjects.count)")
-                WorkspaceMetricBadge(label: "当前工作区", value: appState.activeWorkspaceName)
+                WorkspaceMetricBadge(label: "已创作章节", value: "\(appState.totalWrittenChapters) 章")
+            }
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    Button("查看全部项目", action: openProjectsWorkspace)
+                        .buttonStyle(.bordered)
+
+                    Button("继续当前写作", action: continueWriting)
+                        .buttonStyle(.borderedProminent)
+                        .tint(palette.coolAccent)
+
+                    Button("导入设定资料", action: presentWorldbuildingImport)
+                        .buttonStyle(.bordered)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Button("查看全部项目", action: openProjectsWorkspace)
+                        .buttonStyle(.bordered)
+
+                    Button("继续当前写作", action: continueWriting)
+                        .buttonStyle(.borderedProminent)
+                        .tint(palette.coolAccent)
+
+                    Button("导入设定资料", action: presentWorldbuildingImport)
+                        .buttonStyle(.bordered)
+                }
             }
         }
     }
@@ -440,19 +485,33 @@ struct HomeDashboardView: View {
                     homeMiniMetricCard(
                         title: "当前作品",
                         value: activeProject?.title ?? appState.activeWorkspaceName,
-                        detail: activeProject?.genre ?? "工作区"
+                        detail: activeProject?.genre ?? "工作区",
+                        symbolName: SidebarItem.projects.symbolName,
+                        action: openProjectsWorkspace
                     )
 
                     homeMiniMetricCard(
                         title: "当前章节",
                         value: activeProject?.currentChapterLabel ?? "未开始",
-                        detail: activeProject?.currentChapterTitle ?? "等待落笔"
+                        detail: activeProject?.currentChapterTitle ?? "等待落笔",
+                        symbolName: SidebarItem.writingDesk.symbolName,
+                        action: continueWriting
                     )
 
                     homeMiniMetricCard(
                         title: "已创作章节",
                         value: "\(activeProject?.writtenChapters ?? 0) 章",
-                        detail: "和项目空间保持同步"
+                        detail: "打开章节树查看结构",
+                        symbolName: SidebarItem.outline.symbolName,
+                        action: openOutlineWorkspace
+                    )
+
+                    homeMiniMetricCard(
+                        title: "设定资料",
+                        value: "\(appState.totalReferenceDocumentCount) 份",
+                        detail: "补齐世界观与角色库",
+                        symbolName: SidebarItem.library.symbolName,
+                        action: openLibraryWorkspace
                     )
                 }
 
@@ -460,26 +519,40 @@ struct HomeDashboardView: View {
                     homeMiniMetricCard(
                         title: "当前作品",
                         value: activeProject?.title ?? appState.activeWorkspaceName,
-                        detail: activeProject?.genre ?? "工作区"
+                        detail: activeProject?.genre ?? "工作区",
+                        symbolName: SidebarItem.projects.symbolName,
+                        action: openProjectsWorkspace
                     )
 
                     HStack(spacing: 12) {
                         homeMiniMetricCard(
                             title: "当前章节",
                             value: activeProject?.currentChapterLabel ?? "未开始",
-                            detail: activeProject?.currentChapterTitle ?? "等待落笔"
+                            detail: activeProject?.currentChapterTitle ?? "等待落笔",
+                            symbolName: SidebarItem.writingDesk.symbolName,
+                            action: continueWriting
                         )
 
                         homeMiniMetricCard(
                             title: "已创作章节",
                             value: "\(activeProject?.writtenChapters ?? 0) 章",
-                            detail: "和项目空间保持同步"
+                            detail: "打开章节树查看结构",
+                            symbolName: SidebarItem.outline.symbolName,
+                            action: openOutlineWorkspace
+                        )
+
+                        homeMiniMetricCard(
+                            title: "设定资料",
+                            value: "\(appState.totalReferenceDocumentCount) 份",
+                            detail: "补齐世界观与角色库",
+                            symbolName: SidebarItem.library.symbolName,
+                            action: openLibraryWorkspace
                         )
                     }
                 }
             }
 
-            Text("把首页当作当天写作的起跑线：先看当前章节，再回到当前项目和项目空间继续推进。")
+            Text("把首页当作当天写作的起跑线：先看当前章节，再回到当前项目、章节树和设定资料继续推进。")
                 .font(.caption)
                 .foregroundStyle(palette.textSecondary)
                 .lineSpacing(3)
@@ -689,35 +762,65 @@ struct HomeDashboardView: View {
                 .font(.caption)
                 .foregroundStyle(palette.textSecondary)
                 .lineSpacing(3)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    Button("项目空间", action: openProjectsWorkspace)
+                        .buttonStyle(.bordered)
+                    Button("章节树", action: openOutlineWorkspace)
+                        .buttonStyle(.bordered)
+                    Button("素材库", action: openLibraryWorkspace)
+                        .buttonStyle(.bordered)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Button("项目空间", action: openProjectsWorkspace)
+                        .buttonStyle(.bordered)
+                    Button("章节树", action: openOutlineWorkspace)
+                        .buttonStyle(.bordered)
+                    Button("素材库", action: openLibraryWorkspace)
+                        .buttonStyle(.bordered)
+                }
+            }
         }
     }
 
-    private func homeMiniMetricCard(title: String, value: String, detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(palette.textSecondary)
+    private func homeMiniMetricCard(
+        title: String,
+        value: String,
+        detail: String,
+        symbolName: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(title, systemImage: symbolName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(palette.textSecondary)
 
-            Text(value)
-                .font(.headline.weight(.bold))
-                .foregroundStyle(palette.textPrimary)
-                .lineLimit(1)
+                Text(value)
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(palette.textPrimary)
+                    .lineLimit(1)
 
-            Text(detail)
-                .font(.caption)
-                .foregroundStyle(palette.textSecondary)
-                .lineLimit(1)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
+                    .lineLimit(2)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(palette.panelBase.opacity(palette.isDark ? 0.84 : 0.70))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(palette.stroke, lineWidth: 1)
+            )
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(palette.panelBase.opacity(palette.isDark ? 0.84 : 0.70))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(palette.stroke, lineWidth: 1)
-        )
+        .buttonStyle(.plain)
+        .help(detail)
     }
 
     private func workflowStepTag(index: String, title: String) -> some View {
@@ -791,6 +894,18 @@ struct HomeDashboardView: View {
         isNewProjectSheetPresented = true
     }
 
+    private var homeWorkspaceHint: String {
+        if !homeImportStatusMessage.isEmpty {
+            return homeImportStatusMessage
+        }
+
+        return "下一步建议：从首页进入“项目空间”，再把角色卡、章节树和写作面板串成完整流。"
+    }
+
+    private func presentWorldbuildingImport() {
+        isImportingWorldbuilding = true
+    }
+
     private func openLibraryWorkspace() {
         appState.openLibrary()
     }
@@ -805,6 +920,53 @@ struct HomeDashboardView: View {
 
     private func continueWriting() {
         appState.continueWriting()
+    }
+
+    private func handleWorldbuildingImport(_ result: Result<[URL], Error>) {
+        guard let project = activeProject else {
+            homeImportStatusMessage = "当前还没有可接收设定资料的项目，先新建一个项目。"
+            presentNewProjectSheet()
+            return
+        }
+
+        do {
+            let urls = try result.get()
+            let documents = try urls.map(loadReferenceDocument)
+            guard !documents.isEmpty else { return }
+
+            appState.importReferenceDocuments(documents, for: project.id)
+            appState.openWritingDesk(for: project.id)
+            homeImportStatusMessage = "已为《\(project.title)》导入 \(documents.count) 份设定资料，接下来可以在写作台继续使用。"
+        } catch {
+            homeImportStatusMessage = "导入设定资料失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func loadReferenceDocument(from url: URL) throws -> ReferenceDocument {
+        let content = try loadText(from: url)
+        return ReferenceDocument(
+            title: url.deletingPathExtension().lastPathComponent,
+            content: content,
+            importedAt: timestampLabel()
+        )
+    }
+
+    private func loadText(from url: URL) throws -> String {
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer {
+            if accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    private func timestampLabel() -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_Hans_CN")
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: Date())
     }
 }
 

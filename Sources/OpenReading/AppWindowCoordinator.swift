@@ -83,6 +83,9 @@ final class AppWindowCoordinator {
 final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindowDelegate {
     private static let toolbarIdentifier = NSToolbar.Identifier("OpenReading.MainToolbar")
     private let openSettings: () -> Void
+    private weak var observedSplitView: NSSplitView?
+    private var splitViewResizeObserver: NSObjectProtocol?
+    private var pendingToolbarRefreshes: [DispatchWorkItem] = []
 
     init(appState: AppState, openSettings: @escaping () -> Void) {
         self.openSettings = openSettings
@@ -114,6 +117,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         openSettings()
     }
 
+    @objc
+    private func toggleSidebarFromToolbar() {
+        NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: self)
+
+        guard let window else { return }
+        scheduleToolbarRefresh(for: window)
+    }
+
     static func applyWindowChrome(to window: NSWindow) {
         window.title = ""
         window.titleVisibility = .hidden
@@ -130,11 +141,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.flexibleSpace, .toggleSidebar, .sidebarDividerTracking, .flexibleSpace, .openSettings]
+        [.flexibleSpace, .sidebarToggle, .sidebarDividerTracking, .flexibleSpace, .openSettings]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.flexibleSpace, .toggleSidebar, .sidebarDividerTracking, .flexibleSpace, .openSettings]
+        [.flexibleSpace, .sidebarToggle, .sidebarDividerTracking, .flexibleSpace, .openSettings]
     }
 
     func toolbar(
@@ -142,6 +153,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
+        if itemIdentifier == .sidebarToggle {
+            return makeSidebarToggleToolbarItem(itemIdentifier: itemIdentifier)
+        }
+
         if itemIdentifier == .sidebarDividerTracking {
             return makeSidebarTrackingSeparatorItem(itemIdentifier: itemIdentifier)
         }
@@ -156,7 +171,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         item.target = self
         item.action = #selector(openSettingsWindow)
         item.isBordered = true
-        item.visibilityPriority = .user
+        item.autovalidates = false
+        item.visibilityPriority = .high
         return item
     }
 
@@ -190,14 +206,30 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         }
 
         ensureToolbarConfiguration(for: window)
+        installSplitViewObservation(for: window)
 
         Self.applyWindowChrome(to: window)
 
         DispatchQueue.main.async {
             self.ensureToolbarConfiguration(for: window)
+            self.installSplitViewObservation(for: window)
             Self.applyWindowChrome(to: window)
             window.toolbar?.validateVisibleItems()
         }
+    }
+
+    private func makeSidebarToggleToolbarItem(itemIdentifier: NSToolbarItem.Identifier) -> NSToolbarItem {
+        let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+        item.label = "折叠侧边栏"
+        item.paletteLabel = "折叠侧边栏"
+        item.toolTip = "折叠或展开侧边栏"
+        item.image = NSImage(systemSymbolName: "sidebar.leading", accessibilityDescription: "折叠或展开侧边栏")
+        item.target = self
+        item.action = #selector(toggleSidebarFromToolbar)
+        item.isBordered = true
+        item.autovalidates = false
+        item.visibilityPriority = .high
+        return item
     }
 
     private func makeSidebarTrackingSeparatorItem(itemIdentifier: NSToolbarItem.Identifier) -> NSToolbarItem? {
@@ -205,7 +237,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             let splitView = window?.contentViewController?.view.firstDescendantSplitView,
             splitView.subviews.count > 1
         else {
-            return nil
+            return makeToolbarFallbackSpacer(itemIdentifier: itemIdentifier)
         }
 
         return NSTrackingSeparatorToolbarItem(
@@ -215,15 +247,25 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         )
     }
 
+    private func makeToolbarFallbackSpacer(itemIdentifier: NSToolbarItem.Identifier) -> NSToolbarItem {
+        let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+        let spacerView = ToolbarFallbackSpacerView()
+        item.view = spacerView
+        item.visibilityPriority = .low
+        return item
+    }
+
     private func refreshWindowChrome() {
         guard let window else { return }
         ensureToolbarConfiguration(for: window)
+        installSplitViewObservation(for: window)
         Self.applyWindowChrome(to: window)
         window.toolbar?.validateVisibleItems()
     }
 
     func refreshWindowChromeFromSwiftUI(for window: NSWindow) {
         ensureToolbarConfiguration(for: window)
+        installSplitViewObservation(for: window)
         Self.applyWindowChrome(to: window)
         window.toolbar?.validateVisibleItems()
     }
@@ -242,6 +284,45 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
         if window.toolbar !== toolbar {
             window.toolbar = toolbar
+        }
+    }
+
+    private func installSplitViewObservation(for window: NSWindow) {
+        guard let splitView = window.contentViewController?.view.firstDescendantSplitView else { return }
+        guard observedSplitView !== splitView else { return }
+
+        if let splitViewResizeObserver {
+            NotificationCenter.default.removeObserver(splitViewResizeObserver)
+        }
+
+        observedSplitView = splitView
+        splitViewResizeObserver = NotificationCenter.default.addObserver(
+            forName: NSSplitView.didResizeSubviewsNotification,
+            object: splitView,
+            queue: .main
+        ) { [weak self, weak window] _ in
+            guard let self, let window else { return }
+            Task { @MainActor in
+                self.scheduleToolbarRefresh(for: window)
+            }
+        }
+    }
+
+    private func scheduleToolbarRefresh(for window: NSWindow) {
+        pendingToolbarRefreshes.forEach { $0.cancel() }
+        pendingToolbarRefreshes.removeAll()
+
+        for delay in [0.0, 0.12, 0.28] {
+            let workItem = DispatchWorkItem { [weak self, weak window] in
+                guard let self, let window else { return }
+                self.ensureToolbarConfiguration(for: window)
+                self.installSplitViewObservation(for: window)
+                Self.applyWindowChrome(to: window)
+                window.toolbar?.validateVisibleItems()
+            }
+
+            pendingToolbarRefreshes.append(workItem)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
         }
     }
 
@@ -282,6 +363,7 @@ private final class MainWindowHostingController: NSHostingController<AppRootView
 
 private extension NSToolbarItem.Identifier {
     static let sidebarDividerTracking = NSToolbarItem.Identifier("OpenReading.Toolbar.SidebarDividerTracking")
+    static let sidebarToggle = NSToolbarItem.Identifier("OpenReading.Toolbar.SidebarToggle")
     static let openSettings = NSToolbarItem.Identifier("OpenReading.Toolbar.OpenSettings")
 }
 
@@ -298,6 +380,12 @@ private extension NSView {
         }
 
         return nil
+    }
+}
+
+private final class ToolbarFallbackSpacerView: NSView {
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 1, height: 1)
     }
 }
 

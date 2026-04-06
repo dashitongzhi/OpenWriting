@@ -140,11 +140,37 @@ final class AppState {
             DashboardStat(
                 title: "活跃项目",
                 value: String(format: "%02d", recentProjects.count),
-                detail: "多线并行创作"
+                detail: "打开项目空间",
+                symbolName: SidebarItem.projects.symbolName,
+                destination: .projects
             ),
-            DashboardStat(title: "本月字数", value: "84k", detail: "含草稿与扩写"),
-            DashboardStat(title: "提示词包", value: "18", detail: "角色与世界观模板")
+            DashboardStat(
+                title: "正文总字数",
+                value: Self.abbreviatedCount(totalDraftWordCount),
+                detail: "回到写作台继续",
+                symbolName: SidebarItem.writingDesk.symbolName,
+                destination: .writingDesk
+            ),
+            DashboardStat(
+                title: "设定资料",
+                value: "\(totalReferenceDocumentCount)",
+                detail: "进入素材库整理",
+                symbolName: SidebarItem.library.symbolName,
+                destination: .library
+            )
         ]
+    }
+
+    var totalDraftWordCount: Int {
+        recentProjects.reduce(0) { $0 + $1.draftWordCount }
+    }
+
+    var totalReferenceDocumentCount: Int {
+        recentProjects.reduce(0) { $0 + $1.referenceDocuments.count }
+    }
+
+    var totalWrittenChapters: Int {
+        recentProjects.reduce(0) { $0 + $1.writtenChapters }
     }
 
     var activeProject: NovelProject? {
@@ -260,6 +286,23 @@ final class AppState {
 
     func openPrompts() {
         selectedSidebarItem = .prompts
+    }
+
+    func navigate(to item: SidebarItem) {
+        switch item {
+        case .home:
+            selectedSidebarItem = .home
+        case .projects:
+            openProjectSpace()
+        case .writingDesk:
+            openWritingDesk()
+        case .outline:
+            openOutline()
+        case .library:
+            openLibrary()
+        case .prompts:
+            openPrompts()
+        }
     }
 
     func selectProject(_ projectID: NovelProject.ID) {
@@ -508,6 +551,19 @@ final class AppState {
         return formatter.string(from: Date())
     }
 
+    private static func abbreviatedCount(_ value: Int) -> String {
+        switch value {
+        case 10_000...:
+            let normalized = Double(value) / 10_000
+            return String(format: normalized >= 10 ? "%.0fw" : "%.1fw", normalized)
+        case 1_000...:
+            let normalized = Double(value) / 1_000
+            return String(format: normalized >= 10 ? "%.0fk" : "%.1fk", normalized)
+        default:
+            return "\(value)"
+        }
+    }
+
     private func makeProjectIdentifier(from title: String) -> String {
         let slug = title
             .lowercased()
@@ -641,6 +697,8 @@ struct DashboardStat: Identifiable {
     let title: String
     let value: String
     let detail: String
+    let symbolName: String
+    let destination: SidebarItem
 
     var id: String { title }
 }
