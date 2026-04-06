@@ -100,7 +100,7 @@ struct AppearanceSettingsView: View {
                 .foregroundStyle(.secondary)
         }
         .padding(24)
-        .frame(width: 460, height: 430, alignment: .topLeading)
+        .frame(width: 460, height: 500, alignment: .topLeading)
     }
 
     private var selectedAppearance: AppAppearance {
@@ -136,6 +136,14 @@ struct ModelConnectionSettingsForm: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
+                Text("模型名称")
+                    .font(.subheadline.weight(.semibold))
+
+                TextField("gpt-4.1-mini", text: $appState.modelName)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
                 Text("API Key")
                     .font(.subheadline.weight(.semibold))
 
@@ -162,7 +170,7 @@ struct ModelConnectionSettingsForm: View {
                 }
             }
 
-            Text("模型连接属于全局偏好，后续这里会继续接入 Keychain 持久化和真实请求测试。")
+            Text("模型连接属于全局偏好；当前写作台已经可以直接调用 OpenAI 兼容接口续写当前章节。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

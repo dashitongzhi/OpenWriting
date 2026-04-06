@@ -7,6 +7,7 @@ import Security
 final class AppState {
     private enum StorageKey {
         static let selectedProvider = "OpenReading.selectedProvider"
+        static let modelName = "OpenReading.modelName"
         static let baseURL = "OpenReading.baseURL"
         static let autoValidateOnLaunch = "OpenReading.autoValidateOnLaunch"
         static let activeProjectID = "OpenReading.activeProjectID"
@@ -25,6 +26,12 @@ final class AppState {
     var selectedProvider: ModelProvider {
         didSet {
             persistSelectedProvider()
+            markConfigurationAsEdited()
+        }
+    }
+    var modelName: String {
+        didSet {
+            persistModelName()
             markConfigurationAsEdited()
         }
     }
@@ -91,6 +98,7 @@ final class AppState {
         self.selectedProvider = ModelProvider(
             rawValue: userDefaults.string(forKey: StorageKey.selectedProvider) ?? ""
         ) ?? .openAICompatible
+        self.modelName = userDefaults.string(forKey: StorageKey.modelName) ?? "gpt-4.1-mini"
         self.apiKey = Self.loadAPIKeyFromKeychain() ?? ""
         self.baseURL = userDefaults.string(forKey: StorageKey.baseURL) ?? "https://api.openai.com/v1"
         self.autoValidateOnLaunch = userDefaults.object(forKey: StorageKey.autoValidateOnLaunch) as? Bool ?? true
@@ -130,7 +138,9 @@ final class AppState {
     }
 
     var isConfigurationReady: Bool {
-        hasValidBaseURL && !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        hasValidBaseURL &&
+            !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            !modelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     func validateConfiguration() {
@@ -148,8 +158,30 @@ final class AppState {
             return
         }
 
+        guard !modelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            connectionStatus = .needsAttention
+            validationMessage = "模型名称不能为空。"
+            return
+        }
+
         connectionStatus = .ready
         validationMessage = "配置格式已通过，可继续接入真实模型请求。"
+    }
+
+    var aiConfiguration: AIConnectionConfiguration? {
+        guard
+            let resolvedBaseURL = URL(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+            !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            !modelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return nil
+        }
+
+        return AIConnectionConfiguration(
+            baseURL: resolvedBaseURL,
+            apiKey: apiKey.trimmingCharacters(in: .whitespacesAndNewlines),
+            modelName: modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
     }
 
     func createProject(named title: String) {
@@ -160,10 +192,15 @@ final class AppState {
             title: projectTitle,
             genre: "待设定",
             summary: "从一句 logline 开始，继续补齐角色目标、核心冲突和三幕结构。",
-            updatedAt: "刚刚创建",
+            updatedAt: Self.currentTimestampLabel(),
             currentChapterTitle: "开篇设定",
             currentChapterNumber: 1,
-            writtenChapters: 1
+            writtenChapters: 1,
+            chapterFocus: "先写出开篇场景的情绪、主角目标和第一个冲突钩子。",
+            draftText: "",
+            outlineText: "",
+            continuityNotes: "先把主角动机、冲突来源和章节语气稳定下来，再逐步扩展世界观。",
+            referenceDocuments: []
         )
 
         recentProjects.insert(draftProject, at: 0)
@@ -171,7 +208,7 @@ final class AppState {
     }
 
     func continueWriting() {
-        openProjectSpace(for: activeProject?.id ?? recentProjects.first?.id)
+        openWritingDesk(for: activeProject?.id ?? recentProjects.first?.id)
     }
 
     func openProjectSpace(for projectID: NovelProject.ID? = nil) {
@@ -184,6 +221,16 @@ final class AppState {
         selectedProjectID = resolvedProjectID
         projectSpaceScrollTarget = resolvedProjectID
         projectSpaceSelectionPulse += 1
+    }
+
+    func openWritingDesk(for projectID: NovelProject.ID? = nil) {
+        selectedSidebarItem = .writingDesk
+
+        let resolvedProjectID = projectID ?? activeProject?.id ?? recentProjects.first?.id
+        guard let resolvedProjectID else { return }
+
+        activeProjectID = resolvedProjectID
+        selectedProjectID = resolvedProjectID
     }
 
     func openOutline() {
@@ -201,6 +248,61 @@ final class AppState {
     func selectProject(_ projectID: NovelProject.ID) {
         activeProjectID = projectID
         selectedProjectID = projectID
+    }
+
+    func updateDraftText(_ text: String, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.draftText = text
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func updateChapterFocus(_ focus: String, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.chapterFocus = focus
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func updateOutlineText(_ text: String, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.outlineText = text
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func updateContinuityNotes(_ text: String, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.continuityNotes = text
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func appendDraftText(_ text: String, for projectID: NovelProject.ID) {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        updateProject(projectID) { project in
+            if project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                project.draftText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            } else {
+                project.draftText += "\n\n" + text.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func importReferenceDocuments(_ documents: [ReferenceDocument], for projectID: NovelProject.ID) {
+        guard !documents.isEmpty else { return }
+        updateProject(projectID) { project in
+            project.referenceDocuments.insert(contentsOf: documents, at: 0)
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func removeReferenceDocument(_ documentID: ReferenceDocument.ID, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.referenceDocuments.removeAll { $0.id == documentID }
+            project.updatedAt = Self.currentTimestampLabel()
+        }
     }
 
     func project(for projectID: NovelProject.ID) -> NovelProject? {
@@ -258,6 +360,10 @@ final class AppState {
         userDefaults.set(selectedProvider.rawValue, forKey: StorageKey.selectedProvider)
     }
 
+    private func persistModelName() {
+        userDefaults.set(modelName, forKey: StorageKey.modelName)
+    }
+
     private func persistBaseURL() {
         userDefaults.set(baseURL, forKey: StorageKey.baseURL)
     }
@@ -278,6 +384,13 @@ final class AppState {
         let encoder = JSONEncoder()
         guard let data = try? encoder.encode(recentProjects) else { return }
         userDefaults.set(data, forKey: StorageKey.recentProjects)
+    }
+
+    private func updateProject(_ projectID: NovelProject.ID, mutate: (inout NovelProject) -> Void) {
+        guard let index = recentProjects.firstIndex(where: { $0.id == projectID }) else { return }
+        var updatedProject = recentProjects[index]
+        mutate(&updatedProject)
+        recentProjects[index] = updatedProject
     }
 
     private func persistAPIKey() {
@@ -339,6 +452,13 @@ final class AppState {
         return try? JSONDecoder().decode([NovelProject].self, from: data)
     }
 
+    private static func currentTimestampLabel() -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_Hans_CN")
+        formatter.dateFormat = "今天 HH:mm"
+        return formatter.string(from: Date())
+    }
+
     private func makeProjectIdentifier(from title: String) -> String {
         let slug = title
             .lowercased()
@@ -366,7 +486,14 @@ final class AppState {
             updatedAt: "今天 18:20",
             currentChapterTitle: "钟楼退潮",
             currentChapterNumber: 18,
-            writtenChapters: 18
+            writtenChapters: 18,
+            chapterFocus: "让主角在钟楼退潮的片刻发现新的证词，并把港口谎言与失踪案并到同一条线索里。",
+            draftText: "钟楼的钟声在退潮前第三次敲响，雾像一张被谁悄悄掀开的幕布，沿着码头的木板一层层退开。\n\n顾临站在潮痕线外，靴底沾着盐粒。她知道这座城总在钟声之后说真话，但真话从不完整。今天留下来的，是一枚被海水反复冲刷却还带着体温的铜纽扣。\n\n她把纽扣放进掌心，抬头望向钟楼。那扇面朝港口的小窗刚刚关上，像有人在她看见之前，先一步把秘密收了回去。",
+            outlineText: "第一卷：港雾与钟楼\n1. 失踪案在退潮夜启动\n2. 顾临发现钟楼与谎言节律有关\n3. 港务局、钟楼守夜人和失踪名单逐渐并线\n4. 第一卷结尾揭开钟楼记录真话的方式",
+            continuityNotes: "顾临说话克制、观察敏锐，不轻易下判断。海港城市本身像有生命的旁观者，叙事要保留潮湿、冷白和金属感。",
+            referenceDocuments: [
+                ReferenceDocument(title: "港口气氛参考", content: "海雾、潮声、木栈桥与铜钟的意象要反复出现，让城市像一座会呼吸的谜宫。", importedAt: "示例素材")
+            ]
         ),
         NovelProject(
             id: "glass-mountain-letters",
@@ -376,7 +503,14 @@ final class AppState {
             updatedAt: "昨天 21:40",
             currentChapterTitle: "向玻璃山回信",
             currentChapterNumber: 9,
-            writtenChapters: 9
+            writtenChapters: 9,
+            chapterFocus: "把“未来来信”的内容和制图师记忆缺口对应起来，推进她上山的决定。",
+            draftText: "信纸在灯下泛出很浅的银光，像山脊上的雪线。陆遥盯着最后那句“请在山雾到来之前回信”，忽然意识到这不是提醒，而像一次迟到多年的邀请。\n\n她摊开地图，把自己重新标在玻璃山以南的旧驿站。那里明明早该废弃，却在信封背面的速写里，被画成一座仍有人居住的小屋。",
+            outlineText: "第一幕：收到未来来信并确认地图异常\n第二幕：沿着旧驿站与山径上行，逐步恢复记忆\n第三幕：在玻璃山顶完成回信，也理解山脉真实形状",
+            continuityNotes: "文本要有玻璃、雪线和失真地图的视觉感。陆遥偏内省，情绪波动要通过景物和动作慢慢显出来。",
+            referenceDocuments: [
+                ReferenceDocument(title: "山脉意象参考", content: "玻璃山的质感像被风吹亮的冰层，远看透明，近看却遍布细密裂纹。", importedAt: "示例素材")
+            ]
         ),
         NovelProject(
             id: "zero-sunset",
@@ -386,7 +520,14 @@ final class AppState {
             updatedAt: "周一 09:10",
             currentChapterTitle: "黄昏拷贝体",
             currentChapterNumber: 6,
-            writtenChapters: 6
+            writtenChapters: 6,
+            chapterFocus: "写清第一次见到“拷贝体”的震撼感，并让主角意识到今晚的选择会被重复三次。",
+            draftText: "天边那道橘金色迟迟不肯沉下去，像有人把整座城按在同一秒里反复播放。沈渡在轻轨站台看见了第二个自己。\n\n那个人站在对面，衣角、姿势、甚至抬头看时间的动作都和他分毫不差。唯一不同的是，对方的手背上多了一道刚愈合的伤，像某个还没来得及发生在他身上的决定。",
+            outlineText: "序章：共享黄昏开始覆盖整座城\n第一幕：沈渡发现时间复制现象\n第二幕：每次黄昏都会产生一个不同选择的自己\n第三幕：必须决定保留哪个版本的人生",
+            continuityNotes: "城市科技感要克制，重点是时间错位带来的陌生和压迫。沈渡的第一反应是理性压制恐惧，但身体会先于语言暴露异常。",
+            referenceDocuments: [
+                ReferenceDocument(title: "近未来城市场景", content: "黄昏停留太久后，玻璃幕墙和轻轨金属边缘会出现像复制残影一样的重影。", importedAt: "示例素材")
+            ]
         )
     ]
 }
@@ -451,10 +592,99 @@ struct NovelProject: Identifiable, Codable {
     let title: String
     let genre: String
     let summary: String
-    let updatedAt: String
+    var updatedAt: String
     let currentChapterTitle: String
     let currentChapterNumber: Int
     let writtenChapters: Int
+    var chapterFocus: String
+    var draftText: String
+    var outlineText: String
+    var continuityNotes: String
+    var referenceDocuments: [ReferenceDocument]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case genre
+        case summary
+        case updatedAt
+        case currentChapterTitle
+        case currentChapterNumber
+        case writtenChapters
+        case chapterFocus
+        case draftText
+        case outlineText
+        case continuityNotes
+        case referenceDocuments
+        case chapters
+    }
+
+    init(
+        id: String,
+        title: String,
+        genre: String,
+        summary: String,
+        updatedAt: String,
+        currentChapterTitle: String,
+        currentChapterNumber: Int,
+        writtenChapters: Int,
+        chapterFocus: String,
+        draftText: String,
+        outlineText: String,
+        continuityNotes: String,
+        referenceDocuments: [ReferenceDocument]
+    ) {
+        self.id = id
+        self.title = title
+        self.genre = genre
+        self.summary = summary
+        self.updatedAt = updatedAt
+        self.currentChapterTitle = currentChapterTitle
+        self.currentChapterNumber = currentChapterNumber
+        self.writtenChapters = writtenChapters
+        self.chapterFocus = chapterFocus
+        self.draftText = draftText
+        self.outlineText = outlineText
+        self.continuityNotes = continuityNotes
+        self.referenceDocuments = referenceDocuments
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        genre = try container.decode(String.self, forKey: .genre)
+        summary = try container.decode(String.self, forKey: .summary)
+        updatedAt = try container.decode(String.self, forKey: .updatedAt)
+        currentChapterTitle = try container.decodeIfPresent(String.self, forKey: .currentChapterTitle) ?? "开篇设定"
+        currentChapterNumber = try container.decodeIfPresent(Int.self, forKey: .currentChapterNumber) ?? 1
+        writtenChapters = try container.decodeIfPresent(Int.self, forKey: .writtenChapters)
+            ?? container.decodeIfPresent(Int.self, forKey: .chapters)
+            ?? max(currentChapterNumber, 1)
+        chapterFocus = try container.decodeIfPresent(String.self, forKey: .chapterFocus)
+            ?? "继续补齐当前章节的目标、冲突和场景节奏。"
+        draftText = try container.decodeIfPresent(String.self, forKey: .draftText) ?? ""
+        outlineText = try container.decodeIfPresent(String.self, forKey: .outlineText) ?? ""
+        continuityNotes = try container.decodeIfPresent(String.self, forKey: .continuityNotes) ?? ""
+        referenceDocuments = try container.decodeIfPresent([ReferenceDocument].self, forKey: .referenceDocuments) ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(genre, forKey: .genre)
+        try container.encode(summary, forKey: .summary)
+        try container.encode(updatedAt, forKey: .updatedAt)
+        try container.encode(currentChapterTitle, forKey: .currentChapterTitle)
+        try container.encode(currentChapterNumber, forKey: .currentChapterNumber)
+        try container.encode(writtenChapters, forKey: .writtenChapters)
+        try container.encode(chapterFocus, forKey: .chapterFocus)
+        try container.encode(draftText, forKey: .draftText)
+        try container.encode(outlineText, forKey: .outlineText)
+        try container.encode(continuityNotes, forKey: .continuityNotes)
+        try container.encode(referenceDocuments, forKey: .referenceDocuments)
+    }
 
     var currentChapterLabel: String {
         "第 \(currentChapterNumber) 章"
@@ -462,6 +692,75 @@ struct NovelProject: Identifiable, Codable {
 
     var currentChapterSummary: String {
         "\(currentChapterLabel) · \(currentChapterTitle)"
+    }
+
+    var hasOutline: Bool {
+        !outlineText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var hasContinuityNotes: Bool {
+        !continuityNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var outlineStatusLabel: String {
+        hasOutline ? "已导入" : "待补充"
+    }
+
+    var continuityStatusLabel: String {
+        hasContinuityNotes ? "已记录" : "待补充"
+    }
+
+    var referenceStatusLabel: String {
+        referenceDocuments.isEmpty ? "未导入" : "\(referenceDocuments.count) 份"
+    }
+
+    var draftWordCount: Int {
+        draftText
+            .unicodeScalars
+            .filter { !$0.properties.isWhitespace }
+            .count
+    }
+
+    var draftParagraphCount: Int {
+        let paragraphs = draftText
+            .components(separatedBy: CharacterSet.newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return paragraphs.count
+    }
+
+    var draftPreview: String {
+        let trimmed = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "正文还没有展开，可以先写下当前场景的起笔句。" }
+        guard trimmed.count > 120 else { return trimmed }
+        return String(trimmed.suffix(120))
+    }
+}
+
+struct ReferenceDocument: Identifiable, Codable, Hashable {
+    let id: String
+    let title: String
+    let content: String
+    let importedAt: String
+
+    init(id: String = UUID().uuidString, title: String, content: String, importedAt: String) {
+        self.id = id
+        self.title = title
+        self.content = content
+        self.importedAt = importedAt
+    }
+
+    var wordCount: Int {
+        content
+            .unicodeScalars
+            .filter { !$0.properties.isWhitespace }
+            .count
+    }
+
+    var previewText: String {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > 140 else { return trimmed }
+        return String(trimmed.prefix(140)) + "…"
     }
 }
 

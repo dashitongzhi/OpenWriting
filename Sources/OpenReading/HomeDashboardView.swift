@@ -493,6 +493,8 @@ struct HomeDashboardView: View {
                     switch appState.navigationDestination(for: pillar) {
                     case .projects:
                         appState.openProjectSpace()
+                    case .writingDesk:
+                        appState.openWritingDesk()
                     case .outline:
                         appState.openOutline()
                     case .prompts:
@@ -824,6 +826,14 @@ struct PlaceholderWorkspaceView: View {
         appState.activeProject
     }
 
+    private var workspaceHeaderHeight: CGFloat? {
+        item == .projects ? 560 : nil
+    }
+
+    private var workspaceHeaderAlignment: VerticalAlignment {
+        item == .projects ? .top : .bottom
+    }
+
     private var featuredQuote: LiteraryQuote? {
         LiteraryQuoteLibrary.quote(for: item, seed: appState.quoteSeed)
     }
@@ -841,8 +851,8 @@ struct PlaceholderWorkspaceView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
-                        DashboardSplitSection {
-                            VStack(alignment: .leading, spacing: 18) {
+                        DashboardSplitSection(alignment: workspaceHeaderAlignment) {
+                            VStack(alignment: .leading, spacing: 16) {
                                 Text(item.title)
                                     .font(.system(size: 42, weight: .bold, design: .serif))
                                     .foregroundStyle(palette.textPrimary)
@@ -856,7 +866,9 @@ struct PlaceholderWorkspaceView: View {
                                     writingQuotePanel(featuredQuote)
                                 }
 
-                                Spacer(minLength: 18)
+                                if workspaceHeaderHeight != nil {
+                                    Spacer(minLength: 0)
+                                }
 
                                 HStack(spacing: 10) {
                                     PillTag(text: item.title)
@@ -867,8 +879,13 @@ struct PlaceholderWorkspaceView: View {
                                     workspaceContextStrip(for: activeProject)
                                 }
                             }
-                            .padding(30)
-                            .frame(maxWidth: .infinity, minHeight: 370, alignment: .topLeading)
+                            .padding(28)
+                            .frame(
+                                maxWidth: .infinity,
+                                minHeight: workspaceHeaderHeight,
+                                maxHeight: workspaceHeaderHeight,
+                                alignment: .topLeading
+                            )
                             .background(
                                 GlassPanelBackground(
                                     cornerRadius: 32,
@@ -886,8 +903,12 @@ struct PlaceholderWorkspaceView: View {
                             )
                             .overlay(panelStroke(cornerRadius: 32))
                         } secondary: {
-                            WorkspaceUtilityCard(appState: appState, item: item, openSettings: openSettings)
-                                .frame(minHeight: 260)
+                            WorkspaceUtilityCard(
+                                appState: appState,
+                                item: item,
+                                openSettings: openSettings,
+                                fixedHeight: workspaceHeaderHeight
+                            )
                         }
 
                         workspaceDetailSection
@@ -951,8 +972,8 @@ struct PlaceholderWorkspaceView: View {
                     Text(quote.text)
                         .font(.system(size: 24, weight: .bold, design: .serif))
                         .foregroundStyle(palette.textPrimary)
+                        .lineLimit(3)
                         .lineSpacing(4)
-                        .fixedSize(horizontal: false, vertical: true)
 
                     HStack(spacing: 8) {
                         Text(quote.author)
@@ -977,7 +998,7 @@ struct PlaceholderWorkspaceView: View {
                 .padding(.leading, 24)
             }
         }
-        .padding(18)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 24, style: .continuous)
@@ -1013,7 +1034,7 @@ struct PlaceholderWorkspaceView: View {
                     .foregroundStyle(palette.textSecondary)
             }
         }
-        .padding(16)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -1497,17 +1518,23 @@ struct PageBackground: View {
 }
 
 private struct DashboardSplitSection<Primary: View, Secondary: View>: View {
+    let alignment: VerticalAlignment
     @ViewBuilder let primary: Primary
     @ViewBuilder let secondary: Secondary
 
-    init(@ViewBuilder primary: () -> Primary, @ViewBuilder secondary: () -> Secondary) {
+    init(
+        alignment: VerticalAlignment = .top,
+        @ViewBuilder primary: () -> Primary,
+        @ViewBuilder secondary: () -> Secondary
+    ) {
+        self.alignment = alignment
         self.primary = primary()
         self.secondary = secondary()
     }
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: 22) {
+            HStack(alignment: alignment, spacing: 22) {
                 primary
                     .frame(maxWidth: .infinity, alignment: .topLeading)
 
@@ -1618,6 +1645,7 @@ private struct WorkspaceUtilityCard: View {
     @Bindable var appState: AppState
     let item: SidebarItem
     let openSettings: () -> Void
+    let fixedHeight: CGFloat?
 
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
@@ -1628,12 +1656,14 @@ private struct WorkspaceUtilityCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 16) {
             utilityHeader
 
             switch item {
             case .projects:
                 projectUtilityContent
+            case .writingDesk:
+                writingDeskUtilityContent
             case .outline:
                 outlineUtilityContent
             case .library:
@@ -1644,8 +1674,13 @@ private struct WorkspaceUtilityCard: View {
                 EmptyView()
             }
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, minHeight: 370, alignment: .topLeading)
+        .padding(22)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: fixedHeight ?? 370,
+            maxHeight: fixedHeight,
+            alignment: .topLeading
+        )
         .background(
             GlassPanelBackground(
                 cornerRadius: 32,
@@ -1720,6 +1755,39 @@ private struct WorkspaceUtilityCard: View {
             WorkspaceChecklist(
                 title: "续写顺序建议",
                 items: appState.recentProjects.prefix(3).map { "\($0.title) · \($0.updatedAt)" }
+            )
+
+            Button("进入写作台") {
+                appState.openWritingDesk(for: activeProject?.id)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(palette.coolAccent)
+        }
+    }
+
+    private var writingDeskUtilityContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if let activeProject {
+                utilityFeatureCard(
+                    eyebrow: "当前章节",
+                    title: activeProject.currentChapterSummary,
+                    subtitle: activeProject.chapterFocus,
+                    trailing: activeProject.updatedAt
+                )
+            }
+
+            HStack(spacing: 12) {
+                WorkspaceMetricBadge(label: "正文词数", value: "\(activeProject?.draftWordCount ?? 0)")
+                WorkspaceMetricBadge(label: "已创作章节", value: "\(activeProject?.writtenChapters ?? 0) 章")
+            }
+
+            WorkspaceChecklist(
+                title: "写作入口",
+                items: [
+                    "在正文区直接续写当前章节",
+                    "右侧随时调整本章目标和节奏",
+                    "需要结构梳理时再切回章节树或项目空间"
+                ]
             )
         }
     }
@@ -1805,6 +1873,8 @@ private struct WorkspaceUtilityCard: View {
         switch item {
         case .projects:
             return "项目推进"
+        case .writingDesk:
+            return "正文创作"
         case .outline:
             return "结构导航"
         case .library:
@@ -1820,6 +1890,8 @@ private struct WorkspaceUtilityCard: View {
         switch item {
         case .projects:
             return "把正在写的项目、最近更新和续写顺序放在同一张卡里。"
+        case .writingDesk:
+            return "直接回到当前章节，在原生编辑器里继续写正文。"
         case .outline:
             return "快速看结构分布、章节推进和回收节点。"
         case .library:
