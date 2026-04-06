@@ -11,6 +11,7 @@ struct HomeDashboardView: View {
     private let contentTopPadding: CGFloat = 18
     private let contentHorizontalPadding: CGFloat = 32
     private let contentBottomPadding: CGFloat = 32
+    private let homeWorkbenchPanelHeight: CGFloat = 548
 
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
@@ -107,7 +108,7 @@ struct HomeDashboardView: View {
                 .foregroundStyle(palette.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text("这是首版 macOS 主页原型：顶部工具栏只保留系统风格的全局操作与设置入口，左侧边栏负责工作区导航，主区同时展示创作概览、最近项目和模型状态，为后续章节编辑器与 AI 工作流预留结构。")
+            Text("这是首版 macOS 主页原型：顶部工具栏只保留系统风格的全局操作与设置入口，左侧边栏负责工作区导航，主区同时展示创作概览、最近项目和写作骨架，为后续章节编辑器与 AI 工作流预留结构。")
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(palette.textSecondary)
                 .frame(maxWidth: 720, alignment: .leading)
@@ -180,24 +181,23 @@ struct HomeDashboardView: View {
         DashboardSplitSection {
             DashboardPanel(
                 title: "创作雷达",
-                subtitle: "把关键指标放在首页，而不是埋在二级页面。"
+                subtitle: "把关键指标、当前焦点和今日写作节奏一起固定在首页。",
+                fixedHeight: homeWorkbenchPanelHeight
             ) {
-                statGrid
+                VStack(alignment: .leading, spacing: 18) {
+                    statGrid
+                    homeRadarFooter
+                }
             }
         } secondary: {
-            VStack(spacing: 22) {
-                DashboardPanel(
-                    title: "模型连接",
-                    subtitle: "模型供应商和凭证已经收进原生设置窗口。"
-                ) {
-                    ModelConnectionSummaryCard(appState: appState)
-                }
-
-                DashboardPanel(
-                    title: "快速开始",
-                    subtitle: "把最常用的三条动作直接放在首页。"
-                ) {
+            DashboardPanel(
+                title: "快速开始",
+                subtitle: "把最常用的动作排成一条清晰顺手的入口。",
+                fixedHeight: homeWorkbenchPanelHeight
+            ) {
+                VStack(alignment: .leading, spacing: 18) {
                     quickStartSection
+                    homeQuickStartFooter
                 }
             }
         }
@@ -207,25 +207,18 @@ struct HomeDashboardView: View {
         DashboardSplitSection {
             DashboardPanel(
                 title: "最近项目",
-                subtitle: "继续你昨天停下的那一章。"
+                subtitle: "继续你昨天停下的那一章，把最近推进重新接上。",
+                fixedHeight: homeWorkbenchPanelHeight
             ) {
                 recentProjectsSection
             }
         } secondary: {
-            VStack(spacing: 22) {
-                DashboardPanel(
-                    title: "写作骨架",
-                    subtitle: "把人物、结构和模型协作摆在同一屏。"
-                ) {
-                    writingPillarsSection
-                }
-
-                DashboardPanel(
-                    title: "灵感入口",
-                    subtitle: "让首页直接指向可执行的创作动作。"
-                ) {
-                    inspirationSection
-                }
+            DashboardPanel(
+                title: "写作骨架",
+                subtitle: "把人物、结构和灵感入口收进同一张工作卡。",
+                fixedHeight: homeWorkbenchPanelHeight
+            ) {
+                homeWritingSkeletonSection
             }
         }
     }
@@ -349,7 +342,7 @@ struct HomeDashboardView: View {
 
     private var recentProjectsSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            ForEach(appState.recentProjects) { project in
+            ForEach(appState.recentProjects.prefix(2)) { project in
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .firstTextBaseline) {
                         VStack(alignment: .leading, spacing: 4) {
@@ -372,6 +365,7 @@ struct HomeDashboardView: View {
                     Text(project.summary)
                         .font(.subheadline)
                         .foregroundStyle(palette.textSecondary)
+                        .lineLimit(2)
                         .lineSpacing(3)
 
                     HStack {
@@ -404,6 +398,64 @@ struct HomeDashboardView: View {
                 )
                 .overlay(panelStroke(cornerRadius: 22))
             }
+
+            HStack(spacing: 12) {
+                WorkspaceMetricBadge(label: "全部项目", value: "\(appState.recentProjects.count)")
+                WorkspaceMetricBadge(label: "当前工作区", value: appState.activeWorkspaceName)
+            }
+        }
+    }
+
+    private var homeRadarFooter: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    homeMiniMetricCard(
+                        title: "当前作品",
+                        value: activeProject?.title ?? appState.activeWorkspaceName,
+                        detail: activeProject?.genre ?? "工作区"
+                    )
+
+                    homeMiniMetricCard(
+                        title: "当前进度",
+                        value: "\(Int((activeProject?.progress ?? 0) * 100))%",
+                        detail: "延续当前章节推进"
+                    )
+
+                    homeMiniMetricCard(
+                        title: "最近更新",
+                        value: activeProject?.updatedAt ?? "未记录",
+                        detail: "保持写作节奏"
+                    )
+                }
+
+                VStack(spacing: 12) {
+                    homeMiniMetricCard(
+                        title: "当前作品",
+                        value: activeProject?.title ?? appState.activeWorkspaceName,
+                        detail: activeProject?.genre ?? "工作区"
+                    )
+
+                    HStack(spacing: 12) {
+                        homeMiniMetricCard(
+                            title: "当前进度",
+                            value: "\(Int((activeProject?.progress ?? 0) * 100))%",
+                            detail: "延续当前章节推进"
+                        )
+
+                        homeMiniMetricCard(
+                            title: "最近更新",
+                            value: activeProject?.updatedAt ?? "未记录",
+                            detail: "保持写作节奏"
+                        )
+                    }
+                }
+            }
+
+            Text("把首页当作当天写作的起跑线：先看指标，再回到当前项目和章节推进。")
+                .font(.caption)
+                .foregroundStyle(palette.textSecondary)
+                .lineSpacing(3)
         }
     }
 
@@ -508,6 +560,146 @@ struct HomeDashboardView: View {
                 .overlay(panelStroke(cornerRadius: 22))
             }
         }
+    }
+
+    private var homeQuickStartFooter: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("今日推荐路径")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(palette.textSecondary)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    workflowStepTag(index: "01", title: "项目空间")
+                    Image(systemName: "arrow.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(palette.textSecondary)
+
+                    workflowStepTag(index: "02", title: "章节树")
+                    Image(systemName: "arrow.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(palette.textSecondary)
+
+                    workflowStepTag(index: "03", title: "继续写作")
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    workflowStepTag(index: "01", title: "项目空间")
+                    workflowStepTag(index: "02", title: "章节树")
+                    workflowStepTag(index: "03", title: "继续写作")
+                }
+            }
+        }
+    }
+
+    private var homeWritingSkeletonSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            writingPillarsSection
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("灵感入口")
+                    .font(.headline)
+                    .foregroundStyle(palette.textPrimary)
+
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) {
+                        ForEach(appState.inspirationSignals) { signal in
+                            homeSignalChip(signal.title)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(appState.inspirationSignals) { signal in
+                            homeSignalChip(signal.title)
+                        }
+                    }
+                }
+            }
+
+            Text("人物关系图、世界观卡片和章节节奏盘会在下一步继续拆进项目空间。")
+                .font(.caption)
+                .foregroundStyle(palette.textSecondary)
+                .lineSpacing(3)
+        }
+    }
+
+    private func homeMiniMetricCard(title: String, value: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(palette.textSecondary)
+
+            Text(value)
+                .font(.headline.weight(.bold))
+                .foregroundStyle(palette.textPrimary)
+                .lineLimit(1)
+
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(palette.textSecondary)
+                .lineLimit(1)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(palette.panelBase.opacity(palette.isDark ? 0.84 : 0.70))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(palette.stroke, lineWidth: 1)
+        )
+    }
+
+    private func workflowStepTag(index: String, title: String) -> some View {
+        HStack(spacing: 8) {
+            Text(index)
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.white.opacity(0.95))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 5)
+                .background(
+                    Capsule()
+                        .fill(palette.coolAccent.opacity(0.92))
+                )
+
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(palette.textPrimary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            Capsule()
+                .fill(palette.panelBase.opacity(palette.isDark ? 0.88 : 0.70))
+        )
+        .overlay(
+            Capsule()
+                .strokeBorder(palette.stroke, lineWidth: 1)
+        )
+    }
+
+    private func homeSignalChip(_ title: String) -> some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(palette.warmAccent)
+                .frame(width: 8, height: 8)
+
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(palette.textPrimary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(
+            Capsule()
+                .fill(palette.panelBase.opacity(palette.isDark ? 0.88 : 0.72))
+        )
+        .overlay(
+            Capsule()
+                .strokeBorder(palette.stroke, lineWidth: 1)
+        )
     }
 
     private func panelStroke(cornerRadius: CGFloat) -> some View {
@@ -950,10 +1142,23 @@ struct DashboardPanel<Content: View>: View {
     @Environment(\.colorScheme) private var colorScheme
     let title: String
     let subtitle: String
-    @ViewBuilder var content: Content
+    let fixedHeight: CGFloat?
+    let content: Content
 
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
+    }
+
+    init(
+        title: String,
+        subtitle: String,
+        fixedHeight: CGFloat? = nil,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.fixedHeight = fixedHeight
+        self.content = content()
     }
 
     var body: some View {
@@ -970,9 +1175,13 @@ struct DashboardPanel<Content: View>: View {
             }
 
             content
+
+            if fixedHeight != nil {
+                Spacer(minLength: 0)
+            }
         }
         .padding(24)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: fixedHeight, maxHeight: fixedHeight, alignment: .topLeading)
         .background(
             GlassPanelBackground(
                 cornerRadius: 28,
