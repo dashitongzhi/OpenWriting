@@ -126,7 +126,7 @@ struct AppRootView: View {
     private var sidebarSelection: Binding<SidebarItem?> {
         Binding(
             get: { appState.selectedSidebarItem },
-            set: { appState.selectedSidebarItem = $0 ?? .home }
+            set: { appState.navigate(to: $0 ?? .home) }
         )
     }
 }

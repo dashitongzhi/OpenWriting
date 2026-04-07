@@ -247,23 +247,31 @@ final class AppState {
         )
 
         recentProjects.insert(draftProject, at: 0)
-        openProjectSpace(for: draftProject.id)
+        openProjectSpace(for: draftProject.id, scrollToProject: true)
     }
 
     func continueWriting() {
         openWritingDesk(for: activeProject?.id ?? recentProjects.first?.id)
     }
 
-    func openProjectSpace(for projectID: NovelProject.ID? = nil) {
+    func openProjectSpace(for projectID: NovelProject.ID? = nil, scrollToProject: Bool = false) {
         selectedSidebarItem = .projects
 
         let resolvedProjectID = projectID ?? activeProject?.id ?? recentProjects.first?.id
-        guard let resolvedProjectID else { return }
+        guard let resolvedProjectID else {
+            projectSpaceScrollTarget = nil
+            return
+        }
 
         activeProjectID = resolvedProjectID
         selectedProjectID = resolvedProjectID
-        projectSpaceScrollTarget = resolvedProjectID
-        projectSpaceSelectionPulse += 1
+
+        if scrollToProject {
+            projectSpaceScrollTarget = resolvedProjectID
+            projectSpaceSelectionPulse += 1
+        } else {
+            projectSpaceScrollTarget = nil
+        }
     }
 
     func openWritingDesk(for projectID: NovelProject.ID? = nil) {
@@ -308,6 +316,10 @@ final class AppState {
     func selectProject(_ projectID: NovelProject.ID) {
         activeProjectID = projectID
         selectedProjectID = projectID
+    }
+
+    func clearProjectSpaceScrollTarget() {
+        projectSpaceScrollTarget = nil
     }
 
     func updateDraftText(_ text: String, for projectID: NovelProject.ID) {

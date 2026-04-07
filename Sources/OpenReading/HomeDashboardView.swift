@@ -385,7 +385,7 @@ struct HomeDashboardView: View {
         VStack(alignment: .leading, spacing: 14) {
             ForEach(appState.recentProjects.prefix(2)) { project in
                 Button {
-                    appState.openProjectSpace(for: project.id)
+                    appState.openProjectSpace(for: project.id, scrollToProject: true)
                 } label: {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(alignment: .firstTextBaseline) {
@@ -1076,15 +1076,16 @@ struct PlaceholderWorkspaceView: View {
                     .padding(.bottom, contentBottomPadding)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
+                .id(item)
                 .background(TopAnchorBounceLockView())
                 .onAppear {
-                    scrollToSelectedProject(using: proxy, animated: false)
+                    scrollToExplicitProject(using: proxy, animated: false)
                 }
                 .onChange(of: item) {
-                    scrollToSelectedProject(using: proxy, animated: false)
+                    scrollToExplicitProject(using: proxy, animated: false)
                 }
                 .onChange(of: appState.projectSpaceSelectionPulse) {
-                    scrollToSelectedProject(using: proxy, animated: true)
+                    scrollToExplicitProject(using: proxy, animated: true)
                 }
             }
         }
@@ -1224,9 +1225,9 @@ struct PlaceholderWorkspaceView: View {
         }
     }
 
-    private func scrollToSelectedProject(using proxy: ScrollViewProxy, animated: Bool) {
+    private func scrollToExplicitProject(using proxy: ScrollViewProxy, animated: Bool) {
         guard item == .projects else { return }
-        guard let projectID = appState.projectSpaceScrollTarget ?? appState.selectedProjectID else { return }
+        guard let projectID = appState.projectSpaceScrollTarget else { return }
 
         DispatchQueue.main.async {
             if animated {
@@ -1236,6 +1237,8 @@ struct PlaceholderWorkspaceView: View {
             } else {
                 proxy.scrollTo(projectID, anchor: .center)
             }
+
+            appState.clearProjectSpaceScrollTarget()
         }
     }
 }
