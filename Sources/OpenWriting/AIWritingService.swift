@@ -147,6 +147,34 @@ enum AIWritingService {
         return normalizedTitle
     }
 
+    static func generateStoryOutline(
+        configuration: AIConnectionConfiguration,
+        project: NovelProject,
+        profile: OutlineGenerationProfile
+    ) async throws -> String {
+        try await completeText(
+            configuration: configuration,
+            systemPrompt: outlineGenerationSystemPrompt,
+            userPrompt: outlineGenerationUserPrompt(project: project, profile: profile),
+            temperature: 0.72,
+            maxTokens: 2_600
+        )
+    }
+
+    static func refreshGlobalMemory(
+        configuration: AIConnectionConfiguration,
+        project: NovelProject,
+        chapterDraft: ChapterDraft
+    ) async throws -> String {
+        try await completeText(
+            configuration: configuration,
+            systemPrompt: globalMemorySystemPrompt,
+            userPrompt: globalMemoryUserPrompt(project: project, chapterDraft: chapterDraft),
+            temperature: 0.35,
+            maxTokens: 1_800
+        )
+    }
+
     private static func completeText(
         configuration: AIConnectionConfiguration,
         systemPrompt: String,
@@ -202,7 +230,7 @@ enum AIWritingService {
     1. 保持人物语气、世界观规则和既有叙事视角一致。
     2. 优先延续已有正文最后一段的节奏、句式和情绪。
     3. 只输出可直接接在正文后的小说内容，不要解释，不要列提纲，不要加标题。
-    4. 如果参考文本与当前项目冲突，以当前项目摘要、大纲、连续性笔记和已有正文为准。
+    4. 如果参考文本与当前项目冲突，以当前项目摘要、大纲、全局记忆和已有正文为准。
     5. 保持长篇创作连续性，避免突然跳到未来情节或重复已写内容。
     """
 
@@ -227,6 +255,27 @@ enum AIWritingService {
     5. 用清晰分段输出以下 5 个小节：当前结构判断、本章推进建议、角色弧线提醒、伏笔与回收、下一步整理动作。
     """
 
+    private static let globalMemorySystemPrompt = """
+    你是一位擅长长篇小说连续性管理的全局记忆编辑。
+    你的任务是根据最新保存章节，更新后续创作要用的长期记忆。
+    必须遵守：
+    1. 只根据用户提供的内容更新，不虚构没有依据的新设定。
+    2. 优先记录“现在的真实状态”，过期信息要被替换或修正，避免简单重复堆叠。
+    3. 输出必须严格使用以下 9 个标题，且顺序不能变：
+    前情推进：
+    人物关系：
+    身份变化：
+    伤势状态：
+    阵营立场：
+    关键地点：
+    关键道具：
+    世界状态：
+    未回收伏笔：
+    4. 每个小节使用 1 到 4 条以“- ”开头的短句；如果没有明确变化，就写“- 暂无明确变化”或“- 暂无新增”。
+    5. 输出内容要能直接拿去做正文生成、润色、断点恢复和一致性修正。
+    6. 只输出全局记忆，不要解释。
+    """
+
     private static let chapterTitleSystemPrompt = """
     你是一位擅长中文小说命名的章节编辑。
     你的任务是根据当前章节正文，为它拟一个适合长篇连载的章节标题。
@@ -235,6 +284,18 @@ enum AIWritingService {
     2. 标题要贴合正文内容、氛围和推进重点，但避免剧透最终答案。
     3. 控制在 4 到 14 个汉字以内，尽量凝练、好记、有画面感。
     4. 如果用户已有章节标题，只把它当参考，不要机械重复。
+    """
+
+    private static let outlineGenerationSystemPrompt = """
+    你是一位擅长中文长篇网文策划的大纲编辑。
+    你的任务是根据用户给出的创作条件，产出一份可直接开写的小说大纲。
+    必须遵守：
+    1. 优先服从用户已经明确写出的总体流程、世界观、主角底色、预期字数和结局偏好。
+    2. 若信息不足，只做最小必要补全，不要擅自改变题材方向、人物底色或结局倾向。
+    3. 输出要服务于长篇连载创作，尽量明确阶段推进、冲突升级、爽点释放和伏笔回收。
+    4. 不要解释提示词结构，不要写“根据你的要求”，直接输出中文大纲正文。
+    5. 请按以下结构输出：作品定位、总纲主线、阶段/分卷推进、核心人物与关系、关键事件与伏笔、结局落点。
+    6. 请根据预期字数控制规模，字数越长，阶段规划和伏笔层级应越完整。
     """
 
     private static func userPrompt(
@@ -263,7 +324,7 @@ enum AIWritingService {
         本次写作模式：
         \(mode.title)；\(mode.instruction)
 
-        长篇连续性笔记：
+        全局记忆：
         \(normalized(project.continuityNotes, fallback: "暂无，请优先保持当前正文语气、叙事视角和冲突方向。"))
 
         作品大纲：
@@ -311,8 +372,8 @@ enum AIWritingService {
         作品大纲：
         \(normalized(project.outlineText, fallback: "暂无大纲。"))
 
-        连续性笔记：
-        \(normalized(project.continuityNotes, fallback: "暂无连续性笔记，请保持原文气质与视角。"))
+        全局记忆：
+        \(normalized(project.continuityNotes, fallback: "暂无全局记忆，请保持原文气质与视角。"))
 
         手动参考文本：
         \(normalized(project.referenceContextText, fallback: "暂无手动参考文本。"))
@@ -366,8 +427,8 @@ enum AIWritingService {
         伏笔与回收记录：
         \(normalized(project.foreshadowNotes, fallback: "暂无伏笔回收记录。"))
 
-        连续性笔记：
-        \(normalized(project.continuityNotes, fallback: "暂无连续性笔记。"))
+        全局记忆：
+        \(normalized(project.continuityNotes, fallback: "暂无全局记忆。"))
 
         正文摘要：
         \(normalized(excerpt(from: project.draftText, limit: 2200), fallback: "正文还较短，请重点根据大纲和本章目标判断结构。"))
@@ -403,6 +464,89 @@ enum AIWritingService {
 
         输出要求：
         请只返回一个可直接用于章节保存的标题。
+        """
+    }
+
+    private static func outlineGenerationUserPrompt(
+        project: NovelProject,
+        profile: OutlineGenerationProfile
+    ) -> String {
+        """
+        项目名称：\(project.title)
+        类型：\(project.genre)
+        项目摘要：\(normalized(project.summary, fallback: "暂无项目摘要。"))
+        现有大纲参考：
+        \(normalized(project.outlineText, fallback: "暂无现成大纲，请从零开始生成。"))
+
+        请将以下信息按 4 组理解并据此生成小说大纲：
+
+        小说框架：
+        - 总体流程：\(normalized(profile.storyFlow, fallback: "未填写，请以项目摘要为主补全。"))
+        - 主要卖点：\(normalized(profile.sellingPoints, fallback: "未额外指定，请根据题材做最小必要补足。"))
+        - 关键事件：\(normalized(profile.keyEvents, fallback: "未额外指定，请围绕总体流程补足关键转折。"))
+        - 故事节奏：\(normalized(profile.storyPacing, fallback: "未额外指定，请按长篇连载的正常节奏安排。"))
+        - 重要伏笔：\(normalized(profile.foreshadowingNotes, fallback: "未额外指定，请只补充必要伏笔。"))
+
+        主要世界观：
+        - 世界观描述：\(normalized(profile.worldDescription, fallback: "未填写，请只做最小必要补足。"))
+
+        核心人物设定：
+        - 主角性格标签：\(normalized(profile.protagonistTraits, fallback: "未填写，请根据项目摘要保守补足。"))
+        - 角色动机与欲望：\(normalized(profile.motivations, fallback: "未额外指定，请从主线目标自然推导。"))
+        - 人物关系图谱：\(normalized(profile.relationshipMap, fallback: "未额外指定，请只补充主线必要关系。"))
+        - 反派的描绘：\(normalized(profile.antagonistPortrait, fallback: "未额外指定，请补足主线对抗面。"))
+
+        输出控制参数：
+        - 预期字数：\(normalized(profile.expectedLength, fallback: "未填写，请按中长篇规模生成。"))
+        - 结局偏好：\(normalized(profile.endingPreference, fallback: "未填写，请默认做收束明确的结局。"))
+
+        输出要求：
+        1. 开篇要明确“故事怎么开头”，中段要写清“怎么推进”，结尾要点出“最终会走到哪里”。
+        2. 世界观部分要把背景、势力、规则、境界体系或核心约束说清楚。
+        3. 角色部分重点突出主角底色、欲望驱动、关键关系和反派压力。
+        4. 如果用户填了卖点、关键事件、伏笔，请务必在大纲里落地，而不是只复述原话。
+        5. 直接输出可用大纲，不要附加解释。
+        """
+    }
+
+    private static func globalMemoryUserPrompt(
+        project: NovelProject,
+        chapterDraft: ChapterDraft
+    ) -> String {
+        """
+        项目名称：\(project.title)
+        类型：\(project.genre)
+        项目摘要：\(normalized(project.summary, fallback: "暂无项目摘要。"))
+        当前保存章节：\(chapterDraft.chapterSummary)
+        当前创作进度：已创作 \(project.writtenChapters) 章
+
+        现有全局记忆：
+        \(normalized(project.continuityNotes, fallback: "暂无现成全局记忆，请根据本次保存章节建立第一版。"))
+
+        作品大纲：
+        \(normalized(project.outlineText, fallback: "暂无完整大纲。"))
+
+        章节骨架拆解：
+        \(normalized(project.structureNotes, fallback: "暂无章节骨架拆解。"))
+
+        场景推进记录：
+        \(normalized(project.sceneProgressNotes, fallback: "暂无场景推进记录。"))
+
+        角色弧线记录：
+        \(normalized(project.characterArcNotes, fallback: "暂无角色弧线记录。"))
+
+        伏笔与回收记录：
+        \(normalized(project.foreshadowNotes, fallback: "暂无伏笔回收记录。"))
+
+        章节树总结：
+        \(normalized(project.outlineSummary, fallback: "暂无章节树总结。"))
+
+        最新保存章节正文：
+        \(excerpt(from: chapterDraft.content, limit: 4_200))
+
+        输出要求：
+        请把这次章节保存后，后续创作真正需要记住的长期信息整理出来。
+        重点覆盖：前文发生过什么、人物关系、身份变化、伤势、阵营、地点、道具、世界状态、尚未回收的伏笔。
         """
     }
 

@@ -407,6 +407,13 @@ final class AppState {
         }
     }
 
+    func updateOutlineGenerationProfile(_ profile: OutlineGenerationProfile, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.outlineGenerationProfile = profile
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
     func updateStructureNotes(_ text: String, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.structureNotes = text
@@ -471,9 +478,35 @@ final class AppState {
         }
     }
 
-    func updateContinuityNotes(_ text: String, for projectID: NovelProject.ID) {
+    func updateContinuityNotes(_ text: String, updatedAt: String? = nil, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
-            project.continuityNotes = text
+            let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            project.continuityNotes = trimmedText
+            project.globalMemorySnapshot = GlobalMemorySnapshot.parse(from: trimmedText)
+            if trimmedText.isEmpty {
+                project.globalMemoryUpdatedAt = ""
+            } else if let updatedAt {
+                project.globalMemoryUpdatedAt = updatedAt
+            } else if project.globalMemoryUpdatedAt.isEmpty {
+                project.globalMemoryUpdatedAt = Self.currentTimestampLabel()
+            }
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func updateGlobalMemorySnapshot(
+        _ snapshot: GlobalMemorySnapshot,
+        updatedAt: String? = nil,
+        for projectID: NovelProject.ID
+    ) {
+        updateProject(projectID) { project in
+            project.globalMemorySnapshot = snapshot
+            project.continuityNotes = snapshot.formattedText
+            if snapshot.hasStructuredContent {
+                project.globalMemoryUpdatedAt = updatedAt ?? Self.currentTimestampLabel()
+            } else {
+                project.globalMemoryUpdatedAt = ""
+            }
             project.updatedAt = Self.currentTimestampLabel()
         }
     }
@@ -561,18 +594,38 @@ final class AppState {
         }
     }
 
+    func updateReferenceDocumentCategory(
+        _ category: ReferenceMaterialCategory,
+        documentID: ReferenceDocument.ID,
+        for projectID: NovelProject.ID
+    ) {
+        updateProject(projectID) { project in
+            guard let index = project.referenceDocuments.firstIndex(where: { $0.id == documentID }) else { return }
+            project.referenceDocuments[index].category = category
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
     func appendOutlineSummaryToContinuity(for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             let summary = project.outlineSummary.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !summary.isEmpty else { return }
 
-            let stampedSummary = "章节树总结（\(project.outlineSummaryUpdatedAt.isEmpty ? Self.currentTimestampLabel() : project.outlineSummaryUpdatedAt)）\n\(summary)"
-            if project.continuityNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                project.continuityNotes = stampedSummary
+            var snapshot = project.globalMemorySnapshot.hasStructuredContent
+                ? project.globalMemorySnapshot
+                : GlobalMemorySnapshot.parse(from: project.continuityNotes)
+            let stampedSummary = "- 章节树总结（\(project.outlineSummaryUpdatedAt.isEmpty ? Self.currentTimestampLabel() : project.outlineSummaryUpdatedAt)）：\(summary.replacingOccurrences(of: "\n", with: " "))"
+            let existingRecentDevelopments = snapshot.recentDevelopments.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if existingRecentDevelopments.isEmpty {
+                snapshot.recentDevelopments = stampedSummary
             } else {
-                project.continuityNotes += "\n\n" + stampedSummary
+                snapshot.recentDevelopments = stampedSummary + "\n" + existingRecentDevelopments
             }
 
+            project.globalMemorySnapshot = snapshot
+            project.continuityNotes = snapshot.formattedText
+            project.globalMemoryUpdatedAt = Self.currentTimestampLabel()
             project.updatedAt = Self.currentTimestampLabel()
         }
     }
@@ -1012,6 +1065,289 @@ struct ChapterDraft: Identifiable, Codable, Hashable {
     }
 }
 
+struct OutlineGenerationProfile: Codable, Hashable {
+    var storyFlow: String
+    var worldDescription: String
+    var protagonistTraits: String
+    var expectedLength: String
+    var endingPreference: String
+    var sellingPoints: String
+    var keyEvents: String
+    var storyPacing: String
+    var motivations: String
+    var relationshipMap: String
+    var antagonistPortrait: String
+    var foreshadowingNotes: String
+
+    static let empty = OutlineGenerationProfile(
+        storyFlow: "",
+        worldDescription: "",
+        protagonistTraits: "",
+        expectedLength: "",
+        endingPreference: "",
+        sellingPoints: "",
+        keyEvents: "",
+        storyPacing: "",
+        motivations: "",
+        relationshipMap: "",
+        antagonistPortrait: "",
+        foreshadowingNotes: ""
+    )
+
+    var completedRequiredFieldCount: Int {
+        [
+            storyFlow,
+            worldDescription,
+            protagonistTraits,
+            expectedLength,
+            endingPreference
+        ]
+        .filter { Self.hasContent($0) }
+        .count
+    }
+
+    var filledOptionalFieldCount: Int {
+        [
+            sellingPoints,
+            keyEvents,
+            storyPacing,
+            motivations,
+            relationshipMap,
+            antagonistPortrait,
+            foreshadowingNotes
+        ]
+        .filter { Self.hasContent($0) }
+        .count
+    }
+
+    var missingRequiredFieldLabels: [String] {
+        var labels: [String] = []
+
+        if !Self.hasContent(storyFlow) {
+            labels.append("总体流程")
+        }
+
+        if !Self.hasContent(worldDescription) {
+            labels.append("世界观描述")
+        }
+
+        if !Self.hasContent(protagonistTraits) {
+            labels.append("主角性格标签")
+        }
+
+        if !Self.hasContent(expectedLength) {
+            labels.append("预期字数")
+        }
+
+        if !Self.hasContent(endingPreference) {
+            labels.append("结局偏好")
+        }
+
+        return labels
+    }
+
+    var hasMinimumRequirements: Bool {
+        missingRequiredFieldLabels.isEmpty
+    }
+
+    var minimumRequirementSummary: String {
+        if hasMinimumRequirements {
+            return "最简可用的 5 项已准备完成，可以直接生成大纲。"
+        }
+
+        return "还差 \(missingRequiredFieldLabels.joined(separator: "、"))。"
+    }
+
+    private static func hasContent(_ text: String) -> Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+struct GlobalMemorySnapshot: Codable, Hashable {
+    enum Section: String, CaseIterable {
+        case recentDevelopments = "前情推进"
+        case characterRelations = "人物关系"
+        case identityChanges = "身份变化"
+        case injuries = "伤势状态"
+        case factions = "阵营立场"
+        case locations = "关键地点"
+        case items = "关键道具"
+        case worldState = "世界状态"
+        case unresolvedForeshadowing = "未回收伏笔"
+    }
+
+    var recentDevelopments: String
+    var characterRelations: String
+    var identityChanges: String
+    var injuries: String
+    var factions: String
+    var locations: String
+    var items: String
+    var worldState: String
+    var unresolvedForeshadowing: String
+
+    static let empty = GlobalMemorySnapshot(
+        recentDevelopments: "",
+        characterRelations: "",
+        identityChanges: "",
+        injuries: "",
+        factions: "",
+        locations: "",
+        items: "",
+        worldState: "",
+        unresolvedForeshadowing: ""
+    )
+
+    var populatedSectionCount: Int {
+        Section.allCases
+            .map(value(for:))
+            .filter { Self.hasContent($0) }
+            .count
+    }
+
+    var hasStructuredContent: Bool {
+        populatedSectionCount > 0
+    }
+
+    var formattedText: String {
+        Section.allCases
+            .map { section in
+                "\(section.rawValue)：\n\(formattedValue(for: section))"
+            }
+            .joined(separator: "\n\n")
+    }
+
+    func value(for section: Section) -> String {
+        switch section {
+        case .recentDevelopments:
+            return recentDevelopments
+        case .characterRelations:
+            return characterRelations
+        case .identityChanges:
+            return identityChanges
+        case .injuries:
+            return injuries
+        case .factions:
+            return factions
+        case .locations:
+            return locations
+        case .items:
+            return items
+        case .worldState:
+            return worldState
+        case .unresolvedForeshadowing:
+            return unresolvedForeshadowing
+        }
+    }
+
+    mutating func setValue(_ value: String, for section: Section) {
+        switch section {
+        case .recentDevelopments:
+            recentDevelopments = value
+        case .characterRelations:
+            characterRelations = value
+        case .identityChanges:
+            identityChanges = value
+        case .injuries:
+            injuries = value
+        case .factions:
+            factions = value
+        case .locations:
+            locations = value
+        case .items:
+            items = value
+        case .worldState:
+            worldState = value
+        case .unresolvedForeshadowing:
+            unresolvedForeshadowing = value
+        }
+    }
+
+    static func parse(from text: String) -> GlobalMemorySnapshot {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else { return .empty }
+
+        var snapshot = GlobalMemorySnapshot.empty
+        var currentSection: Section?
+
+        for rawLine in trimmedText.components(separatedBy: CharacterSet.newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty else { continue }
+
+            if let matchedSection = matchedSection(for: line) {
+                currentSection = matchedSection
+                let header = matchedSection.rawValue
+                let remainder = line
+                    .replacingOccurrences(of: header, with: "", options: [.anchored])
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "：: "))
+
+                if !remainder.isEmpty {
+                    append(remainder, to: matchedSection, in: &snapshot)
+                }
+
+                continue
+            }
+
+            if let currentSection {
+                append(line, to: currentSection, in: &snapshot)
+            }
+        }
+
+        if !snapshot.hasStructuredContent {
+            snapshot.recentDevelopments = trimmedText
+        }
+
+        return snapshot
+    }
+
+    private func formattedValue(for section: Section) -> String {
+        let trimmed = value(for: section).trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? Self.placeholder(for: section) : trimmed
+    }
+
+    private static func append(_ line: String, to section: Section, in snapshot: inout GlobalMemorySnapshot) {
+        let existing = snapshot.value(for: section).trimmingCharacters(in: .whitespacesAndNewlines)
+        if existing.isEmpty {
+            snapshot.setValue(line, for: section)
+        } else {
+            snapshot.setValue(existing + "\n" + line, for: section)
+        }
+    }
+
+    private static func matchedSection(for line: String) -> Section? {
+        Section.allCases.first { section in
+            line.hasPrefix(section.rawValue)
+        }
+    }
+
+    private static func placeholder(for section: Section) -> String {
+        switch section {
+        case .recentDevelopments:
+            return "- 待补当前长期记忆中的前情推进。"
+        case .characterRelations:
+            return "- 暂无人际关系的新变化。"
+        case .identityChanges:
+            return "- 暂无身份或立场变化。"
+        case .injuries:
+            return "- 暂无明确伤势变化。"
+        case .factions:
+            return "- 暂无阵营归属更新。"
+        case .locations:
+            return "- 暂无关键地点状态更新。"
+        case .items:
+            return "- 暂无关键道具变化。"
+        case .worldState:
+            return "- 暂无世界状态的新变化。"
+        case .unresolvedForeshadowing:
+            return "- 暂无新增待回收伏笔。"
+        }
+    }
+
+    private static func hasContent(_ text: String) -> Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
 struct NovelProject: Identifiable, Codable {
     let id: String
     let title: String
@@ -1024,6 +1360,7 @@ struct NovelProject: Identifiable, Codable {
     var chapterFocus: String
     var draftText: String
     var outlineText: String
+    var outlineGenerationProfile: OutlineGenerationProfile
     var structureNotes: String
     var sceneProgressNotes: String
     var characterArcNotes: String
@@ -1034,6 +1371,8 @@ struct NovelProject: Identifiable, Codable {
     var specialRequirements: String
     var wordTargetText: String
     var continuityNotes: String
+    var globalMemorySnapshot: GlobalMemorySnapshot
+    var globalMemoryUpdatedAt: String
     var referenceDocuments: [ReferenceDocument]
     var chapterDrafts: [ChapterDraft]
 
@@ -1049,6 +1388,7 @@ struct NovelProject: Identifiable, Codable {
         case chapterFocus
         case draftText
         case outlineText
+        case outlineGenerationProfile
         case structureNotes
         case sceneProgressNotes
         case characterArcNotes
@@ -1059,6 +1399,8 @@ struct NovelProject: Identifiable, Codable {
         case specialRequirements
         case wordTargetText
         case continuityNotes
+        case globalMemorySnapshot
+        case globalMemoryUpdatedAt
         case referenceDocuments
         case chapterDrafts
         case chapters
@@ -1076,6 +1418,7 @@ struct NovelProject: Identifiable, Codable {
         chapterFocus: String,
         draftText: String,
         outlineText: String,
+        outlineGenerationProfile: OutlineGenerationProfile = .empty,
         structureNotes: String = "",
         sceneProgressNotes: String = "",
         characterArcNotes: String = "",
@@ -1086,6 +1429,8 @@ struct NovelProject: Identifiable, Codable {
         specialRequirements: String,
         wordTargetText: String,
         continuityNotes: String,
+        globalMemorySnapshot: GlobalMemorySnapshot = .empty,
+        globalMemoryUpdatedAt: String = "",
         referenceDocuments: [ReferenceDocument],
         chapterDrafts: [ChapterDraft] = []
     ) {
@@ -1100,6 +1445,7 @@ struct NovelProject: Identifiable, Codable {
         self.chapterFocus = chapterFocus
         self.draftText = draftText
         self.outlineText = outlineText
+        self.outlineGenerationProfile = outlineGenerationProfile
         self.structureNotes = structureNotes
         self.sceneProgressNotes = sceneProgressNotes
         self.characterArcNotes = characterArcNotes
@@ -1110,6 +1456,11 @@ struct NovelProject: Identifiable, Codable {
         self.specialRequirements = specialRequirements
         self.wordTargetText = wordTargetText
         self.continuityNotes = continuityNotes
+        let normalizedGlobalMemory = globalMemorySnapshot.hasStructuredContent
+            ? globalMemorySnapshot
+            : GlobalMemorySnapshot.parse(from: continuityNotes)
+        self.globalMemorySnapshot = normalizedGlobalMemory
+        self.globalMemoryUpdatedAt = globalMemoryUpdatedAt
         self.referenceDocuments = referenceDocuments
         self.chapterDrafts = chapterDrafts
     }
@@ -1130,6 +1481,7 @@ struct NovelProject: Identifiable, Codable {
             ?? "继续补齐当前章节的目标、冲突和场景节奏。"
         draftText = try container.decodeIfPresent(String.self, forKey: .draftText) ?? ""
         outlineText = try container.decodeIfPresent(String.self, forKey: .outlineText) ?? ""
+        outlineGenerationProfile = try container.decodeIfPresent(OutlineGenerationProfile.self, forKey: .outlineGenerationProfile) ?? .empty
         structureNotes = try container.decodeIfPresent(String.self, forKey: .structureNotes) ?? ""
         sceneProgressNotes = try container.decodeIfPresent(String.self, forKey: .sceneProgressNotes) ?? ""
         characterArcNotes = try container.decodeIfPresent(String.self, forKey: .characterArcNotes) ?? ""
@@ -1140,6 +1492,9 @@ struct NovelProject: Identifiable, Codable {
         specialRequirements = try container.decodeIfPresent(String.self, forKey: .specialRequirements) ?? ""
         wordTargetText = try container.decodeIfPresent(String.self, forKey: .wordTargetText) ?? ""
         continuityNotes = try container.decodeIfPresent(String.self, forKey: .continuityNotes) ?? ""
+        globalMemorySnapshot = try container.decodeIfPresent(GlobalMemorySnapshot.self, forKey: .globalMemorySnapshot)
+            ?? GlobalMemorySnapshot.parse(from: continuityNotes)
+        globalMemoryUpdatedAt = try container.decodeIfPresent(String.self, forKey: .globalMemoryUpdatedAt) ?? ""
         referenceDocuments = try container.decodeIfPresent([ReferenceDocument].self, forKey: .referenceDocuments) ?? []
         chapterDrafts = try container.decodeIfPresent([ChapterDraft].self, forKey: .chapterDrafts) ?? []
     }
@@ -1157,6 +1512,7 @@ struct NovelProject: Identifiable, Codable {
         try container.encode(chapterFocus, forKey: .chapterFocus)
         try container.encode(draftText, forKey: .draftText)
         try container.encode(outlineText, forKey: .outlineText)
+        try container.encode(outlineGenerationProfile, forKey: .outlineGenerationProfile)
         try container.encode(structureNotes, forKey: .structureNotes)
         try container.encode(sceneProgressNotes, forKey: .sceneProgressNotes)
         try container.encode(characterArcNotes, forKey: .characterArcNotes)
@@ -1167,6 +1523,8 @@ struct NovelProject: Identifiable, Codable {
         try container.encode(specialRequirements, forKey: .specialRequirements)
         try container.encode(wordTargetText, forKey: .wordTargetText)
         try container.encode(continuityNotes, forKey: .continuityNotes)
+        try container.encode(globalMemorySnapshot, forKey: .globalMemorySnapshot)
+        try container.encode(globalMemoryUpdatedAt, forKey: .globalMemoryUpdatedAt)
         try container.encode(referenceDocuments, forKey: .referenceDocuments)
         try container.encode(chapterDrafts, forKey: .chapterDrafts)
     }
@@ -1191,6 +1549,16 @@ struct NovelProject: Identifiable, Codable {
         chapterDrafts.contains(where: { $0.chapterNumber == currentChapterNumber })
     }
 
+    var materialCategoriesWithContent: [ReferenceMaterialCategory] {
+        ReferenceMaterialCategory.allCases.filter { category in
+            referenceDocuments.contains(where: { $0.category == category })
+        }
+    }
+
+    func referenceDocuments(in category: ReferenceMaterialCategory) -> [ReferenceDocument] {
+        referenceDocuments.filter { $0.category == category }
+    }
+
     var hasOutline: Bool {
         !outlineText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -1213,6 +1581,10 @@ struct NovelProject: Identifiable, Codable {
 
     var hasContinuityNotes: Bool {
         !continuityNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var hasGlobalMemory: Bool {
+        hasContinuityNotes || globalMemorySnapshot.hasStructuredContent
     }
 
     var hasOutlineSummary: Bool {
@@ -1240,7 +1612,11 @@ struct NovelProject: Identifiable, Codable {
     }
 
     var continuityStatusLabel: String {
-        hasContinuityNotes ? "已记录" : "待补充"
+        hasGlobalMemory ? "已记录" : "待补充"
+    }
+
+    var globalMemoryStatusLabel: String {
+        hasGlobalMemory ? (globalMemoryUpdatedAt.isEmpty ? "已更新" : globalMemoryUpdatedAt) : "待生成"
     }
 
     var outlineSummaryStatusLabel: String {
@@ -1303,12 +1679,47 @@ struct ReferenceDocument: Identifiable, Codable, Hashable {
     let title: String
     let content: String
     let importedAt: String
+    var category: ReferenceMaterialCategory
 
-    init(id: String = UUID().uuidString, title: String, content: String, importedAt: String) {
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case content
+        case importedAt
+        case category
+    }
+
+    init(
+        id: String = UUID().uuidString,
+        title: String,
+        content: String,
+        importedAt: String,
+        category: ReferenceMaterialCategory? = nil
+    ) {
         self.id = id
         self.title = title
         self.content = content
         self.importedAt = importedAt
+        self.category = category ?? ReferenceMaterialCategory.infer(fromTitle: title, content: content)
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        title = try container.decode(String.self, forKey: .title)
+        content = try container.decode(String.self, forKey: .content)
+        importedAt = try container.decode(String.self, forKey: .importedAt)
+        category = try container.decodeIfPresent(ReferenceMaterialCategory.self, forKey: .category)
+            ?? ReferenceMaterialCategory.infer(fromTitle: title, content: content)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(content, forKey: .content)
+        try container.encode(importedAt, forKey: .importedAt)
+        try container.encode(category, forKey: .category)
     }
 
     var wordCount: Int {
@@ -1325,6 +1736,105 @@ struct ReferenceDocument: Identifiable, Codable, Hashable {
     }
 }
 
+enum ReferenceMaterialCategory: String, CaseIterable, Codable, Identifiable {
+    case character
+    case location
+    case organization
+    case worldbuilding
+    case plot
+    case research
+    case reference
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .character:
+            return "人物"
+        case .location:
+            return "地点"
+        case .organization:
+            return "组织"
+        case .worldbuilding:
+            return "世界观"
+        case .plot:
+            return "剧情"
+        case .research:
+            return "考据"
+        case .reference:
+            return "参考"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .character:
+            return "person.crop.circle"
+        case .location:
+            return "map"
+        case .organization:
+            return "building.2"
+        case .worldbuilding:
+            return "globe.asia.australia"
+        case .plot:
+            return "timeline.selection"
+        case .research:
+            return "magnifyingglass"
+        case .reference:
+            return "book.closed"
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .character:
+            return "角色设定、关系卡、人物小传"
+        case .location:
+            return "地点、地图、场景空间信息"
+        case .organization:
+            return "组织、家族、阵营与势力资料"
+        case .worldbuilding:
+            return "世界规则、历史、制度与背景"
+        case .plot:
+            return "剧情节点、大纲补充与场景草案"
+        case .research:
+            return "考据、资料摘录与外部研究"
+        case .reference:
+            return "风格参考与暂未细分的素材"
+        }
+    }
+
+    static func infer(fromTitle title: String, content: String) -> ReferenceMaterialCategory {
+        let source = "\(title)\n\(content)".lowercased()
+
+        if source.contains(anyOf: ["角色", "人物", "主角", "配角", "反派", "小传", "关系"]) {
+            return .character
+        }
+
+        if source.contains(anyOf: ["地点", "地图", "城市", "港口", "山脉", "村", "街区", "场景"]) {
+            return .location
+        }
+
+        if source.contains(anyOf: ["组织", "家族", "阵营", "公司", "宗门", "议会", "协会"]) {
+            return .organization
+        }
+
+        if source.contains(anyOf: ["世界观", "设定", "规则", "历史", "神话", "纪年", "文明"]) {
+            return .worldbuilding
+        }
+
+        if source.contains(anyOf: ["剧情", "大纲", "章节", "场景推进", "转折", "主线", "支线"]) {
+            return .plot
+        }
+
+        if source.contains(anyOf: ["资料", "考据", "研究", "参考文献", "访谈", "历史原型"]) {
+            return .research
+        }
+
+        return .reference
+    }
+}
+
 struct StoryPillar: Identifiable {
     let title: String
     let detail: String
@@ -1337,4 +1847,10 @@ struct InspirationSignal: Identifiable {
     let description: String
 
     var id: String { title }
+}
+
+private extension String {
+    func contains(anyOf keywords: [String]) -> Bool {
+        keywords.contains(where: { contains($0.lowercased()) })
+    }
 }

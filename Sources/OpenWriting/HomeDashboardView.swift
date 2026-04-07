@@ -1000,6 +1000,10 @@ struct PlaceholderWorkspaceView: View {
         LiteraryQuoteLibrary.quote(for: item, seed: appState.quoteSeed)
     }
 
+    private var shouldShowFeaturedQuote: Bool {
+        item != .home && item != .writingDesk
+    }
+
     init(item: SidebarItem, appState: AppState, openSettings: @escaping () -> Void = {}) {
         self.item = item
         self.appState = appState
@@ -1024,7 +1028,7 @@ struct PlaceholderWorkspaceView: View {
                                     .foregroundStyle(palette.textSecondary)
                                     .lineSpacing(4)
 
-                                if let featuredQuote {
+                                if shouldShowFeaturedQuote, let featuredQuote {
                                     writingQuotePanel(featuredQuote)
                                 }
 
@@ -1211,6 +1215,8 @@ struct PlaceholderWorkspaceView: View {
             ProjectsWorkspacePanel(appState: appState)
         } else if item == .outline {
             OutlineWorkspacePanel(appState: appState)
+        } else if item == .library {
+            LibraryWorkspacePanel(appState: appState)
         } else {
             DashboardPanel(
                 title: "下一步规划",
@@ -1992,7 +1998,7 @@ private struct WorkspaceUtilityCard: View {
                     items: [
                         activeProject.hasStructureNotes ? "继续补齐卷章与节点之间的承接关系" : "先把全书章节骨架按卷章写出来",
                         activeProject.hasSceneProgressNotes ? "检查当前章节场景目标是否足够具体" : "把当前章节拆成 3 到 5 个场景推进点",
-                        activeProject.hasOutlineSummary ? "AI 总结已生成，可写回连续性笔记" : "补完结构后再调用 AI 做一次结构总览"
+                        activeProject.hasOutlineSummary ? "AI 总结已生成，可补写到全局记忆" : "补完结构后再调用 AI 做一次结构总览"
                     ],
                     compact: true
                 )
@@ -2032,13 +2038,17 @@ private struct WorkspaceUtilityCard: View {
             )
 
             HStack(spacing: 12) {
-                WorkspaceMetricBadge(label: "灵感入口", value: "\(appState.inspirationSignals.count)")
-                WorkspaceMetricBadge(label: "写作支柱", value: "\(appState.writingPillars.count)")
+                WorkspaceMetricBadge(label: "素材总数", value: "\(activeProject?.referenceDocuments.count ?? 0)")
+                WorkspaceMetricBadge(label: "分类数", value: "\(activeProject?.materialCategoriesWithContent.count ?? 0)")
             }
 
             WorkspaceChecklist(
                 title: "优先建库",
-                items: appState.inspirationSignals.map(\.title)
+                items: [
+                    "先把人物、地点、组织和世界观素材分开归类",
+                    "剧情草案和外部考据单独存放，避免和风格参考混杂",
+                    "需要续写时再从素材库回到写作台调用这些资料"
+                ]
             )
         }
     }
@@ -2183,6 +2193,482 @@ private struct ProjectsWorkspacePanel: View {
                 }
             }
         }
+    }
+}
+
+private struct LibraryWorkspacePanel: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @Bindable var appState: AppState
+
+    @State private var selectedDocumentID: ReferenceDocument.ID?
+    @State private var selectedCategory: ReferenceMaterialCategory?
+    @State private var isImportingMaterials = false
+    @State private var libraryStatusMessage = "素材库会按分类集中管理当前项目的用户素材。"
+
+    private var palette: DashboardPalette {
+        DashboardPalette(colorScheme: colorScheme)
+    }
+
+    private var activeProject: NovelProject? {
+        appState.activeProject
+    }
+
+    private var supportedImportTypes: [UTType] {
+        [.plainText, .utf8PlainText, .text, .sourceCode]
+    }
+
+    var body: some View {
+        Group {
+            if let project = activeProject {
+                libraryPanel(for: project)
+            } else {
+                DashboardPanel(
+                    title: "素材库",
+                    subtitle: "当前还没有选中的项目，先去项目空间选择一本书，再把素材按分类整理起来。"
+                ) {
+                    Button("前往项目空间") {
+                        appState.openProjectSpace()
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+        }
+        .task(id: activeProject?.id) {
+            selectedDocumentID = activeProject?.referenceDocuments.first?.id
+            selectedCategory = nil
+            libraryStatusMessage = "素材库会按分类集中管理当前项目的用户素材。"
+        }
+        .onChange(of: activeProject?.referenceDocuments) { _, documents in
+            syncSelection(with: documents ?? [])
+        }
+        .fileImporter(
+            isPresented: $isImportingMaterials,
+            allowedContentTypes: supportedImportTypes,
+            allowsMultipleSelection: true,
+            onCompletion: handleMaterialImport
+        )
+    }
+
+    private func libraryPanel(for project: NovelProject) -> some View {
+        let selectedDocument = selectedDocument(for: project)
+
+        return DashboardPanel(
+            title: "分类素材库",
+            subtitle: "把人物、地点、组织、世界观、剧情草案和外部考据按分类存放。写作台导入的参考资料也会自动进入这里。"
+        ) {
+            HStack(spacing: 12) {
+                WorkspaceMetricBadge(label: "当前项目", value: project.title)
+                WorkspaceMetricBadge(label: "素材总数", value: "\(project.referenceDocuments.count)")
+                WorkspaceMetricBadge(label: "已用分类", value: "\(project.materialCategoriesWithContent.count)")
+            }
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    Button("导入素材") {
+                        isImportingMaterials = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(palette.coolAccent)
+
+                    Button("回写作台") {
+                        appState.openWritingDesk(for: project.id)
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Button("导入素材") {
+                        isImportingMaterials = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(palette.coolAccent)
+
+                    Button("回写作台") {
+                        appState.openWritingDesk(for: project.id)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+
+            categoryFilterRow(for: project)
+
+            if project.referenceDocuments.isEmpty {
+                WorkspaceChecklist(
+                    title: "开始整理素材",
+                    items: [
+                        "从首页、写作台或这里导入文本资料",
+                        "系统会先自动给素材分配一个分类",
+                        "你可以在右侧预览里再手动调整到更准确的分类"
+                    ]
+                )
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 24) {
+                        libraryDocumentList(for: project)
+                            .frame(width: 360)
+
+                        libraryDocumentDetail(selectedDocument, project: project)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+
+                    VStack(alignment: .leading, spacing: 24) {
+                        libraryDocumentList(for: project)
+                        libraryDocumentDetail(selectedDocument, project: project)
+                    }
+                }
+            }
+
+            Label(libraryStatusMessage, systemImage: "books.vertical")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func categoryFilterRow(for project: NovelProject) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                LibraryCategoryChip(
+                    title: "全部",
+                    count: project.referenceDocuments.count,
+                    isSelected: selectedCategory == nil
+                ) {
+                    selectedCategory = nil
+                }
+
+                ForEach(ReferenceMaterialCategory.allCases) { category in
+                    LibraryCategoryChip(
+                        title: category.title,
+                        count: project.referenceDocuments(in: category).count,
+                        isSelected: selectedCategory == category,
+                        symbolName: category.symbolName
+                    ) {
+                        selectedCategory = category
+                    }
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func libraryDocumentList(for project: NovelProject) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(selectedCategory == nil ? "分类列表" : "\(selectedCategory?.title ?? "")素材")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(palette.textPrimary)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    ForEach(displayedCategories(for: project), id: \.self) { category in
+                        let documents = project.referenceDocuments(in: category)
+                        if !documents.isEmpty {
+                            VStack(alignment: .leading, spacing: 10) {
+                                HStack {
+                                    Label(category.title, systemImage: category.symbolName)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(palette.textPrimary)
+
+                                    Spacer()
+
+                                    Text("\(documents.count) 份")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(palette.textSecondary)
+                                }
+
+                                VStack(alignment: .leading, spacing: 10) {
+                                    ForEach(documents) { document in
+                                        Button {
+                                            selectedDocumentID = document.id
+                                        } label: {
+                                            LibraryDocumentRow(
+                                                document: document,
+                                                isSelected: document.id == selectedDocument(for: project)?.id
+                                            )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(minHeight: 260)
+        }
+    }
+
+    private func libraryDocumentDetail(_ document: ReferenceDocument?, project: NovelProject) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if let document {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(document.title)
+                            .font(.title3.weight(.bold))
+                            .foregroundStyle(palette.textPrimary)
+
+                        Text(document.category.summary)
+                            .font(.subheadline)
+                            .foregroundStyle(palette.textSecondary)
+                    }
+
+                    Spacer()
+
+                    VStack(alignment: .trailing, spacing: 6) {
+                        Text(document.importedAt)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(palette.textSecondary)
+
+                        Text("\(document.wordCount) 字")
+                            .font(.caption)
+                            .foregroundStyle(palette.textSecondary)
+                    }
+                }
+
+                Picker("素材分类", selection: categoryBinding(for: document, projectID: project.id)) {
+                    ForEach(ReferenceMaterialCategory.allCases) { category in
+                        Label(category.title, systemImage: category.symbolName)
+                            .tag(category)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                ScrollView {
+                    Text(document.content)
+                        .font(.system(size: 15, weight: .regular, design: .serif))
+                        .foregroundStyle(palette.textPrimary)
+                        .lineSpacing(5)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(18)
+                }
+                .frame(minHeight: 320)
+                .background(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .strokeBorder(palette.stroke, lineWidth: 1)
+                )
+            } else {
+                WorkspaceChecklist(
+                    title: "查看素材详情",
+                    items: [
+                        "从左侧挑一份素材查看正文",
+                        "在这里修改素材分类，让库更清晰",
+                        "需要继续写作时，再回写作台调用这些资料"
+                    ]
+                )
+            }
+        }
+    }
+
+    private func displayedCategories(for project: NovelProject) -> [ReferenceMaterialCategory] {
+        if let selectedCategory {
+            return project.referenceDocuments(in: selectedCategory).isEmpty ? [] : [selectedCategory]
+        }
+
+        return project.materialCategoriesWithContent
+    }
+
+    private func selectedDocument(for project: NovelProject) -> ReferenceDocument? {
+        let visibleDocuments = displayedCategories(for: project)
+            .flatMap { project.referenceDocuments(in: $0) }
+
+        guard !visibleDocuments.isEmpty else { return nil }
+
+        if let selectedDocumentID,
+           let document = visibleDocuments.first(where: { $0.id == selectedDocumentID }) {
+            return document
+        }
+
+        return visibleDocuments.first
+    }
+
+    private func categoryBinding(for document: ReferenceDocument, projectID: NovelProject.ID) -> Binding<ReferenceMaterialCategory> {
+        Binding(
+            get: {
+                appState.project(for: projectID)?
+                    .referenceDocuments
+                    .first(where: { $0.id == document.id })?
+                    .category ?? document.category
+            },
+            set: { newCategory in
+                appState.updateReferenceDocumentCategory(newCategory, documentID: document.id, for: projectID)
+                if selectedCategory != nil {
+                    selectedCategory = newCategory
+                }
+                libraryStatusMessage = "已将《\(document.title)》归类到\(newCategory.title)。"
+            }
+        )
+    }
+
+    private func syncSelection(with documents: [ReferenceDocument]) {
+        if let selectedDocumentID,
+           documents.contains(where: { $0.id == selectedDocumentID }) {
+            return
+        }
+
+        selectedDocumentID = documents.first?.id
+    }
+
+    private func handleMaterialImport(_ result: Result<[URL], Error>) {
+        guard let project = activeProject else { return }
+
+        do {
+            let urls = try result.get()
+            let documents = try urls.map(loadReferenceDocument)
+            appState.importReferenceDocuments(documents, for: project.id)
+            selectedDocumentID = documents.first?.id
+            selectedCategory = documents.first?.category
+            libraryStatusMessage = "已为《\(project.title)》导入 \(documents.count) 份素材，并自动放入对应分类。"
+        } catch {
+            libraryStatusMessage = "导入素材失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func loadReferenceDocument(from url: URL) throws -> ReferenceDocument {
+        let content = try loadText(from: url)
+        return ReferenceDocument(
+            title: url.deletingPathExtension().lastPathComponent,
+            content: content,
+            importedAt: timestampLabel()
+        )
+    }
+
+    private func loadText(from url: URL) throws -> String {
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer {
+            if accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    private func timestampLabel() -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_Hans_CN")
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: Date())
+    }
+}
+
+private struct LibraryCategoryChip: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let title: String
+    let count: Int
+    let isSelected: Bool
+    var symbolName: String?
+    let action: () -> Void
+
+    private var palette: DashboardPalette {
+        DashboardPalette(colorScheme: colorScheme)
+    }
+
+    init(
+        title: String,
+        count: Int,
+        isSelected: Bool,
+        symbolName: String? = nil,
+        action: @escaping () -> Void
+    ) {
+        self.title = title
+        self.count = count
+        self.isSelected = isSelected
+        self.symbolName = symbolName
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                if let symbolName {
+                    Image(systemName: symbolName)
+                        .font(.caption.weight(.semibold))
+                }
+
+                Text(title)
+                    .font(.caption.weight(.semibold))
+
+                Text("\(count)")
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(isSelected ? 0.32 : 0.18))
+                    )
+            }
+            .foregroundStyle(isSelected ? .white : palette.textPrimary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                Capsule()
+                    .fill(isSelected ? palette.coolAccent : palette.panelBase.opacity(palette.isDark ? 0.82 : 0.72))
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(isSelected ? palette.coolAccent : palette.stroke, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct LibraryDocumentRow: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let document: ReferenceDocument
+    let isSelected: Bool
+
+    private var palette: DashboardPalette {
+        DashboardPalette(colorScheme: colorScheme)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(document.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(palette.textPrimary)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Text(document.importedAt)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(palette.textSecondary)
+            }
+
+            Text(document.previewText)
+                .font(.caption)
+                .foregroundStyle(palette.textSecondary)
+                .lineLimit(2)
+
+            HStack {
+                Label(document.category.title, systemImage: document.category.symbolName)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(palette.coolAccent)
+
+                Spacer()
+
+                Text("\(document.wordCount) 字")
+                    .font(.caption2)
+                    .foregroundStyle(palette.textSecondary)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(isSelected ? Color.white.opacity(0.82) : palette.panelBase.opacity(palette.isDark ? 0.82 : 0.68))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(
+                    isSelected ? palette.coolAccent.opacity(0.36) : palette.stroke,
+                    lineWidth: 1
+                )
+        )
     }
 }
 

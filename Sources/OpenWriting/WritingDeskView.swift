@@ -10,6 +10,8 @@ struct WritingDeskView: View {
     @FocusState private var focusedArea: FocusArea?
     @State private var isImportingReferences = false
     @State private var isImportingOutline = false
+    @State private var isImportingRequirements = false
+    @State private var isOutlineGeneratorPresented = false
     @State private var aiSuggestion = ""
     @State private var draftBufferText = ""
     @State private var aiStatusMessage = "准备就绪，可先补大纲、参考文本和特殊要求，再开始当前章节写作。"
@@ -67,6 +69,24 @@ struct WritingDeskView: View {
             allowsMultipleSelection: false,
             onCompletion: handleOutlineImport
         )
+        .fileImporter(
+            isPresented: $isImportingRequirements,
+            allowedContentTypes: supportedImportTypes,
+            allowsMultipleSelection: false,
+            onCompletion: handleRequirementsImport
+        )
+        .sheet(isPresented: $isOutlineGeneratorPresented) {
+            if let activeProject {
+                WritingDeskOutlineGeneratorSheet(
+                    projectTitle: activeProject.title,
+                    profile: outlineGenerationProfileBinding(for: activeProject.id),
+                    isGenerating: isGenerating,
+                    onGenerate: {
+                        generateOutline(for: appState.project(for: activeProject.id) ?? activeProject)
+                    }
+                )
+            }
+        }
     }
 
     @ViewBuilder
@@ -184,15 +204,27 @@ struct WritingDeskView: View {
         WritingDeskSectionCard(
             title: "大纲设定",
             badgeText: isCollapsed ? (project.hasOutline ? "已导入" : "未导入") : nil,
-            actions: configurationActions(importAction: {
-                isImportingOutline = true
-            }),
+            actions: configurationActions(
+                importAction: {
+                    isImportingOutline = true
+                },
+                supplementalActions: [
+                    WritingDeskToolbarAction(
+                        symbolName: "wand.and.stars",
+                        accessibilityLabel: "填写大纲生成参数"
+                    ) {
+                        isOutlineGeneratorPresented = true
+                    }
+                ]
+            ),
             isCollapsed: isCollapsed
         ) {
             HStack(alignment: .center, spacing: 10) {
                 PillTag(text: project.title)
                 PillTag(text: project.currentChapterSummary)
             }
+
+            writingDeskOutlineGeneratorControls(for: project)
 
             WritingDeskTextSurface(
                 text: outlineBinding(for: project.id),
@@ -231,7 +263,9 @@ struct WritingDeskView: View {
         WritingDeskSectionCard(
             title: "特殊要求",
             badgeText: isCollapsed ? "字数设定" : nil,
-            actions: configurationActions(),
+            actions: configurationActions(importAction: {
+                isImportingRequirements = true
+            }),
             isCollapsed: isCollapsed
         ) {
             WritingDeskTextSurface(
@@ -252,7 +286,7 @@ struct WritingDeskView: View {
                 )
             }
 
-            Text("这些约束会和连续性笔记一起送进 AI，写作和润色都会参考。")
+            Text("这些约束会和全局记忆一起送进 AI，写作和润色都会参考。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -601,10 +635,65 @@ struct WritingDeskView: View {
         }
     }
 
+    private func writingDeskOutlineGeneratorControls(for project: NovelProject) -> some View {
+        let profile = project.outlineGenerationProfile
+
+        return VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("最简可用项 \(profile.completedRequiredFieldCount)/5 · 扩展项 \(profile.filledOptionalFieldCount)/7")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+
+                Text(profile.minimumRequirementSummary)
+                    .font(.caption)
+                    .foregroundStyle(profile.hasMinimumRequirements ? .secondary : Color.orange)
+
+                Text("提示词会按“小说框架 / 主要世界观 / 核心人物设定 / 输出控制参数”4 组拼接。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    Button("填写生成参数") {
+                        isOutlineGeneratorPresented = true
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button(isGenerating ? "正在生成…" : "生成大纲") {
+                        generateOutline(for: project)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isGenerating || isSavingChapter)
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Button("填写生成参数") {
+                        isOutlineGeneratorPresented = true
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button(isGenerating ? "正在生成…" : "生成大纲") {
+                        generateOutline(for: project)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isGenerating || isSavingChapter)
+                }
+            }
+        }
+    }
+
     private func outlineBinding(for projectID: NovelProject.ID) -> Binding<String> {
         Binding(
             get: { appState.project(for: projectID)?.outlineText ?? "" },
             set: { appState.updateOutlineText($0, for: projectID) }
+        )
+    }
+
+    private func outlineGenerationProfileBinding(for projectID: NovelProject.ID) -> Binding<OutlineGenerationProfile> {
+        Binding(
+            get: { appState.project(for: projectID)?.outlineGenerationProfile ?? .empty },
+            set: { appState.updateOutlineGenerationProfile($0, for: projectID) }
         )
     }
 
@@ -648,6 +737,60 @@ struct WritingDeskView: View {
             get: { appState.project(for: projectID)?.draftText ?? "" },
             set: { appState.updateDraftText($0, for: projectID) }
         )
+    }
+
+    private func generateOutline(for project: NovelProject) {
+        let latestProject = appState.project(for: project.id) ?? project
+        let profile = latestProject.outlineGenerationProfile
+
+        guard profile.hasMinimumRequirements else {
+            aiStatusMessage = "生成大纲前还差：\(profile.missingRequiredFieldLabels.joined(separator: "、"))。"
+            isOutlineGeneratorPresented = true
+            return
+        }
+
+        guard let configuration = appState.aiConfiguration else {
+            aiStatusMessage = "当前模型配置不完整，请先到设置里填写 API Key、Base URL 和模型名称。"
+            return
+        }
+
+        isGenerating = true
+        aiStatusMessage = "AI 正在根据总体流程、世界观、主角底色、预期字数和结局偏好生成大纲…"
+        timingSnapshot = .queued
+
+        Task {
+            let startedAt = Date()
+
+            do {
+                let outline = try await AIWritingService.generateStoryOutline(
+                    configuration: configuration,
+                    project: latestProject,
+                    profile: profile
+                )
+
+                let total = Date().timeIntervalSince(startedAt)
+
+                await MainActor.run {
+                    appState.updateOutlineText(outline, for: project.id)
+                    isGenerating = false
+                    timingSnapshot = AIWriterTimingSnapshot(
+                        queue: 0.1,
+                        generate: max(total * 0.82, 0.1),
+                        finish: max(total * 0.18, 0.1),
+                        complete: max(total, 0.2)
+                    )
+                    aiStatusMessage = "大纲已生成并回填到大纲设定，可以继续微调后直接开始写作。"
+                    revealWritingDeskWindow(for: project.id)
+                }
+            } catch {
+                await MainActor.run {
+                    isGenerating = false
+                    timingSnapshot = .idle
+                    aiStatusMessage = error.localizedDescription
+                    revealWritingDeskWindow(for: project.id)
+                }
+            }
+        }
     }
 
     private func startWriting(for project: NovelProject, rejectedSuggestion: String? = nil) {
@@ -804,19 +947,39 @@ struct WritingDeskView: View {
             return
         }
 
+        isSavingChapter = true
+
         if latestProject.hasSavedCurrentChapter {
-            completeChapterDraftSave(for: project, statusPrefix: "已按当前标题更新")
+            guard let result = completeChapterDraftSave(for: project, statusPrefix: "已按当前标题更新") else {
+                isSavingChapter = false
+                return
+            }
+
+            guard let configuration = appState.aiConfiguration else {
+                aiStatusMessage = "已按当前标题更新 \(result.chapterDraft.chapterSummary)。未配置模型，暂未刷新全局记忆。"
+                isSavingChapter = false
+                return
+            }
+
+            refreshGlobalMemoryAfterChapterSave(
+                for: project,
+                saveResult: result,
+                configuration: configuration,
+                statusPrefix: "已按当前标题更新"
+            )
             return
         }
 
         guard let configuration = appState.aiConfiguration else {
             let fallbackTitle = fallbackChapterTitle(for: latestProject)
             appState.updateCurrentChapterTitle(fallbackTitle, for: project.id)
-            completeChapterDraftSave(for: project, statusPrefix: "模型未配置，已按当前标题保存")
+            if let result = completeChapterDraftSave(for: project, statusPrefix: "模型未配置，已按当前标题保存") {
+                aiStatusMessage = "模型未配置，已按当前标题保存 \(result.chapterDraft.chapterSummary)。暂未刷新全局记忆。"
+            }
+            isSavingChapter = false
             return
         }
 
-        isSavingChapter = true
         aiStatusMessage = "AI 正在根据草稿箱内容拟一个章节标题，并同步保存当前章…"
 
         Task {
@@ -829,19 +992,38 @@ struct WritingDeskView: View {
 
                 await MainActor.run {
                     appState.updateCurrentChapterTitle(title, for: project.id)
-                    completeChapterDraftSave(for: project, statusPrefix: "AI 已拟好标题并保存")
-                    revealWritingDeskWindow(for: project.id)
+                    if let result = completeChapterDraftSave(for: project, statusPrefix: "AI 已拟好标题并保存") {
+                        refreshGlobalMemoryAfterChapterSave(
+                            for: project,
+                            saveResult: result,
+                            configuration: configuration,
+                            statusPrefix: "AI 已拟好标题并保存"
+                        )
+                    } else {
+                        isSavingChapter = false
+                        revealWritingDeskWindow(for: project.id)
+                    }
                 }
             } catch {
                 await MainActor.run {
                     let fallbackTitle = fallbackChapterTitle(for: latestProject)
                     appState.updateCurrentChapterTitle(fallbackTitle, for: project.id)
-                    completeChapterDraftSave(
+                    if let result = completeChapterDraftSave(
                         for: project,
                         statusPrefix: "AI 拟标题失败，已按当前标题保存",
                         detailMessage: error.localizedDescription
-                    )
-                    revealWritingDeskWindow(for: project.id)
+                    ) {
+                        refreshGlobalMemoryAfterChapterSave(
+                            for: project,
+                            saveResult: result,
+                            configuration: configuration,
+                            statusPrefix: "AI 拟标题失败，已按当前标题保存",
+                            detailMessage: error.localizedDescription
+                        )
+                    } else {
+                        isSavingChapter = false
+                        revealWritingDeskWindow(for: project.id)
+                    }
                 }
             }
         }
@@ -895,18 +1077,15 @@ struct WritingDeskView: View {
         return trimmedTitle.isEmpty ? project.currentChapterLabel : trimmedTitle
     }
 
+    @discardableResult
     private func completeChapterDraftSave(
         for project: NovelProject,
         statusPrefix: String,
         detailMessage: String? = nil
-    ) {
-        defer {
-            isSavingChapter = false
-        }
-
+    ) -> ChapterDraftSaveResult? {
         guard let result = appState.saveCurrentChapterDraft(for: project.id) else {
             aiStatusMessage = "草稿箱里还没有可保存的正文。"
-            return
+            return nil
         }
 
         let chapterDraft = result.chapterDraft
@@ -916,6 +1095,55 @@ struct WritingDeskView: View {
             aiStatusMessage = "\(statusPrefix) \(chapterDraft.chapterSummary)。\(detailMessage)"
         } else {
             aiStatusMessage = "\(statusPrefix) \(chapterDraft.chapterSummary)。"
+        }
+
+        return result
+    }
+
+    private func refreshGlobalMemoryAfterChapterSave(
+        for project: NovelProject,
+        saveResult: ChapterDraftSaveResult,
+        configuration: AIConnectionConfiguration,
+        statusPrefix: String,
+        detailMessage: String? = nil
+    ) {
+        let chapterDraft = saveResult.chapterDraft
+        aiStatusMessage = "\(statusPrefix) \(chapterDraft.chapterSummary)。正在更新全局记忆…"
+
+        Task {
+            do {
+                let latestProject = appState.project(for: project.id) ?? project
+                let globalMemory = try await AIWritingService.refreshGlobalMemory(
+                    configuration: configuration,
+                    project: latestProject,
+                    chapterDraft: chapterDraft
+                )
+
+                await MainActor.run {
+                    appState.updateContinuityNotes(
+                        globalMemory,
+                        updatedAt: timestampLabel(),
+                        for: project.id
+                    )
+                    isSavingChapter = false
+                    if let detailMessage {
+                        aiStatusMessage = "\(statusPrefix) \(chapterDraft.chapterSummary)。\(detailMessage) 全局记忆已同步更新。"
+                    } else {
+                        aiStatusMessage = "\(statusPrefix) \(chapterDraft.chapterSummary)。全局记忆已同步更新。"
+                    }
+                    revealWritingDeskWindow(for: project.id)
+                }
+            } catch {
+                await MainActor.run {
+                    isSavingChapter = false
+                    if let detailMessage {
+                        aiStatusMessage = "\(statusPrefix) \(chapterDraft.chapterSummary)。\(detailMessage) 全局记忆更新失败：\(error.localizedDescription)"
+                    } else {
+                        aiStatusMessage = "\(statusPrefix) \(chapterDraft.chapterSummary)。全局记忆更新失败：\(error.localizedDescription)"
+                    }
+                    revealWritingDeskWindow(for: project.id)
+                }
+            }
         }
     }
 
@@ -961,8 +1189,11 @@ struct WritingDeskView: View {
         focusDraftEditor()
     }
 
-    private func configurationActions(importAction: (() -> Void)? = nil) -> [WritingDeskToolbarAction] {
-        var actions: [WritingDeskToolbarAction] = []
+    private func configurationActions(
+        importAction: (() -> Void)? = nil,
+        supplementalActions: [WritingDeskToolbarAction] = []
+    ) -> [WritingDeskToolbarAction] {
+        var actions = supplementalActions
 
         if let importAction {
             actions.append(
@@ -1013,6 +1244,19 @@ struct WritingDeskView: View {
             aiStatusMessage = "作品大纲已导入，可以继续补充章节目标和特殊要求。"
         } catch {
             aiStatusMessage = "导入作品大纲失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func handleRequirementsImport(_ result: Result<[URL], Error>) {
+        guard let project = activeProject else { return }
+
+        do {
+            guard let url = try result.get().first else { return }
+            let requirementsText = try loadText(from: url)
+            appState.updateSpecialRequirements(requirementsText, for: project.id)
+            aiStatusMessage = "特殊要求已导入，你也可以继续手动补充字数设定。"
+        } catch {
+            aiStatusMessage = "导入特殊要求失败：\(error.localizedDescription)"
         }
     }
 
@@ -1358,6 +1602,297 @@ private struct WritingDeskTimelineNode: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
         )
+    }
+}
+
+private struct WritingDeskOutlineGeneratorSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let projectTitle: String
+    @Binding var profile: OutlineGenerationProfile
+    let isGenerating: Bool
+    let onGenerate: () -> Void
+
+    var body: some View {
+        ZStack {
+            PageBackground()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    header
+                    minimumChecklist
+
+                    WritingDeskOutlinePromptGroupCard(
+                        title: "小说框架",
+                        description: "先把故事怎么开头、怎么推进、最后想走到哪里写清楚。"
+                    ) {
+                        WritingDeskOutlineField(
+                            title: "总体流程",
+                            placeholder: "起始、大致经过、预期结果",
+                            isRequired: true,
+                            minHeight: 138,
+                            text: $profile.storyFlow
+                        )
+
+                        WritingDeskOutlineField(
+                            title: "主要卖点",
+                            placeholder: "金手指、设定亮点、爽点",
+                            minHeight: 96,
+                            text: $profile.sellingPoints
+                        )
+
+                        WritingDeskOutlineField(
+                            title: "关键事件",
+                            placeholder: "激励事件、低谷、高潮等",
+                            minHeight: 108,
+                            text: $profile.keyEvents
+                        )
+
+                        WritingDeskOutlineField(
+                            title: "故事节奏",
+                            placeholder: "慢热、快节奏、持续高压等",
+                            isCompact: true,
+                            text: $profile.storyPacing
+                        )
+
+                        WritingDeskOutlineField(
+                            title: "重要伏笔",
+                            placeholder: "需要提前埋下、后续必须回收的点",
+                            minHeight: 96,
+                            text: $profile.foreshadowingNotes
+                        )
+                    }
+
+                    WritingDeskOutlinePromptGroupCard(
+                        title: "主要世界观",
+                        description: "把背景、势力、规则和境界体系这类基础约束说明白。"
+                    ) {
+                        WritingDeskOutlineField(
+                            title: "世界观描述",
+                            placeholder: "背景、势力、规则、境界体系",
+                            isRequired: true,
+                            minHeight: 168,
+                            text: $profile.worldDescription
+                        )
+                    }
+
+                    WritingDeskOutlinePromptGroupCard(
+                        title: "核心人物设定",
+                        description: "这里决定主角底色、人物动力、关键关系和主要对抗。"
+                    ) {
+                        WritingDeskOutlineField(
+                            title: "主角性格标签",
+                            placeholder: "主角的核心性格和人物底色",
+                            isRequired: true,
+                            isCompact: true,
+                            text: $profile.protagonistTraits
+                        )
+
+                        WritingDeskOutlineField(
+                            title: "角色动机与欲望",
+                            placeholder: "主角和重要人物各自想要什么、害怕什么",
+                            minHeight: 96,
+                            text: $profile.motivations
+                        )
+
+                        WritingDeskOutlineField(
+                            title: "人物关系图谱",
+                            placeholder: "盟友、师徒、家族、情感线、敌对链条",
+                            minHeight: 96,
+                            text: $profile.relationshipMap
+                        )
+
+                        WritingDeskOutlineField(
+                            title: "反派的描绘",
+                            placeholder: "反派目标、手段、威压感、与主角的矛盾",
+                            minHeight: 96,
+                            text: $profile.antagonistPortrait
+                        )
+                    }
+
+                    WritingDeskOutlinePromptGroupCard(
+                        title: "输出控制参数",
+                        description: "决定这本书要写多长，以及最后收束到什么类型的结局。"
+                    ) {
+                        WritingDeskOutlineField(
+                            title: "预期字数",
+                            placeholder: "例如：50万 / 100万 / 200万",
+                            isRequired: true,
+                            isCompact: true,
+                            text: $profile.expectedLength
+                        )
+
+                        WritingDeskOutlineField(
+                            title: "结局偏好",
+                            placeholder: "例如：好结局 / 坏结局 / 开放式",
+                            isRequired: true,
+                            isCompact: true,
+                            text: $profile.endingPreference
+                        )
+                    }
+                }
+                .padding(28)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+        .frame(minWidth: 860, minHeight: 820)
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("生成大纲")
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundStyle(.primary)
+
+                Text(projectTitle)
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+
+                Text("最简可用版至少准备 5 项：故事怎么开头推进到哪里、世界规则、主角底色、想写多长、想要什么结局。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 10) {
+                Text("必填 \(profile.completedRequiredFieldCount)/5")
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+
+                HStack(spacing: 10) {
+                    Button("关闭") {
+                        dismiss()
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button(isGenerating ? "正在生成…" : "生成大纲") {
+                        dismiss()
+                        onGenerate()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isGenerating || !profile.hasMinimumRequirements)
+                }
+            }
+        }
+    }
+
+    private var minimumChecklist: some View {
+        HStack(spacing: 10) {
+            Text(profile.minimumRequirementSummary)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(profile.hasMinimumRequirements ? .primary : Color.orange)
+
+            Spacer()
+
+            Text("扩展项 \(profile.filledOptionalFieldCount)/7")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color.white.opacity(0.62))
+                )
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+        )
+    }
+}
+
+private struct WritingDeskOutlinePromptGroupCard<Content: View>: View {
+    let title: String
+    let description: String
+    @ViewBuilder let content: Content
+
+    init(
+        title: String,
+        description: String,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.description = description
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(.primary)
+
+                Text(description)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(alignment: .leading, spacing: 14) {
+                content
+            }
+        }
+        .padding(22)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+        )
+    }
+}
+
+private struct WritingDeskOutlineField: View {
+    let title: String
+    let placeholder: String
+    var isRequired = false
+    var isCompact = false
+    var minHeight: CGFloat = 96
+    @Binding var text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+
+                if isRequired {
+                    Text("必填")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(Color.orange.opacity(0.14))
+                        )
+                }
+            }
+
+            if isCompact {
+                TextField(placeholder, text: $text)
+                    .textFieldStyle(.roundedBorder)
+            } else {
+                WritingDeskTextSurface(
+                    text: $text,
+                    placeholder: placeholder,
+                    minHeight: minHeight
+                )
+            }
+        }
     }
 }
 
