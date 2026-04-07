@@ -5,6 +5,7 @@ struct AppRootView: View {
     @AppStorage("appAppearance") private var appAppearanceRawValue = AppAppearance.system.rawValue
     @Bindable var appState: AppState
     let openSettings: () -> Void
+    @State private var isShowingAccountSheet = false
 
     init(appState: AppState, openSettings: @escaping () -> Void = {}) {
         self.appState = appState
@@ -27,6 +28,9 @@ struct AppRootView: View {
         )
         .task(id: appAppearanceRawValue) {
             AppAppearance.apply(selectedAppearance)
+        }
+        .sheet(isPresented: $isShowingAccountSheet) {
+            AccountPlaceholderSheet()
         }
     }
 
@@ -95,24 +99,38 @@ struct AppRootView: View {
         VStack(alignment: .leading, spacing: 12) {
             Divider()
 
-            HStack(spacing: 10) {
-                Image(systemName: appState.isConfigurationReady ? "bolt.horizontal.circle.fill" : "bolt.horizontal.circle")
-                    .foregroundStyle(appState.isConfigurationReady ? Color.accentColor : .secondary)
+            Button {
+                isShowingAccountSheet = true
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "person.crop.circle")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(Color.accentColor)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(appState.isConfigurationReady ? "模型配置已填写" : "模型配置待完善")
-                        .font(.subheadline.weight(.semibold))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("账户")
+                            .font(.subheadline.weight(.semibold))
 
-                    Text(appState.validationMessage)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        Text("账户功能即将接入，这里先保留入口。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+
+                    Spacer(minLength: 12)
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(Color.white.opacity(0.52))
+                )
             }
-
-            Text("OpenWriting · macOS 写作工作台")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
@@ -128,6 +146,51 @@ struct AppRootView: View {
             get: { appState.selectedSidebarItem },
             set: { appState.navigate(to: $0 ?? .home) }
         )
+    }
+}
+
+private struct AccountPlaceholderSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 12) {
+                Image(systemName: "person.crop.circle.badge.clock")
+                    .font(.system(size: 28, weight: .medium))
+                    .foregroundStyle(Color.accentColor)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("账户")
+                        .font(.title3.weight(.bold))
+
+                    Text("这里先放一个占位面板，后续可以接会员状态、额度、登录方式和设备同步。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("预留内容")
+                    .font(.headline)
+
+                Text("1. 账户信息与头像")
+                Text("2. 订阅方案 / 剩余额度")
+                Text("3. 模型权限与云同步")
+                Text("4. 登录、退出与设备管理")
+            }
+            .font(.subheadline)
+
+            HStack {
+                Spacer()
+
+                Button("关闭") {
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 420, idealWidth: 480)
     }
 }
 
