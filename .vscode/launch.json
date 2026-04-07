@@ -4,7 +4,7 @@
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:OpenReading}",
+            "cwd": "${workspaceFolder:OpenWriting}",
             "name": "Debug OpenReading",
             "target": "OpenReading",
             "configuration": "debug",
@@ -14,11 +14,31 @@
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:OpenReading}",
+            "cwd": "${workspaceFolder:OpenWriting}",
             "name": "Release OpenReading",
             "target": "OpenReading",
             "configuration": "release",
             "preLaunchTask": "swift: Build Release OpenReading"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:OpenWriting}",
+            "name": "Debug OpenWriting",
+            "target": "OpenWriting",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug OpenWriting"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:OpenWriting}",
+            "name": "Release OpenWriting",
+            "target": "OpenWriting",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release OpenWriting"
         }
     ]
 }

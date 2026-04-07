@@ -2,19 +2,20 @@
 import PackageDescription
 
 let package = Package(
-    name: "OpenReading",
+    name: "OpenWriting",
     platforms: [
         .macOS(.v14)
     ],
     products: [
         .executable(
-            name: "OpenReading",
-            targets: ["OpenReading"]
+            name: "OpenWriting",
+            targets: ["OpenWriting"]
         )
     ],
     targets: [
         .executableTarget(
-            name: "OpenReading",
+            name: "OpenWriting",
+            path: "Sources/OpenWriting",
             resources: [
                 .process("Resources")
             ]

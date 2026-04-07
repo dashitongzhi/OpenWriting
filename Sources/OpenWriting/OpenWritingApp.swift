@@ -1,8 +1,8 @@
 import SwiftUI
 
 @main
-struct OpenReadingApp: App {
-    @NSApplicationDelegateAdaptor(OpenReadingAppDelegate.self) private var appDelegate
+struct OpenWritingApp: App {
+    @NSApplicationDelegateAdaptor(OpenWritingAppDelegate.self) private var appDelegate
     private let runtime = AppRuntime.shared
 
     var body: some Scene {
@@ -21,7 +21,7 @@ struct OpenReadingApp: App {
 }
 
 @MainActor
-final class OpenReadingAppDelegate: NSObject, NSApplicationDelegate {
+final class OpenWritingAppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
     }

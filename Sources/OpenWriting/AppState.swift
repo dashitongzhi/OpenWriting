@@ -6,18 +6,36 @@ import Security
 @Observable
 final class AppState {
     private enum StorageKey {
-        static let selectedProvider = "OpenReading.selectedProvider"
-        static let modelName = "OpenReading.modelName"
-        static let baseURL = "OpenReading.baseURL"
-        static let autoValidateOnLaunch = "OpenReading.autoValidateOnLaunch"
-        static let showWritingDeskCachePanel = "OpenReading.showWritingDeskCachePanel"
-        static let showWritingDeskTimeline = "OpenReading.showWritingDeskTimeline"
-        static let activeProjectID = "OpenReading.activeProjectID"
-        static let recentProjects = "OpenReading.recentProjects"
+        static let selectedProvider = "OpenWriting.selectedProvider"
+        static let modelName = "OpenWriting.modelName"
+        static let baseURL = "OpenWriting.baseURL"
+        static let autoValidateOnLaunch = "OpenWriting.autoValidateOnLaunch"
+        static let showWritingDeskCachePanel = "OpenWriting.showWritingDeskCachePanel"
+        static let showWritingDeskTimeline = "OpenWriting.showWritingDeskTimeline"
+        static let activeProjectID = "OpenWriting.activeProjectID"
+        static let recentProjects = "OpenWriting.recentProjects"
+    }
+
+    private enum LegacyStorageKey {
+        private static let prefix = "Open" + "Reading"
+
+        static let selectedProvider = "\(prefix).selectedProvider"
+        static let modelName = "\(prefix).modelName"
+        static let baseURL = "\(prefix).baseURL"
+        static let autoValidateOnLaunch = "\(prefix).autoValidateOnLaunch"
+        static let showWritingDeskCachePanel = "\(prefix).showWritingDeskCachePanel"
+        static let showWritingDeskTimeline = "\(prefix).showWritingDeskTimeline"
+        static let activeProjectID = "\(prefix).activeProjectID"
+        static let recentProjects = "\(prefix).recentProjects"
     }
 
     private enum KeychainKey {
-        static let service = "OpenReading.ModelConnection"
+        static let service = "OpenWriting.ModelConnection"
+        static let account = "apiKey"
+    }
+
+    private enum LegacyKeychainKey {
+        static let service = ("Open" + "Reading") + ".ModelConnection"
         static let account = "apiKey"
     }
 
@@ -108,19 +126,51 @@ final class AppState {
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
         self.selectedProvider = ModelProvider(
-            rawValue: userDefaults.string(forKey: StorageKey.selectedProvider) ?? ""
+            rawValue: Self.stringValue(
+                forKey: StorageKey.selectedProvider,
+                legacyKey: LegacyStorageKey.selectedProvider,
+                userDefaults: userDefaults
+            ) ?? ""
         ) ?? .openAICompatible
-        self.modelName = userDefaults.string(forKey: StorageKey.modelName) ?? "gpt-4.1-mini"
+        self.modelName = Self.stringValue(
+            forKey: StorageKey.modelName,
+            legacyKey: LegacyStorageKey.modelName,
+            userDefaults: userDefaults
+        ) ?? "gpt-4.1-mini"
         self.apiKey = Self.loadAPIKeyFromKeychain() ?? ""
-        self.baseURL = userDefaults.string(forKey: StorageKey.baseURL) ?? "https://api.openai.com/v1"
-        self.autoValidateOnLaunch = userDefaults.object(forKey: StorageKey.autoValidateOnLaunch) as? Bool ?? true
-        self.showWritingDeskCachePanel = userDefaults.object(forKey: StorageKey.showWritingDeskCachePanel) as? Bool ?? true
-        self.showWritingDeskTimeline = userDefaults.object(forKey: StorageKey.showWritingDeskTimeline) as? Bool ?? true
+        self.baseURL = Self.stringValue(
+            forKey: StorageKey.baseURL,
+            legacyKey: LegacyStorageKey.baseURL,
+            userDefaults: userDefaults
+        ) ?? "https://api.openai.com/v1"
+        self.autoValidateOnLaunch = Self.boolValue(
+            forKey: StorageKey.autoValidateOnLaunch,
+            legacyKey: LegacyStorageKey.autoValidateOnLaunch,
+            userDefaults: userDefaults
+        ) ?? true
+        self.showWritingDeskCachePanel = Self.boolValue(
+            forKey: StorageKey.showWritingDeskCachePanel,
+            legacyKey: LegacyStorageKey.showWritingDeskCachePanel,
+            userDefaults: userDefaults
+        ) ?? true
+        self.showWritingDeskTimeline = Self.boolValue(
+            forKey: StorageKey.showWritingDeskTimeline,
+            legacyKey: LegacyStorageKey.showWritingDeskTimeline,
+            userDefaults: userDefaults
+        ) ?? true
         self.recentProjects = Self.loadRecentProjects(from: userDefaults) ?? Self.defaultRecentProjects
         self.connectionStatus = .idle
         self.validationMessage = Self.emptyConfigurationMessage
-        self.activeProjectID = userDefaults.string(forKey: StorageKey.activeProjectID)
-        self.selectedProjectID = userDefaults.string(forKey: StorageKey.activeProjectID)
+        self.activeProjectID = Self.stringValue(
+            forKey: StorageKey.activeProjectID,
+            legacyKey: LegacyStorageKey.activeProjectID,
+            userDefaults: userDefaults
+        )
+        self.selectedProjectID = Self.stringValue(
+            forKey: StorageKey.activeProjectID,
+            legacyKey: LegacyStorageKey.activeProjectID,
+            userDefaults: userDefaults
+        )
 
         normalizeProjectSelection()
 
@@ -329,6 +379,20 @@ final class AppState {
         }
     }
 
+    func updateCurrentChapterTitle(_ title: String, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.currentChapterTitle = title
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func updateCurrentChapterNumber(_ number: Int, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.currentChapterNumber = max(number, 1)
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
     func updateChapterFocus(_ focus: String, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.chapterFocus = focus
@@ -422,6 +486,56 @@ final class AppState {
             } else {
                 project.draftText += "\n\n" + text.trimmingCharacters(in: .whitespacesAndNewlines)
             }
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func saveCurrentChapterDraft(for projectID: NovelProject.ID) -> ChapterDraftSaveResult? {
+        var result: ChapterDraftSaveResult?
+
+        updateProject(projectID) { project in
+            let trimmedDraft = project.draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedDraft.isEmpty else { return }
+
+            let normalizedChapterNumber = max(project.currentChapterNumber, 1)
+            let normalizedChapterTitle = Self.normalizedChapterTitle(project.currentChapterTitle)
+            let timestamp = Self.currentTimestampLabel()
+
+            if let existingIndex = project.chapterDrafts.firstIndex(where: { $0.chapterNumber == normalizedChapterNumber }) {
+                project.chapterDrafts[existingIndex].chapterTitle = normalizedChapterTitle
+                project.chapterDrafts[existingIndex].content = trimmedDraft
+                project.chapterDrafts[existingIndex].savedAt = timestamp
+                let updatedChapterDraft = project.chapterDrafts[existingIndex]
+                project.chapterDrafts.sort(by: ChapterDraft.sortDescending)
+                result = .updated(updatedChapterDraft)
+            } else {
+                let chapterDraft = ChapterDraft(
+                    chapterNumber: normalizedChapterNumber,
+                    chapterTitle: normalizedChapterTitle,
+                    content: trimmedDraft,
+                    savedAt: timestamp
+                )
+                project.chapterDrafts.append(chapterDraft)
+                project.chapterDrafts.sort(by: ChapterDraft.sortDescending)
+                result = .created(chapterDraft)
+            }
+
+            project.currentChapterNumber = normalizedChapterNumber
+            project.currentChapterTitle = normalizedChapterTitle
+            project.writtenChapters = max(project.writtenChapters, normalizedChapterNumber)
+            project.updatedAt = timestamp
+        }
+
+        return result
+    }
+
+    func loadChapterDraft(_ chapterDraftID: ChapterDraft.ID, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            guard let chapterDraft = project.chapterDrafts.first(where: { $0.id == chapterDraftID }) else { return }
+            project.currentChapterNumber = max(chapterDraft.chapterNumber, 1)
+            project.currentChapterTitle = chapterDraft.chapterTitle
+            project.draftText = chapterDraft.content
+            project.writtenChapters = max(project.writtenChapters, chapterDraft.chapterNumber)
             project.updatedAt = Self.currentTimestampLabel()
         }
     }
@@ -562,6 +676,7 @@ final class AppState {
 
         guard !trimmedKey.isEmpty else {
             SecItemDelete(query as CFDictionary)
+            SecItemDelete(Self.legacyAPIKeyQuery as CFDictionary)
             return
         }
 
@@ -588,8 +703,48 @@ final class AppState {
         ]
     }
 
+    private static var legacyAPIKeyQuery: [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: LegacyKeychainKey.service,
+            kSecAttrAccount as String: LegacyKeychainKey.account
+        ]
+    }
+
     private static func loadAPIKeyFromKeychain() -> String? {
-        var query = apiKeyQuery
+        loadAPIKey(using: apiKeyQuery) ?? loadAPIKey(using: legacyAPIKeyQuery)
+    }
+
+    private static func loadRecentProjects(from userDefaults: UserDefaults) -> [NovelProject]? {
+        guard let data = dataValue(
+            forKey: StorageKey.recentProjects,
+            legacyKey: LegacyStorageKey.recentProjects,
+            userDefaults: userDefaults
+        ) else {
+            return nil
+        }
+
+        return try? JSONDecoder().decode([NovelProject].self, from: data)
+    }
+
+    private static func stringValue(forKey key: String, legacyKey: String, userDefaults: UserDefaults) -> String? {
+        userDefaults.string(forKey: key) ?? userDefaults.string(forKey: legacyKey)
+    }
+
+    private static func boolValue(forKey key: String, legacyKey: String, userDefaults: UserDefaults) -> Bool? {
+        if let value = userDefaults.object(forKey: key) as? Bool {
+            return value
+        }
+
+        return userDefaults.object(forKey: legacyKey) as? Bool
+    }
+
+    private static func dataValue(forKey key: String, legacyKey: String, userDefaults: UserDefaults) -> Data? {
+        userDefaults.data(forKey: key) ?? userDefaults.data(forKey: legacyKey)
+    }
+
+    private static func loadAPIKey(using query: [String: Any]) -> String? {
+        var query = query
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
 
@@ -607,19 +762,16 @@ final class AppState {
         return apiKey
     }
 
-    private static func loadRecentProjects(from userDefaults: UserDefaults) -> [NovelProject]? {
-        guard let data = userDefaults.data(forKey: StorageKey.recentProjects) else {
-            return nil
-        }
-
-        return try? JSONDecoder().decode([NovelProject].self, from: data)
-    }
-
     private static func currentTimestampLabel() -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_Hans_CN")
         formatter.dateFormat = "今天 HH:mm"
         return formatter.string(from: Date())
+    }
+
+    private static func normalizedChapterTitle(_ title: String) -> String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "未命名章节" : trimmed
     }
 
     private static func abbreviatedCount(_ value: Int) -> String {
@@ -788,15 +940,87 @@ struct DashboardStat: Identifiable {
     var id: String { title }
 }
 
+enum ChapterDraftSaveResult {
+    case created(ChapterDraft)
+    case updated(ChapterDraft)
+
+    var chapterDraft: ChapterDraft {
+        switch self {
+        case let .created(chapterDraft), let .updated(chapterDraft):
+            return chapterDraft
+        }
+    }
+
+    var isUpdate: Bool {
+        switch self {
+        case .created:
+            return false
+        case .updated:
+            return true
+        }
+    }
+}
+
+struct ChapterDraft: Identifiable, Codable, Hashable {
+    let id: String
+    var chapterNumber: Int
+    var chapterTitle: String
+    var content: String
+    var savedAt: String
+
+    init(
+        id: String = UUID().uuidString,
+        chapterNumber: Int,
+        chapterTitle: String,
+        content: String,
+        savedAt: String
+    ) {
+        self.id = id
+        self.chapterNumber = chapterNumber
+        self.chapterTitle = chapterTitle
+        self.content = content
+        self.savedAt = savedAt
+    }
+
+    var chapterLabel: String {
+        "第 \(chapterNumber) 章"
+    }
+
+    var chapterSummary: String {
+        "\(chapterLabel) · \(chapterTitle)"
+    }
+
+    var wordCount: Int {
+        content
+            .unicodeScalars
+            .filter { !$0.properties.isWhitespace }
+            .count
+    }
+
+    var previewText: String {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > 80 else { return trimmed }
+        return String(trimmed.prefix(80)) + "…"
+    }
+
+    static func sortDescending(_ lhs: ChapterDraft, _ rhs: ChapterDraft) -> Bool {
+        if lhs.chapterNumber == rhs.chapterNumber {
+            return lhs.savedAt > rhs.savedAt
+        }
+
+        return lhs.chapterNumber > rhs.chapterNumber
+    }
+}
+
 struct NovelProject: Identifiable, Codable {
     let id: String
     let title: String
     let genre: String
     let summary: String
     var updatedAt: String
-    let currentChapterTitle: String
-    let currentChapterNumber: Int
-    let writtenChapters: Int
+    var currentChapterTitle: String
+    var currentChapterNumber: Int
+    var writtenChapters: Int
     var chapterFocus: String
     var draftText: String
     var outlineText: String
@@ -811,6 +1035,7 @@ struct NovelProject: Identifiable, Codable {
     var wordTargetText: String
     var continuityNotes: String
     var referenceDocuments: [ReferenceDocument]
+    var chapterDrafts: [ChapterDraft]
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -835,6 +1060,7 @@ struct NovelProject: Identifiable, Codable {
         case wordTargetText
         case continuityNotes
         case referenceDocuments
+        case chapterDrafts
         case chapters
     }
 
@@ -860,7 +1086,8 @@ struct NovelProject: Identifiable, Codable {
         specialRequirements: String,
         wordTargetText: String,
         continuityNotes: String,
-        referenceDocuments: [ReferenceDocument]
+        referenceDocuments: [ReferenceDocument],
+        chapterDrafts: [ChapterDraft] = []
     ) {
         self.id = id
         self.title = title
@@ -884,6 +1111,7 @@ struct NovelProject: Identifiable, Codable {
         self.wordTargetText = wordTargetText
         self.continuityNotes = continuityNotes
         self.referenceDocuments = referenceDocuments
+        self.chapterDrafts = chapterDrafts
     }
 
     init(from decoder: Decoder) throws {
@@ -913,6 +1141,7 @@ struct NovelProject: Identifiable, Codable {
         wordTargetText = try container.decodeIfPresent(String.self, forKey: .wordTargetText) ?? ""
         continuityNotes = try container.decodeIfPresent(String.self, forKey: .continuityNotes) ?? ""
         referenceDocuments = try container.decodeIfPresent([ReferenceDocument].self, forKey: .referenceDocuments) ?? []
+        chapterDrafts = try container.decodeIfPresent([ChapterDraft].self, forKey: .chapterDrafts) ?? []
     }
 
     func encode(to encoder: Encoder) throws {
@@ -939,6 +1168,7 @@ struct NovelProject: Identifiable, Codable {
         try container.encode(wordTargetText, forKey: .wordTargetText)
         try container.encode(continuityNotes, forKey: .continuityNotes)
         try container.encode(referenceDocuments, forKey: .referenceDocuments)
+        try container.encode(chapterDrafts, forKey: .chapterDrafts)
     }
 
     var currentChapterLabel: String {
@@ -947,6 +1177,18 @@ struct NovelProject: Identifiable, Codable {
 
     var currentChapterSummary: String {
         "\(currentChapterLabel) · \(currentChapterTitle)"
+    }
+
+    var savedChapterCount: Int {
+        chapterDrafts.count
+    }
+
+    var sortedChapterDrafts: [ChapterDraft] {
+        chapterDrafts.sorted(by: ChapterDraft.sortDescending)
+    }
+
+    var hasSavedCurrentChapter: Bool {
+        chapterDrafts.contains(where: { $0.chapterNumber == currentChapterNumber })
     }
 
     var hasOutline: Bool {

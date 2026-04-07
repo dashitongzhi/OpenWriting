@@ -6,6 +6,7 @@ struct OutlineWorkspacePanel: View {
 
     @State private var isSummarizing = false
     @State private var summaryStatusMessage = "AI 总结会只围绕当前选中的书籍生成，不会混入其他项目。"
+    @State private var selectedSavedChapterID: ChapterDraft.ID?
 
     private var activeProject: NovelProject? {
         appState.activeProject
@@ -15,6 +16,7 @@ struct OutlineWorkspacePanel: View {
         if let project = activeProject {
             VStack(alignment: .leading, spacing: 24) {
                 overviewPanel(for: project)
+                savedChaptersPanel(for: project)
                 structureEditorRows(for: project)
                 summaryPanel(for: project)
             }
@@ -22,6 +24,16 @@ struct OutlineWorkspacePanel: View {
                 summaryStatusMessage = project.hasOutlineSummary
                     ? "已为《\(project.title)》保留章节树总结，可继续手动整理后写回连续性笔记。"
                     : "先补结构节点，再调用 AI 做一次章节树总览。"
+                selectedSavedChapterID = project.sortedChapterDrafts.first?.id
+            }
+            .onChange(of: project.chapterDrafts) { _, chapterDrafts in
+                let sortedDrafts = chapterDrafts.sorted(by: ChapterDraft.sortDescending)
+                if let selectedSavedChapterID,
+                   sortedDrafts.contains(where: { $0.id == selectedSavedChapterID }) {
+                    return
+                }
+
+                self.selectedSavedChapterID = sortedDrafts.first?.id
             }
         } else {
             DashboardPanel(
@@ -46,6 +58,7 @@ struct OutlineWorkspacePanel: View {
                 WorkspaceMetricBadge(label: "结构节点", value: "\(project.structureNodeCount)")
                 WorkspaceMetricBadge(label: "角色弧线", value: project.characterArcStatusLabel)
                 WorkspaceMetricBadge(label: "伏笔回收", value: project.foreshadowStatusLabel)
+                WorkspaceMetricBadge(label: "已存章节", value: "\(project.savedChapterCount) 章")
             }
 
             ViewThatFits(in: .horizontal) {
@@ -93,6 +106,96 @@ struct OutlineWorkspacePanel: View {
             Label(summaryStatusMessage, systemImage: isSummarizing ? "sparkles" : "text.magnifyingglass")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private func savedChaptersPanel(for project: NovelProject) -> some View {
+        let selectedChapter = selectedSavedChapter(for: project)
+
+        return DashboardPanel(
+            title: "章节存档",
+            subtitle: "写作台里保存过的章节统一放在这里查看。你可以在这里浏览已收录章节，也可以把某一章重新载入写作台继续改。"
+        ) {
+            HStack(spacing: 12) {
+                WorkspaceMetricBadge(label: "已保存", value: project.savedChapterCount == 0 ? "暂无" : "\(project.savedChapterCount) 章")
+                WorkspaceMetricBadge(
+                    label: "最近保存",
+                    value: project.sortedChapterDrafts.first?.savedAt ?? "暂无"
+                )
+            }
+
+            if project.sortedChapterDrafts.isEmpty {
+                Text("当前还没有已保存章节。你在写作台点“AI 拟标题并保存”后，章节会出现在这里。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(project.sortedChapterDrafts) { chapterDraft in
+                            Button {
+                                selectedSavedChapterID = chapterDraft.id
+                            } label: {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(chapterDraft.chapterSummary)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(1)
+
+                                    Text(chapterDraft.previewText)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+
+                                    HStack {
+                                        Text("\(chapterDraft.wordCount) 字")
+                                        Spacer()
+                                        Text(chapterDraft.savedAt)
+                                    }
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                }
+                                .padding(12)
+                                .frame(width: 240, alignment: .leading)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                        .fill(Color.white.opacity(chapterDraft.id == selectedSavedChapterID ? 0.82 : 0.58))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                        .strokeBorder(
+                                            chapterDraft.id == selectedSavedChapterID
+                                                ? Color.blue.opacity(0.35)
+                                                : Color.white.opacity(0.16),
+                                            lineWidth: 1
+                                        )
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+
+                if let selectedChapter {
+                    HStack(alignment: .center, spacing: 12) {
+                        WorkspaceMetricBadge(label: "当前查看", value: selectedChapter.chapterSummary)
+                        WorkspaceMetricBadge(label: "字数", value: "\(selectedChapter.wordCount)")
+                        Spacer()
+
+                        Button("载入写作台继续编辑") {
+                            appState.loadChapterDraft(selectedChapter.id, for: project.id)
+                            appState.openWritingDesk(for: project.id)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    SavedChapterPreviewSurface(
+                        text: selectedChapter.content,
+                        placeholder: "当前章节正文会显示在这里。"
+                    )
+                    .frame(minHeight: 220)
+                }
+            }
         }
     }
 
@@ -272,6 +375,15 @@ struct OutlineWorkspacePanel: View {
         )
     }
 
+    private func selectedSavedChapter(for project: NovelProject) -> ChapterDraft? {
+        if let selectedSavedChapterID,
+           let chapterDraft = project.sortedChapterDrafts.first(where: { $0.id == selectedSavedChapterID }) {
+            return chapterDraft
+        }
+
+        return project.sortedChapterDrafts.first
+    }
+
     private func summarizeOutline(for project: NovelProject) {
         guard let configuration = appState.aiConfiguration else {
             summaryStatusMessage = "当前模型配置不完整，请先到设置里填写 API Key、Base URL 和模型名称。"
@@ -340,5 +452,29 @@ private struct OutlineEditorSurface: View {
                         .allowsHitTesting(false)
                 }
             }
+    }
+}
+
+private struct SavedChapterPreviewSurface: View {
+    let text: String
+    let placeholder: String
+
+    var body: some View {
+        ScrollView {
+            Text(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? placeholder : text)
+                .font(.system(size: 15, weight: .regular, design: .serif))
+                .foregroundStyle(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .tertiary : .primary)
+                .lineSpacing(5)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(18)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+        )
     }
 }

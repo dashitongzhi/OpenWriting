@@ -122,7 +122,7 @@ struct HomeDashboardView: View {
 
     private var heroCopy: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("OpenReading")
+            Text("OpenWriting")
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
                 .textCase(.uppercase)
                 .tracking(3)
@@ -1859,6 +1859,7 @@ private struct WorkspaceUtilityCard: View {
                 )
             )
         )
+        .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 32, style: .continuous)
                 .strokeBorder(palette.stroke, lineWidth: 1)
@@ -1956,23 +1957,34 @@ private struct WorkspaceUtilityCard: View {
     }
 
     private var outlineUtilityContent: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             if let activeProject {
                 utilityFeatureCard(
                     eyebrow: "结构分布",
                     title: activeProject.currentChapterSummary,
-                    subtitle: "已创作 \(activeProject.writtenChapters) 章，可继续拆分场景目标、转折节点和伏笔回收。",
+                    subtitle: "围绕当前章节继续拆分场景、角色弧线和伏笔回收。",
                     trailing: activeProject.title
                 )
 
-                HStack(spacing: 12) {
-                    WorkspaceMetricBadge(label: "结构节点", value: "\(activeProject.structureNodeCount)")
-                    WorkspaceMetricBadge(label: "场景推进", value: activeProject.sceneProgressStatusLabel)
-                }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) {
+                        WorkspaceMetricBadge(label: "结构节点", value: "\(activeProject.structureNodeCount)")
+                        WorkspaceMetricBadge(label: "场景推进", value: activeProject.sceneProgressStatusLabel)
+                        WorkspaceMetricBadge(label: "角色弧线", value: activeProject.characterArcStatusLabel)
+                        WorkspaceMetricBadge(label: "伏笔回收", value: activeProject.foreshadowStatusLabel)
+                    }
 
-                HStack(spacing: 12) {
-                    WorkspaceMetricBadge(label: "角色弧线", value: activeProject.characterArcStatusLabel)
-                    WorkspaceMetricBadge(label: "伏笔回收", value: activeProject.foreshadowStatusLabel)
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 10) {
+                            WorkspaceMetricBadge(label: "结构节点", value: "\(activeProject.structureNodeCount)")
+                            WorkspaceMetricBadge(label: "场景推进", value: activeProject.sceneProgressStatusLabel)
+                        }
+
+                        HStack(spacing: 10) {
+                            WorkspaceMetricBadge(label: "角色弧线", value: activeProject.characterArcStatusLabel)
+                            WorkspaceMetricBadge(label: "伏笔回收", value: activeProject.foreshadowStatusLabel)
+                        }
+                    }
                 }
 
                 WorkspaceChecklist(
@@ -1981,7 +1993,8 @@ private struct WorkspaceUtilityCard: View {
                         activeProject.hasStructureNotes ? "继续补齐卷章与节点之间的承接关系" : "先把全书章节骨架按卷章写出来",
                         activeProject.hasSceneProgressNotes ? "检查当前章节场景目标是否足够具体" : "把当前章节拆成 3 到 5 个场景推进点",
                         activeProject.hasOutlineSummary ? "AI 总结已生成，可写回连续性笔记" : "补完结构后再调用 AI 做一次结构总览"
-                    ]
+                    ],
+                    compact: true
                 )
             } else {
                 utilityFeatureCard(
@@ -2002,7 +2015,8 @@ private struct WorkspaceUtilityCard: View {
                         "先选中一本当前要整理的书",
                         "再补章节骨架、场景推进和角色弧线",
                         "最后调用 AI 汇总结构建议"
-                    ]
+                    ],
+                    compact: true
                 )
             }
         }
@@ -2389,24 +2403,31 @@ struct WorkspaceChecklist: View {
     @Environment(\.colorScheme) private var colorScheme
     let title: String
     let items: [String]
+    let compact: Bool
 
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
     }
 
+    init(title: String, items: [String], compact: Bool = false) {
+        self.title = title
+        self.items = items
+        self.compact = compact
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: compact ? 10 : 12) {
             Text(title)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(palette.textPrimary)
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: compact ? 8 : 10) {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                     HStack(alignment: .top, spacing: 10) {
                         Circle()
                             .fill(palette.coolAccent)
-                            .frame(width: 8, height: 8)
-                            .padding(.top, 6)
+                            .frame(width: compact ? 7 : 8, height: compact ? 7 : 8)
+                            .padding(.top, compact ? 5 : 6)
 
                         Text(item)
                             .font(.subheadline)
@@ -2416,7 +2437,7 @@ struct WorkspaceChecklist: View {
                 }
             }
         }
-        .padding(16)
+        .padding(compact ? 14 : 16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 22, style: .continuous)

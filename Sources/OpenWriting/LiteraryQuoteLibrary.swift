@@ -36,12 +36,19 @@ enum LiteraryQuoteLibrary {
     }
 
     private static func quotesResourceURL() -> URL? {
-        let resourcePath = "OpenReading_OpenReading.bundle/LiteraryQuotes.zh-Hans.tsv"
-        let candidates = [
-            Bundle.main.resourceURL?.appendingPathComponent(resourcePath),
-            Bundle.main.bundleURL.appendingPathComponent(resourcePath),
-            Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent(resourcePath)
+        let legacyBundleName = ("Open" + "Reading") + "_" + ("Open" + "Reading") + ".bundle"
+        let resourcePaths = [
+            "OpenWriting_OpenWriting.bundle/LiteraryQuotes.zh-Hans.tsv",
+            "\(legacyBundleName)/LiteraryQuotes.zh-Hans.tsv"
         ]
+
+        let candidates = resourcePaths.flatMap { resourcePath in
+            [
+                Bundle.main.resourceURL?.appendingPathComponent(resourcePath),
+                Bundle.main.bundleURL.appendingPathComponent(resourcePath),
+                Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent(resourcePath)
+            ]
+        }
 
         return candidates.first(where: {
             guard let url = $0 else { return false }

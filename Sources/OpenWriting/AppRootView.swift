@@ -110,7 +110,7 @@ struct AppRootView: View {
                 }
             }
 
-            Text("macOS 写作工作台原型")
+            Text("OpenWriting · macOS 写作工作台")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }

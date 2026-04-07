@@ -34,7 +34,7 @@ enum AppAppearance: String, CaseIterable, Identifiable {
     var description: String {
         switch self {
         case .system:
-            return "OpenReading 会跟随 macOS 当前的外观设置自动切换。"
+            return "OpenWriting 会跟随 macOS 当前的外观设置自动切换。"
         case .light:
             return "始终使用浅色外观，适合长时间阅读和排版。"
         case .dark:
@@ -65,7 +65,7 @@ struct AppearanceSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("OpenReading 设置")
+            Text("OpenWriting 设置")
                 .font(.title2.weight(.semibold))
 
             Form {

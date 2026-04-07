@@ -13,16 +13,16 @@ CACHE_HOME="$BUILD_HOME/.cache"
 MODULE_CACHE="$ROOT_DIR/.build/clang-module-cache"
 TMP_DIR="$ROOT_DIR/.build/tmp"
 BUILD_DIR="$ROOT_DIR/.build/arm64-apple-macosx/debug"
-APP_STAGING_DIR="/tmp/OpenReading-preview"
-APP_BUNDLE="$APP_STAGING_DIR/OpenReading.app"
-EXECUTABLE="$BUILD_DIR/OpenReading"
-RESOURCE_BUNDLE="$BUILD_DIR/OpenReading_OpenReading.bundle"
+APP_STAGING_DIR="/tmp/OpenWriting-preview"
+APP_BUNDLE="$APP_STAGING_DIR/OpenWriting.app"
+EXECUTABLE="$BUILD_DIR/OpenWriting"
+RESOURCE_BUNDLE="$BUILD_DIR/OpenWriting_OpenWriting.bundle"
 CONTENTS_DIR="$APP_BUNDLE/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 INFO_PLIST="$CONTENTS_DIR/Info.plist"
-LAUNCH_LOG="$ROOT_DIR/.build/openreading-launch.log"
-APP_EXECUTABLE="$MACOS_DIR/OpenReading"
+LAUNCH_LOG="$ROOT_DIR/.build/openwriting-launch.log"
+APP_EXECUTABLE="$MACOS_DIR/OpenWriting"
 
 mkdir -p "$BUILD_HOME" "$CACHE_HOME" "$MODULE_CACHE" "$TMP_DIR"
 
@@ -38,7 +38,7 @@ rm -rf "$APP_STAGING_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 cp "$EXECUTABLE" "$APP_EXECUTABLE"
-cp -R "$RESOURCE_BUNDLE" "$RESOURCES_DIR/OpenReading_OpenReading.bundle"
+cp -R "$RESOURCE_BUNDLE" "$RESOURCES_DIR/OpenWriting_OpenWriting.bundle"
 
 cat > "$INFO_PLIST" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -48,13 +48,13 @@ cat > "$INFO_PLIST" <<'PLIST'
     <key>CFBundleDevelopmentRegion</key>
     <string>zh_CN</string>
     <key>CFBundleExecutable</key>
-    <string>OpenReading</string>
+    <string>OpenWriting</string>
     <key>CFBundleIdentifier</key>
-    <string>com.openreading.dev</string>
+    <string>com.openwriting.dev</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>OpenReading</string>
+    <string>OpenWriting</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

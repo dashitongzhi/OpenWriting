@@ -13,8 +13,9 @@ struct WritingDeskView: View {
     @State private var aiSuggestion = ""
     @State private var draftBufferText = ""
     @State private var aiStatusMessage = "准备就绪，可先补大纲、参考文本和特殊要求，再开始当前章节写作。"
-    @State private var saveMessage = "自动保存已开启"
+    @State private var saveMessage = "自动保存已开启，可按章节收录"
     @State private var isGenerating = false
+    @State private var isSavingChapter = false
     @State private var isCacheCollapsed = false
     @State private var autoScrollLocked = false
     @State private var areConfigurationCardsCollapsed = false
@@ -174,14 +175,7 @@ struct WritingDeskView: View {
                 horizontalLayout
                     .frame(height: layout.creationRowHeight, alignment: .top)
             } else {
-                ViewThatFits(in: .horizontal) {
-                    horizontalLayout
-
-                    VStack(alignment: .leading, spacing: workspaceSpacing) {
-                        writingDeskDraftColumn(for: project)
-                        writingDeskAIColumn(for: project)
-                    }
-                }
+                horizontalLayout
             }
         }
     }
@@ -273,15 +267,9 @@ struct WritingDeskView: View {
                     .init(
                         symbolName: "wand.and.stars",
                         accessibilityLabel: "润色当前草稿",
-                        isEnabled: !isGenerating && project.draftWordCount > 0
+                        isEnabled: !isGenerating && !isSavingChapter && project.draftWordCount > 0
                     ) {
                         polishDraft(for: project)
-                    },
-                    .init(
-                        symbolName: "square.and.arrow.down",
-                        accessibilityLabel: "保存草稿"
-                    ) {
-                        saveDraft(for: project)
                     }
                 ],
                 fillContentHeight: layout != nil
@@ -289,13 +277,15 @@ struct WritingDeskView: View {
                 HStack(alignment: .center, spacing: 10) {
                     PillTag(text: project.title)
                     PillTag(text: project.currentChapterSummary)
-                    PillTag(text: "已创作 \(project.writtenChapters) 章")
+                    PillTag(text: project.savedChapterCount == 0 ? "未收录章节" : "已收录 \(project.savedChapterCount) 章")
                 }
 
-                Text("采纳后的内容会进入草稿箱，可继续键盘编辑；润色会把结果先送到右侧 AI 作家。")
+                Text("根据大纲、参考文本、特殊要求和字数设定生成的候选稿，确认后会进入这里。首次保存会同步让 AI 拟一个章节标题，之后你也可以手动改名再更新；已保存章节请到章节树里查看。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineSpacing(3)
+
+                writingDeskChapterControls(for: project)
 
                 TextEditor(text: draftBinding(for: project.id))
                     .font(.system(size: 16, weight: .regular, design: .serif))
@@ -402,10 +392,17 @@ struct WritingDeskView: View {
                 .init(
                     symbolName: "play.fill",
                     accessibilityLabel: "开始写作",
-                    isEnabled: !isGenerating && appState.aiConfiguration != nil,
+                    isEnabled: !isGenerating && !isSavingChapter && appState.aiConfiguration != nil,
                     isPrimary: true
                 ) {
                     startWriting(for: project)
+                },
+                .init(
+                    symbolName: "arrow.clockwise",
+                    accessibilityLabel: "重写当前候选稿",
+                    isEnabled: !isGenerating && !isSavingChapter && appState.aiConfiguration != nil && !aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ) {
+                    rewriteSuggestion(for: project)
                 },
                 .init(
                     symbolName: autoScrollLocked ? "lock.fill" : "lock.open.fill",
@@ -446,7 +443,7 @@ struct WritingDeskView: View {
                 )
                 .overlay(alignment: .topLeading) {
                     if aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text("这里会显示 AI 生成或润色后的内容。你可以先改，再送到缓存区或直接插入草稿箱。")
+                        Text("这里会显示 AI 按当前大纲与要求生成的候选稿。满意就接受进草稿箱，不满意就直接重写。")
                             .font(.subheadline)
                             .foregroundStyle(.tertiary)
                             .padding(.horizontal, 24)
@@ -459,12 +456,26 @@ struct WritingDeskView: View {
 
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) {
-                    Button(appState.showWritingDeskCachePanel ? "送入缓存区" : "插入草稿箱") {
-                        routeAISuggestion(for: project)
+                    Button("接受放入草稿箱") {
+                        acceptAISuggestionIntoDraft(for: project)
                     }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.return, modifiers: [.command, .shift])
                     .disabled(aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                    Button("重写这一版") {
+                        rewriteSuggestion(for: project)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isGenerating || isSavingChapter || appState.aiConfiguration == nil)
+
+                    if appState.showWritingDeskCachePanel {
+                        Button("暂存到缓存区") {
+                            moveAISuggestionToCache()
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
 
                     Button("清空结果") {
                         aiSuggestion = ""
@@ -480,12 +491,26 @@ struct WritingDeskView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Button(appState.showWritingDeskCachePanel ? "送入缓存区" : "插入草稿箱") {
-                        routeAISuggestion(for: project)
+                    Button("接受放入草稿箱") {
+                        acceptAISuggestionIntoDraft(for: project)
                     }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.return, modifiers: [.command, .shift])
                     .disabled(aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                    Button("重写这一版") {
+                        rewriteSuggestion(for: project)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isGenerating || isSavingChapter || appState.aiConfiguration == nil)
+
+                    if appState.showWritingDeskCachePanel {
+                        Button("暂存到缓存区") {
+                            moveAISuggestionToCache()
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
 
                     Button("清空结果") {
                         aiSuggestion = ""
@@ -515,7 +540,7 @@ struct WritingDeskView: View {
     }
 
     private var aiStatusLabel: String {
-        if isGenerating {
+        if isGenerating || isSavingChapter {
             return "生成中"
         }
 
@@ -523,13 +548,57 @@ struct WritingDeskView: View {
     }
 
     private var aiStatusColor: Color {
-        if isGenerating {
+        if isGenerating || isSavingChapter {
             return .orange
         }
 
         return appState.aiConfiguration == nil
             ? Color(red: 0.83, green: 0.45, blue: 0.20)
             : Color(red: 0.18, green: 0.68, blue: 0.40)
+    }
+
+    private func writingDeskChapterControls(for project: NovelProject) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .bottom, spacing: 12) {
+                WritingDeskInlineField(title: "章节号") {
+                    TextField("章节号", value: chapterNumberBinding(for: project.id), format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 88)
+                }
+
+                WritingDeskInlineField(title: "章节标题（可改）") {
+                    TextField("保存后可手动改标题", text: chapterTitleBinding(for: project.id))
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                Button(project.hasSavedCurrentChapter ? "更新当前章" : "AI 拟标题并保存") {
+                    saveCurrentChapterDraft(for: project)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isSavingChapter || isGenerating || project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .bottom, spacing: 12) {
+                    WritingDeskInlineField(title: "章节号") {
+                        TextField("章节号", value: chapterNumberBinding(for: project.id), format: .number)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 88)
+                    }
+
+                    Button(project.hasSavedCurrentChapter ? "更新当前章" : "AI 拟标题并保存") {
+                        saveCurrentChapterDraft(for: project)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isSavingChapter || isGenerating || project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+
+                WritingDeskInlineField(title: "章节标题（可改）") {
+                    TextField("保存后可手动改标题", text: chapterTitleBinding(for: project.id))
+                        .textFieldStyle(.roundedBorder)
+                }
+            }
+        }
     }
 
     private func outlineBinding(for projectID: NovelProject.ID) -> Binding<String> {
@@ -560,6 +629,20 @@ struct WritingDeskView: View {
         )
     }
 
+    private func chapterTitleBinding(for projectID: NovelProject.ID) -> Binding<String> {
+        Binding(
+            get: { appState.project(for: projectID)?.currentChapterTitle ?? "" },
+            set: { appState.updateCurrentChapterTitle($0, for: projectID) }
+        )
+    }
+
+    private func chapterNumberBinding(for projectID: NovelProject.ID) -> Binding<Int> {
+        Binding(
+            get: { max(appState.project(for: projectID)?.currentChapterNumber ?? 1, 1) },
+            set: { appState.updateCurrentChapterNumber($0, for: projectID) }
+        )
+    }
+
     private func draftBinding(for projectID: NovelProject.ID) -> Binding<String> {
         Binding(
             get: { appState.project(for: projectID)?.draftText ?? "" },
@@ -567,7 +650,7 @@ struct WritingDeskView: View {
         )
     }
 
-    private func startWriting(for project: NovelProject) {
+    private func startWriting(for project: NovelProject, rejectedSuggestion: String? = nil) {
         guard let configuration = appState.aiConfiguration else {
             aiStatusMessage = "当前模型配置不完整，请先到设置里填写 API Key、Base URL 和模型名称。"
             return
@@ -575,7 +658,9 @@ struct WritingDeskView: View {
 
         let latestProject = appState.project(for: project.id) ?? project
         isGenerating = true
-        aiStatusMessage = "AI 正在根据大纲、参考文本、特殊要求和当前章节状态生成正文…"
+        aiStatusMessage = rejectedSuggestion == nil
+            ? "AI 正在根据大纲、参考文本、特殊要求和字数要求创作候选稿…"
+            : "AI 正在重写这一版候选稿，会保留当前约束，但换一种写法重新生成…"
         timingSnapshot = .queued
 
         Task {
@@ -586,7 +671,7 @@ struct WritingDeskView: View {
                     configuration: configuration,
                     project: latestProject,
                     mode: latestProject.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .advanceChapter : .continueScene,
-                    additionalInstruction: "请同时遵守项目中的特殊要求和字数设定。",
+                    additionalInstruction: generationInstruction(rejecting: rejectedSuggestion),
                     length: preferredLength(for: latestProject.wordTargetText)
                 )
 
@@ -601,7 +686,8 @@ struct WritingDeskView: View {
                         finish: max(total * 0.18, 0.1),
                         complete: max(total, 0.2)
                     )
-                    aiStatusMessage = "AI 已生成当前章节草稿，你可以继续编辑后再送入缓存区或直接插入草稿箱。"
+                    aiStatusMessage = "候选稿已生成。满意可接受进草稿箱，不满意可继续重写。"
+                    revealWritingDeskWindow(for: project.id)
                     focusAIEditor()
                     requestAutoScroll(to: .ai)
                 }
@@ -610,9 +696,15 @@ struct WritingDeskView: View {
                     isGenerating = false
                     timingSnapshot = .idle
                     aiStatusMessage = error.localizedDescription
+                    revealWritingDeskWindow(for: project.id)
                 }
             }
         }
+    }
+
+    private func rewriteSuggestion(for project: NovelProject) {
+        let rejectedSuggestion = aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines)
+        startWriting(for: project, rejectedSuggestion: rejectedSuggestion.isEmpty ? nil : rejectedSuggestion)
     }
 
     private func polishDraft(for project: NovelProject) {
@@ -653,7 +745,8 @@ struct WritingDeskView: View {
                         finish: max(total * 0.24, 0.1),
                         complete: max(total, 0.2)
                     )
-                    aiStatusMessage = "润色结果已生成。建议先在右侧检查，再决定送入缓存区或直接插入草稿箱。"
+                    aiStatusMessage = "润色结果已生成。建议先在右侧检查，满意后再接受进草稿箱。"
+                    revealWritingDeskWindow(for: project.id)
                     focusAIEditor()
                     requestAutoScroll(to: .ai)
                 }
@@ -662,28 +755,32 @@ struct WritingDeskView: View {
                     isGenerating = false
                     timingSnapshot = .idle
                     aiStatusMessage = error.localizedDescription
+                    revealWritingDeskWindow(for: project.id)
                 }
             }
         }
     }
 
-    private func routeAISuggestion(for project: NovelProject) {
+    private func acceptAISuggestionIntoDraft(for project: NovelProject) {
         let trimmed = aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        if appState.showWritingDeskCachePanel {
-            draftBufferText = trimmed
-            aiStatusMessage = "AI 结果已送入缓存区，确认后可采纳到草稿箱。"
-            isCacheCollapsed = false
-            requestAutoScroll(to: .cache)
-        } else {
-            appState.appendDraftText(trimmed, for: project.id)
-            aiSuggestion = ""
-            saveMessage = "AI 内容已直接插入草稿箱"
-            aiStatusMessage = "AI 结果已直接插入草稿箱。"
-            focusDraftEditor()
-            requestAutoScroll(to: .draft)
-        }
+        appState.appendDraftText(trimmed, for: project.id)
+        aiSuggestion = ""
+        saveMessage = "已接受 AI 候选稿到草稿箱"
+        aiStatusMessage = "候选稿已放入草稿箱，可继续编辑或保存当前章。"
+        focusDraftEditor()
+        requestAutoScroll(to: .draft)
+    }
+
+    private func moveAISuggestionToCache() {
+        let trimmed = aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        draftBufferText = trimmed
+        aiStatusMessage = "AI 候选稿已暂存到缓存区，确认后可采纳进草稿箱。"
+        isCacheCollapsed = false
+        requestAutoScroll(to: .cache)
     }
 
     private func acceptCacheIntoDraft(for project: NovelProject) {
@@ -693,15 +790,61 @@ struct WritingDeskView: View {
         appState.appendDraftText(trimmed, for: project.id)
         draftBufferText = ""
         saveMessage = "缓存内容已采纳进草稿箱"
-        aiStatusMessage = "缓存内容已采纳到草稿箱，可继续直接编辑正文。"
+        aiStatusMessage = "缓存内容已采纳到草稿箱，可继续编辑并按章节保存。"
         focusDraftEditor()
         requestAutoScroll(to: .draft)
     }
 
-    private func saveDraft(for project: NovelProject) {
-        appState.touchProject(project.id)
-        saveMessage = "已手动保存 · \(timestampLabel())"
-        aiStatusMessage = "当前项目已保存，可以继续写作或切回项目空间。"
+    private func saveCurrentChapterDraft(for project: NovelProject) {
+        let latestProject = appState.project(for: project.id) ?? project
+        let trimmedDraft = latestProject.draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !trimmedDraft.isEmpty else {
+            aiStatusMessage = "草稿箱里还没有可保存的正文。"
+            return
+        }
+
+        if latestProject.hasSavedCurrentChapter {
+            completeChapterDraftSave(for: project, statusPrefix: "已按当前标题更新")
+            return
+        }
+
+        guard let configuration = appState.aiConfiguration else {
+            let fallbackTitle = fallbackChapterTitle(for: latestProject)
+            appState.updateCurrentChapterTitle(fallbackTitle, for: project.id)
+            completeChapterDraftSave(for: project, statusPrefix: "模型未配置，已按当前标题保存")
+            return
+        }
+
+        isSavingChapter = true
+        aiStatusMessage = "AI 正在根据草稿箱内容拟一个章节标题，并同步保存当前章…"
+
+        Task {
+            do {
+                let title = try await AIWritingService.suggestChapterTitle(
+                    configuration: configuration,
+                    project: latestProject,
+                    draft: trimmedDraft
+                )
+
+                await MainActor.run {
+                    appState.updateCurrentChapterTitle(title, for: project.id)
+                    completeChapterDraftSave(for: project, statusPrefix: "AI 已拟好标题并保存")
+                    revealWritingDeskWindow(for: project.id)
+                }
+            } catch {
+                await MainActor.run {
+                    let fallbackTitle = fallbackChapterTitle(for: latestProject)
+                    appState.updateCurrentChapterTitle(fallbackTitle, for: project.id)
+                    completeChapterDraftSave(
+                        for: project,
+                        statusPrefix: "AI 拟标题失败，已按当前标题保存",
+                        detailMessage: error.localizedDescription
+                    )
+                    revealWritingDeskWindow(for: project.id)
+                }
+            }
+        }
     }
 
     private func referenceImportSummary(for project: NovelProject) -> String {
@@ -726,6 +869,56 @@ struct WritingDeskView: View {
         }
     }
 
+    private func generationInstruction(rejecting rejectedSuggestion: String?) -> String {
+        let baseInstruction = "请同时遵守项目中的特殊要求和字数设定，直接创作可进入草稿箱的正文候选稿。"
+        let trimmedRejectedSuggestion = rejectedSuggestion?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        guard !trimmedRejectedSuggestion.isEmpty else {
+            return baseInstruction
+        }
+
+        return """
+        \(baseInstruction)
+        用户对上一版候选稿不满意，这次请明显更换起笔、节奏和措辞，不要重复下面这版的句子结构或段落组织：
+        \(excerpt(from: trimmedRejectedSuggestion, limit: 1_200))
+        """
+    }
+
+    private func excerpt(from text: String, limit: Int) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > limit else { return trimmed }
+        return String(trimmed.prefix(limit)) + "…"
+    }
+
+    private func fallbackChapterTitle(for project: NovelProject) -> String {
+        let trimmedTitle = project.currentChapterTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedTitle.isEmpty ? project.currentChapterLabel : trimmedTitle
+    }
+
+    private func completeChapterDraftSave(
+        for project: NovelProject,
+        statusPrefix: String,
+        detailMessage: String? = nil
+    ) {
+        defer {
+            isSavingChapter = false
+        }
+
+        guard let result = appState.saveCurrentChapterDraft(for: project.id) else {
+            aiStatusMessage = "草稿箱里还没有可保存的正文。"
+            return
+        }
+
+        let chapterDraft = result.chapterDraft
+        saveMessage = result.isUpdate ? "已更新 \(chapterDraft.chapterSummary)" : "已保存 \(chapterDraft.chapterSummary)"
+
+        if let detailMessage {
+            aiStatusMessage = "\(statusPrefix) \(chapterDraft.chapterSummary)。\(detailMessage)"
+        } else {
+            aiStatusMessage = "\(statusPrefix) \(chapterDraft.chapterSummary)。"
+        }
+    }
+
     private func polishTargetText(for project: NovelProject) -> String {
         let trimmed = project.draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
@@ -736,6 +929,11 @@ struct WritingDeskView: View {
     private func requestAutoScroll(to anchor: WritingDeskScrollAnchor) {
         guard !autoScrollLocked, !areConfigurationCardsCollapsed else { return }
         pendingScrollAnchor = anchor
+    }
+
+    private func revealWritingDeskWindow(for projectID: NovelProject.ID) {
+        appState.openWritingDesk(for: projectID)
+        AppRuntime.shared.windowCoordinator.showMainWindow()
     }
 
     private func focusDraftEditor() {
@@ -754,10 +952,11 @@ struct WritingDeskView: View {
         aiSuggestion = ""
         draftBufferText = ""
         isGenerating = false
+        isSavingChapter = false
         isCacheCollapsed = false
         autoScrollLocked = false
         timingSnapshot = .idle
-        saveMessage = "自动保存已开启"
+        saveMessage = "自动保存已开启，可按章节收录"
         aiStatusMessage = "准备就绪，可先补大纲、参考文本和特殊要求，再开始当前章节写作。"
         focusDraftEditor()
     }
@@ -1030,9 +1229,30 @@ private struct WritingDeskCollapsedLayout {
             draftPrimaryCardHeight = availableHeight
         }
 
-        draftEditorHeight = max(132, draftPrimaryCardHeight - 230)
+        draftEditorHeight = max(132, draftPrimaryCardHeight - 340)
         cacheEditorHeight = max(72, (cacheCardHeight ?? 0) - 124)
         aiEditorHeight = max(148, aiCardHeight - (showTimeline ? 272 : 214))
+    }
+}
+
+private struct WritingDeskInlineField<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: Content
+
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

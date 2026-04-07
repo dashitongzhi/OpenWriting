@@ -126,6 +126,27 @@ enum AIWritingService {
         )
     }
 
+    static func suggestChapterTitle(
+        configuration: AIConnectionConfiguration,
+        project: NovelProject,
+        draft: String
+    ) async throws -> String {
+        let rawTitle = try await completeText(
+            configuration: configuration,
+            systemPrompt: chapterTitleSystemPrompt,
+            userPrompt: chapterTitleUserPrompt(project: project, draft: draft),
+            temperature: 0.7,
+            maxTokens: 80
+        )
+
+        let normalizedTitle = normalizeChapterTitle(rawTitle)
+        guard !normalizedTitle.isEmpty else {
+            throw AIWritingError.emptyResult
+        }
+
+        return normalizedTitle
+    }
+
     private static func completeText(
         configuration: AIConnectionConfiguration,
         systemPrompt: String,
@@ -204,6 +225,16 @@ enum AIWritingService {
     3. 输出应服务于长篇连续创作，帮助用户继续完善章节树。
     4. 直接给出中文总结，不要解释你的推理过程。
     5. 用清晰分段输出以下 5 个小节：当前结构判断、本章推进建议、角色弧线提醒、伏笔与回收、下一步整理动作。
+    """
+
+    private static let chapterTitleSystemPrompt = """
+    你是一位擅长中文小说命名的章节编辑。
+    你的任务是根据当前章节正文，为它拟一个适合长篇连载的章节标题。
+    必须遵守：
+    1. 只输出一个中文标题，不要解释，不要加引号，不要加“第X章”。
+    2. 标题要贴合正文内容、氛围和推进重点，但避免剧透最终答案。
+    3. 控制在 4 到 14 个汉字以内，尽量凝练、好记、有画面感。
+    4. 如果用户已有章节标题，只把它当参考，不要机械重复。
     """
 
     private static func userPrompt(
@@ -350,6 +381,31 @@ enum AIWritingService {
         """
     }
 
+    private static func chapterTitleUserPrompt(project: NovelProject, draft: String) -> String {
+        """
+        项目名称：\(project.title)
+        类型：\(project.genre)
+        当前章节编号：\(project.currentChapterLabel)
+        当前章节标题参考：\(normalized(project.currentChapterTitle, fallback: "暂无"))
+        本章目标：\(project.chapterFocus)
+
+        作品大纲：
+        \(normalized(project.outlineText, fallback: "暂无完整大纲。"))
+
+        手动参考文本：
+        \(normalized(project.referenceContextText, fallback: "暂无手动参考文本。"))
+
+        特殊要求：
+        \(normalized(project.specialRequirements, fallback: "暂无额外特殊要求。"))
+
+        当前章节正文：
+        \(excerpt(from: draft, limit: 3_000))
+
+        输出要求：
+        请只返回一个可直接用于章节保存的标题。
+        """
+    }
+
     private static func excerpt(from text: String, limit: Int) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count > limit else { return trimmed }
@@ -359,6 +415,29 @@ enum AIWritingService {
     private static func normalized(_ text: String, fallback: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? fallback : trimmed
+    }
+
+    private static func normalizeChapterTitle(_ text: String) -> String {
+        let firstLine = text
+            .components(separatedBy: CharacterSet.newlines)
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        let strippedPrefix = firstLine.replacingOccurrences(
+            of: #"^第?\s*\d+\s*章[：:·\-\s]*"#,
+            with: "",
+            options: .regularExpression
+        )
+
+        let stripped = strippedPrefix
+            .replacingOccurrences(of: "《", with: "")
+            .replacingOccurrences(of: "》", with: "")
+            .replacingOccurrences(of: "“", with: "")
+            .replacingOccurrences(of: "”", with: "")
+            .replacingOccurrences(of: "\"", with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "：:·-—_ "))
+
+        return stripped
     }
 }
 

@@ -81,7 +81,7 @@ final class AppWindowCoordinator {
 
 @MainActor
 final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindowDelegate {
-    private static let toolbarIdentifier = NSToolbar.Identifier("OpenReading.MainToolbar")
+    private static let toolbarIdentifier = NSToolbar.Identifier("OpenWriting.MainToolbar")
     private let openSettings: () -> Void
     private weak var observedSplitView: NSSplitView?
     private var splitViewResizeObserver: NSObjectProtocol?
@@ -197,7 +197,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         window.collectionBehavior.insert(.fullScreenPrimary)
         window.isReleasedWhenClosed = false
         window.isMovableByWindowBackground = true
-        window.setFrameAutosaveName("OpenReading.MainWindow")
+        window.setFrameAutosaveName("OpenWriting.MainWindow")
         window.minSize = NSSize(width: 1_180, height: 760)
         window.center()
 
@@ -362,9 +362,9 @@ private final class MainWindowHostingController: NSHostingController<AppRootView
 }
 
 private extension NSToolbarItem.Identifier {
-    static let sidebarDividerTracking = NSToolbarItem.Identifier("OpenReading.Toolbar.SidebarDividerTracking")
-    static let sidebarToggle = NSToolbarItem.Identifier("OpenReading.Toolbar.SidebarToggle")
-    static let openSettings = NSToolbarItem.Identifier("OpenReading.Toolbar.OpenSettings")
+    static let sidebarDividerTracking = NSToolbarItem.Identifier("OpenWriting.Toolbar.SidebarDividerTracking")
+    static let sidebarToggle = NSToolbarItem.Identifier("OpenWriting.Toolbar.SidebarToggle")
+    static let openSettings = NSToolbarItem.Identifier("OpenWriting.Toolbar.OpenSettings")
 }
 
 private extension NSView {
