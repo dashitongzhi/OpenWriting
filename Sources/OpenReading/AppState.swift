@@ -343,6 +343,49 @@ final class AppState {
         }
     }
 
+    func updateStructureNotes(_ text: String, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.structureNotes = text
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func updateSceneProgressNotes(_ text: String, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.sceneProgressNotes = text
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func updateCharacterArcNotes(_ text: String, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.characterArcNotes = text
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func updateForeshadowNotes(_ text: String, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.foreshadowNotes = text
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func updateOutlineSummary(_ text: String, updatedAt: String? = nil, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.outlineSummary = text
+            let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedText.isEmpty {
+                project.outlineSummaryUpdatedAt = ""
+            } else if let updatedAt {
+                project.outlineSummaryUpdatedAt = updatedAt
+            } else if project.outlineSummaryUpdatedAt.isEmpty {
+                project.outlineSummaryUpdatedAt = Self.currentTimestampLabel()
+            }
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
     func updateReferenceContextText(_ text: String, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.referenceContextText = text
@@ -400,6 +443,22 @@ final class AppState {
     func removeReferenceDocument(_ documentID: ReferenceDocument.ID, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.referenceDocuments.removeAll { $0.id == documentID }
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func appendOutlineSummaryToContinuity(for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            let summary = project.outlineSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !summary.isEmpty else { return }
+
+            let stampedSummary = "章节树总结（\(project.outlineSummaryUpdatedAt.isEmpty ? Self.currentTimestampLabel() : project.outlineSummaryUpdatedAt)）\n\(summary)"
+            if project.continuityNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                project.continuityNotes = stampedSummary
+            } else {
+                project.continuityNotes += "\n\n" + stampedSummary
+            }
+
             project.updatedAt = Self.currentTimestampLabel()
         }
     }
@@ -607,6 +666,12 @@ final class AppState {
             chapterFocus: "让主角在钟楼退潮的片刻发现新的证词，并把港口谎言与失踪案并到同一条线索里。",
             draftText: "钟楼的钟声在退潮前第三次敲响，雾像一张被谁悄悄掀开的幕布，沿着码头的木板一层层退开。\n\n顾临站在潮痕线外，靴底沾着盐粒。她知道这座城总在钟声之后说真话，但真话从不完整。今天留下来的，是一枚被海水反复冲刷却还带着体温的铜纽扣。\n\n她把纽扣放进掌心，抬头望向钟楼。那扇面朝港口的小窗刚刚关上，像有人在她看见之前，先一步把秘密收了回去。",
             outlineText: "第一卷：港雾与钟楼\n1. 失踪案在退潮夜启动\n2. 顾临发现钟楼与谎言节律有关\n3. 港务局、钟楼守夜人和失踪名单逐渐并线\n4. 第一卷结尾揭开钟楼记录真话的方式",
+            structureNotes: "第一卷：港雾与钟楼\n第 16 章：潮位异常第一次被公开提起\n第 17 章：港务局旧档案出现缺页\n第 18 章：铜纽扣与守夜人证词并线\n第 19 章：守夜人身份与钟楼记录方式反转",
+            sceneProgressNotes: "1. 开场先让顾临确认退潮时钟楼异常静止\n2. 中段让铜纽扣和旧证词对上时间差\n3. 结尾把视线抛向钟楼小窗后的守夜人",
+            characterArcNotes: "顾临：从冷静观察转向主动试探港务局\n守夜人：表面沉默，内里开始暴露防御性\n港务局记录员：从旁观配合转向刻意遮掩",
+            foreshadowNotes: "铜纽扣：第 18 章出现，第 21 章对应失踪名单\n钟楼缺页：第 17 章露头，第 19 章解释来源\n港口谎言节律：第一卷末尾回收到钟声记录机制",
+            outlineSummary: "当前结构判断：第一卷已经把“潮汐、钟楼、失踪案”三条线并到同一节奏里，结构重心很稳。第 18 章的位置适合作为中段证词翻面的节点，需要继续把线索导向守夜人。\n\n本章推进建议：先让顾临确认退潮异常，再把铜纽扣与旧证词做一次并线。结尾不要一次性揭露守夜人真相，只给出足以推动下一章追查的缺口。\n\n角色弧线提醒：顾临正在从观察者转向行动者，这一步需要在本章体现。守夜人不能过早露出底牌，要让他的防御感先于真相出现。\n\n伏笔与回收：铜纽扣和钟楼缺页都已经具备继续回收的条件，但仍要保留一层解释延迟。港口谎言节律要继续通过钟声和潮位间接提示。\n\n下一步整理动作：继续补第 19 到 21 章的节点关系，明确守夜人与港务局的连接，再把第一卷结尾的揭示顺序写清。",
+            outlineSummaryUpdatedAt: "今天 18:26",
             referenceContextText: "保持海雾、潮声、金属与钟楼的意象，风格克制、悬疑感慢慢推进。",
             specialRequirements: "不要让线索一次性说透，继续保留港口谎言的回声感。",
             wordTargetText: "本章建议 1800-2200 字，重点放在证词出现与线索并线。",
@@ -627,6 +692,10 @@ final class AppState {
             chapterFocus: "把“未来来信”的内容和制图师记忆缺口对应起来，推进她上山的决定。",
             draftText: "信纸在灯下泛出很浅的银光，像山脊上的雪线。陆遥盯着最后那句“请在山雾到来之前回信”，忽然意识到这不是提醒，而像一次迟到多年的邀请。\n\n她摊开地图，把自己重新标在玻璃山以南的旧驿站。那里明明早该废弃，却在信封背面的速写里，被画成一座仍有人居住的小屋。",
             outlineText: "第一幕：收到未来来信并确认地图异常\n第二幕：沿着旧驿站与山径上行，逐步恢复记忆\n第三幕：在玻璃山顶完成回信，也理解山脉真实形状",
+            structureNotes: "第一幕：来信触发上山动机\n第 7 章：确认旧驿站仍有人居住\n第 8 章：地图坐标出现偏移\n第 9 章：回信决定正式成立\n第 10 章：进入山路并恢复第一段记忆",
+            sceneProgressNotes: "1. 先对照来信和旧地图差异\n2. 再让陆遥确认驿站位置仍在使用\n3. 结尾落到“必须上山”这一决定",
+            characterArcNotes: "陆遥：从迟疑观察转向主动回应未来自己\n未来来信的‘她’：保持神秘，但要让语气显出熟悉感",
+            foreshadowNotes: "旧驿站灯光：第 9 章看见，第 11 章解释是谁点亮\n地图偏移：第 8 章出现，第 10 章成为上山依据",
             referenceContextText: "保持玻璃、雪线和失真地图的视觉感，句子可稍微更轻更空灵。",
             specialRequirements: "让记忆恢复通过景物和动作显现，不要直接解释。",
             wordTargetText: "本章建议 1600-2000 字，推进上山决定即可。",
@@ -647,6 +716,10 @@ final class AppState {
             chapterFocus: "写清第一次见到“拷贝体”的震撼感，并让主角意识到今晚的选择会被重复三次。",
             draftText: "天边那道橘金色迟迟不肯沉下去，像有人把整座城按在同一秒里反复播放。沈渡在轻轨站台看见了第二个自己。\n\n那个人站在对面，衣角、姿势、甚至抬头看时间的动作都和他分毫不差。唯一不同的是，对方的手背上多了一道刚愈合的伤，像某个还没来得及发生在他身上的决定。",
             outlineText: "序章：共享黄昏开始覆盖整座城\n第一幕：沈渡发现时间复制现象\n第二幕：每次黄昏都会产生一个不同选择的自己\n第三幕：必须决定保留哪个版本的人生",
+            structureNotes: "序章：共享黄昏的规则第一次出现\n第 4 章：城市开始出现同步停滞\n第 5 章：沈渡意识到选择会被复制\n第 6 章：第一次见到拷贝体\n第 7 章：规则验证与代价显形",
+            sceneProgressNotes: "1. 先建立黄昏停滞的生理不适\n2. 再让沈渡和拷贝体形成镜面对视\n3. 结尾确认今晚的选择会被重复",
+            characterArcNotes: "沈渡：理性压制恐惧，但身体反应先失控\n拷贝体：像被延迟执行的另一种选择，不要写得像纯反派",
+            foreshadowNotes: "手背伤痕：第 6 章出现，第 8 章解释是哪次选择留下\n共享黄昏规则：第 4 章提出，第 7 章确认可复制三次",
             referenceContextText: "科技感要克制，把黄昏残影和轻轨金属光泽写得更冷一些。",
             specialRequirements: "优先强化第一次遇到拷贝体的生理反应和理性压制恐惧的矛盾。",
             wordTargetText: "本章建议 1800 字左右，重点是建立规则与惊异感。",
@@ -727,6 +800,12 @@ struct NovelProject: Identifiable, Codable {
     var chapterFocus: String
     var draftText: String
     var outlineText: String
+    var structureNotes: String
+    var sceneProgressNotes: String
+    var characterArcNotes: String
+    var foreshadowNotes: String
+    var outlineSummary: String
+    var outlineSummaryUpdatedAt: String
     var referenceContextText: String
     var specialRequirements: String
     var wordTargetText: String
@@ -745,6 +824,12 @@ struct NovelProject: Identifiable, Codable {
         case chapterFocus
         case draftText
         case outlineText
+        case structureNotes
+        case sceneProgressNotes
+        case characterArcNotes
+        case foreshadowNotes
+        case outlineSummary
+        case outlineSummaryUpdatedAt
         case referenceContextText
         case specialRequirements
         case wordTargetText
@@ -765,6 +850,12 @@ struct NovelProject: Identifiable, Codable {
         chapterFocus: String,
         draftText: String,
         outlineText: String,
+        structureNotes: String = "",
+        sceneProgressNotes: String = "",
+        characterArcNotes: String = "",
+        foreshadowNotes: String = "",
+        outlineSummary: String = "",
+        outlineSummaryUpdatedAt: String = "",
         referenceContextText: String,
         specialRequirements: String,
         wordTargetText: String,
@@ -782,6 +873,12 @@ struct NovelProject: Identifiable, Codable {
         self.chapterFocus = chapterFocus
         self.draftText = draftText
         self.outlineText = outlineText
+        self.structureNotes = structureNotes
+        self.sceneProgressNotes = sceneProgressNotes
+        self.characterArcNotes = characterArcNotes
+        self.foreshadowNotes = foreshadowNotes
+        self.outlineSummary = outlineSummary
+        self.outlineSummaryUpdatedAt = outlineSummaryUpdatedAt
         self.referenceContextText = referenceContextText
         self.specialRequirements = specialRequirements
         self.wordTargetText = wordTargetText
@@ -805,6 +902,12 @@ struct NovelProject: Identifiable, Codable {
             ?? "继续补齐当前章节的目标、冲突和场景节奏。"
         draftText = try container.decodeIfPresent(String.self, forKey: .draftText) ?? ""
         outlineText = try container.decodeIfPresent(String.self, forKey: .outlineText) ?? ""
+        structureNotes = try container.decodeIfPresent(String.self, forKey: .structureNotes) ?? ""
+        sceneProgressNotes = try container.decodeIfPresent(String.self, forKey: .sceneProgressNotes) ?? ""
+        characterArcNotes = try container.decodeIfPresent(String.self, forKey: .characterArcNotes) ?? ""
+        foreshadowNotes = try container.decodeIfPresent(String.self, forKey: .foreshadowNotes) ?? ""
+        outlineSummary = try container.decodeIfPresent(String.self, forKey: .outlineSummary) ?? ""
+        outlineSummaryUpdatedAt = try container.decodeIfPresent(String.self, forKey: .outlineSummaryUpdatedAt) ?? ""
         referenceContextText = try container.decodeIfPresent(String.self, forKey: .referenceContextText) ?? ""
         specialRequirements = try container.decodeIfPresent(String.self, forKey: .specialRequirements) ?? ""
         wordTargetText = try container.decodeIfPresent(String.self, forKey: .wordTargetText) ?? ""
@@ -825,6 +928,12 @@ struct NovelProject: Identifiable, Codable {
         try container.encode(chapterFocus, forKey: .chapterFocus)
         try container.encode(draftText, forKey: .draftText)
         try container.encode(outlineText, forKey: .outlineText)
+        try container.encode(structureNotes, forKey: .structureNotes)
+        try container.encode(sceneProgressNotes, forKey: .sceneProgressNotes)
+        try container.encode(characterArcNotes, forKey: .characterArcNotes)
+        try container.encode(foreshadowNotes, forKey: .foreshadowNotes)
+        try container.encode(outlineSummary, forKey: .outlineSummary)
+        try container.encode(outlineSummaryUpdatedAt, forKey: .outlineSummaryUpdatedAt)
         try container.encode(referenceContextText, forKey: .referenceContextText)
         try container.encode(specialRequirements, forKey: .specialRequirements)
         try container.encode(wordTargetText, forKey: .wordTargetText)
@@ -844,20 +953,76 @@ struct NovelProject: Identifiable, Codable {
         !outlineText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    var hasStructureNotes: Bool {
+        !structureNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var hasSceneProgressNotes: Bool {
+        !sceneProgressNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var hasCharacterArcNotes: Bool {
+        !characterArcNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var hasForeshadowNotes: Bool {
+        !foreshadowNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var hasContinuityNotes: Bool {
         !continuityNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var hasOutlineSummary: Bool {
+        !outlineSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var outlineStatusLabel: String {
         hasOutline ? "已导入" : "待补充"
     }
 
+    var structureStatusLabel: String {
+        hasStructureNotes ? "\(structureNodeCount) 节点" : "待拆分"
+    }
+
+    var sceneProgressStatusLabel: String {
+        hasSceneProgressNotes ? "\(sceneProgressNodeCount) 场景" : "待拆分"
+    }
+
+    var characterArcStatusLabel: String {
+        hasCharacterArcNotes ? "\(characterArcNodeCount) 条" : "待补充"
+    }
+
+    var foreshadowStatusLabel: String {
+        hasForeshadowNotes ? "\(foreshadowNodeCount) 条" : "待标记"
+    }
+
     var continuityStatusLabel: String {
         hasContinuityNotes ? "已记录" : "待补充"
     }
 
+    var outlineSummaryStatusLabel: String {
+        hasOutlineSummary ? (outlineSummaryUpdatedAt.isEmpty ? "已生成" : outlineSummaryUpdatedAt) : "待生成"
+    }
+
     var referenceStatusLabel: String {
         referenceDocuments.isEmpty ? "未导入" : "\(referenceDocuments.count) 份"
+    }
+
+    var structureNodeCount: Int {
+        Self.outlineNodeCount(in: hasStructureNotes ? structureNotes : outlineText)
+    }
+
+    var sceneProgressNodeCount: Int {
+        Self.outlineNodeCount(in: sceneProgressNotes)
+    }
+
+    var characterArcNodeCount: Int {
+        Self.outlineNodeCount(in: characterArcNotes)
+    }
+
+    var foreshadowNodeCount: Int {
+        Self.outlineNodeCount(in: foreshadowNotes)
     }
 
     var draftWordCount: Int {
@@ -880,6 +1045,14 @@ struct NovelProject: Identifiable, Codable {
         guard !trimmed.isEmpty else { return "正文还没有展开，可以先写下当前场景的起笔句。" }
         guard trimmed.count > 120 else { return trimmed }
         return String(trimmed.suffix(120))
+    }
+
+    private static func outlineNodeCount(in text: String) -> Int {
+        text
+            .components(separatedBy: CharacterSet.newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .count
     }
 }
 

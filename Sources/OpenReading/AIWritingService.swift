@@ -85,59 +85,53 @@ enum AIWritingService {
         additionalInstruction: String,
         length: AIWritingLength
     ) async throws -> String {
-        let endpoint = configuration.baseURL.appendingPathComponent("chat/completions")
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 120
-
-        let payload = ChatCompletionsRequest(
-            model: configuration.modelName,
-            messages: [
-                .init(role: "system", content: systemPrompt),
-                .init(
-                    role: "user",
-                    content: userPrompt(
-                        project: project,
-                        mode: mode,
-                        additionalInstruction: additionalInstruction,
-                        length: length
-                    )
-                )
-            ],
+        try await completeText(
+            configuration: configuration,
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt(
+                project: project,
+                mode: mode,
+                additionalInstruction: additionalInstruction,
+                length: length
+            ),
             temperature: 0.85,
             maxTokens: length.maxTokens
         )
+    }
 
-        request.httpBody = try JSONEncoder().encode(payload)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw AIWritingError.invalidResponse
-        }
-
-        guard (200 ..< 300).contains(httpResponse.statusCode) else {
-            let message = String(data: data, encoding: .utf8) ?? "未知错误"
-            throw AIWritingError.serverError(message)
-        }
-
-        let decoded = try JSONDecoder().decode(ChatCompletionsResponse.self, from: data)
-        guard
-            let text = decoded.choices.first?.message.content?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-            !text.isEmpty
-        else {
-            throw AIWritingError.emptyResult
-        }
-
-        return text
+    static func summarizeStoryStructure(
+        configuration: AIConnectionConfiguration,
+        project: NovelProject
+    ) async throws -> String {
+        try await completeText(
+            configuration: configuration,
+            systemPrompt: outlineSummarySystemPrompt,
+            userPrompt: outlineSummaryUserPrompt(project: project),
+            temperature: 0.45,
+            maxTokens: 1800
+        )
     }
 
     static func polishPassage(
         configuration: AIConnectionConfiguration,
         project: NovelProject,
         passage: String
+    ) async throws -> String {
+        try await completeText(
+            configuration: configuration,
+            systemPrompt: polishSystemPrompt,
+            userPrompt: polishUserPrompt(project: project, passage: passage),
+            temperature: 0.65,
+            maxTokens: 1400
+        )
+    }
+
+    private static func completeText(
+        configuration: AIConnectionConfiguration,
+        systemPrompt: String,
+        userPrompt: String,
+        temperature: Double,
+        maxTokens: Int
     ) async throws -> String {
         let endpoint = configuration.baseURL.appendingPathComponent("chat/completions")
         var request = URLRequest(url: endpoint)
@@ -149,11 +143,11 @@ enum AIWritingService {
         let payload = ChatCompletionsRequest(
             model: configuration.modelName,
             messages: [
-                .init(role: "system", content: polishSystemPrompt),
-                .init(role: "user", content: polishUserPrompt(project: project, passage: passage))
+                .init(role: "system", content: systemPrompt),
+                .init(role: "user", content: userPrompt)
             ],
-            temperature: 0.65,
-            maxTokens: 1400
+            temperature: temperature,
+            maxTokens: maxTokens
         )
 
         request.httpBody = try JSONEncoder().encode(payload)
@@ -199,6 +193,17 @@ enum AIWritingService {
     2. 优先优化句式、节奏、氛围、动作细节和对白张力。
     3. 保持人物口吻、世界观规则和长篇整体气质一致。
     4. 只输出润色后的正文内容，不要解释，不要对比，不要附加说明。
+    """
+
+    private static let outlineSummarySystemPrompt = """
+    你是一位擅长中文长篇小说结构规划的章节编辑。
+    你的任务是总结当前项目的章节树状态，只围绕用户给出的这一本书工作。
+    必须遵守：
+    1. 不添加原文中没有出现的新人物、新设定或新剧情。
+    2. 优先根据作品大纲、场景推进、角色弧线、伏笔记录和正文摘要做结构判断。
+    3. 输出应服务于长篇连续创作，帮助用户继续完善章节树。
+    4. 直接给出中文总结，不要解释你的推理过程。
+    5. 用清晰分段输出以下 5 个小节：当前结构判断、本章推进建议、角色弧线提醒、伏笔与回收、下一步整理动作。
     """
 
     private static func userPrompt(
@@ -296,6 +301,52 @@ enum AIWritingService {
         输出要求：
         在不改剧情走向和核心信息的前提下，让文字更顺、更稳、更贴近当前项目风格。
         请直接输出润色后的正文。
+        """
+    }
+
+    private static func outlineSummaryUserPrompt(project: NovelProject) -> String {
+        let references = project.referenceDocuments
+            .prefix(3)
+            .map { document in
+                "参考《\(document.title)》：\n\(excerpt(from: document.content, limit: 900))"
+            }
+            .joined(separator: "\n\n")
+
+        return """
+        项目名称：\(project.title)
+        类型：\(project.genre)
+        项目摘要：\(project.summary)
+        当前进度：已创作 \(project.writtenChapters) 章
+        当前章节：\(project.currentChapterSummary)
+        本章目标：\(project.chapterFocus)
+
+        作品大纲：
+        \(normalized(project.outlineText, fallback: "暂无完整大纲。"))
+
+        章节骨架拆解：
+        \(normalized(project.structureNotes, fallback: "暂无单独拆解，请先参考作品大纲。"))
+
+        场景推进记录：
+        \(normalized(project.sceneProgressNotes, fallback: "暂无场景推进记录。"))
+
+        角色弧线记录：
+        \(normalized(project.characterArcNotes, fallback: "暂无角色弧线记录。"))
+
+        伏笔与回收记录：
+        \(normalized(project.foreshadowNotes, fallback: "暂无伏笔回收记录。"))
+
+        连续性笔记：
+        \(normalized(project.continuityNotes, fallback: "暂无连续性笔记。"))
+
+        正文摘要：
+        \(normalized(excerpt(from: project.draftText, limit: 2200), fallback: "正文还较短，请重点根据大纲和本章目标判断结构。"))
+
+        导入参考文本：
+        \(normalized(references, fallback: "暂无导入参考文本。"))
+
+        输出要求：
+        请针对这一部小说，给出适合继续完善章节树的总结。
+        每个小节 2 到 4 句，尽量具体，不要空泛。
         """
     }
 

@@ -1209,6 +1209,8 @@ struct PlaceholderWorkspaceView: View {
     private var workspaceDetailSection: some View {
         if item == .projects {
             ProjectsWorkspacePanel(appState: appState)
+        } else if item == .outline {
+            OutlineWorkspacePanel(appState: appState)
         } else {
             DashboardPanel(
                 title: "下一步规划",
@@ -1962,21 +1964,47 @@ private struct WorkspaceUtilityCard: View {
                     subtitle: "已创作 \(activeProject.writtenChapters) 章，可继续拆分场景目标、转折节点和伏笔回收。",
                     trailing: activeProject.title
                 )
-            }
 
-            HStack(spacing: 12) {
-                WorkspaceMetricBadge(label: "角色弧线", value: "同步")
-                WorkspaceMetricBadge(label: "伏笔回收", value: "待标记")
-            }
+                HStack(spacing: 12) {
+                    WorkspaceMetricBadge(label: "结构节点", value: "\(activeProject.structureNodeCount)")
+                    WorkspaceMetricBadge(label: "场景推进", value: activeProject.sceneProgressStatusLabel)
+                }
 
-            WorkspaceChecklist(
-                title: "章节树建议",
-                items: [
-                    "先给每章补上场景目标",
-                    "为关键冲突标出转折点",
-                    "把伏笔放进可追踪节点"
-                ]
-            )
+                HStack(spacing: 12) {
+                    WorkspaceMetricBadge(label: "角色弧线", value: activeProject.characterArcStatusLabel)
+                    WorkspaceMetricBadge(label: "伏笔回收", value: activeProject.foreshadowStatusLabel)
+                }
+
+                WorkspaceChecklist(
+                    title: "章节树建议",
+                    items: [
+                        activeProject.hasStructureNotes ? "继续补齐卷章与节点之间的承接关系" : "先把全书章节骨架按卷章写出来",
+                        activeProject.hasSceneProgressNotes ? "检查当前章节场景目标是否足够具体" : "把当前章节拆成 3 到 5 个场景推进点",
+                        activeProject.hasOutlineSummary ? "AI 总结已生成，可写回连续性笔记" : "补完结构后再调用 AI 做一次结构总览"
+                    ]
+                )
+            } else {
+                utilityFeatureCard(
+                    eyebrow: "结构分布",
+                    title: "等待选中书籍",
+                    subtitle: "先在项目空间或首页选中一本书，再回到章节树整理结构。",
+                    trailing: "章节树"
+                )
+
+                HStack(spacing: 12) {
+                    WorkspaceMetricBadge(label: "角色弧线", value: "待选中")
+                    WorkspaceMetricBadge(label: "伏笔回收", value: "待选中")
+                }
+
+                WorkspaceChecklist(
+                    title: "章节树建议",
+                    items: [
+                        "先选中一本当前要整理的书",
+                        "再补章节骨架、场景推进和角色弧线",
+                        "最后调用 AI 汇总结构建议"
+                    ]
+                )
+            }
         }
     }
 
@@ -2231,7 +2259,7 @@ private struct ProjectSpaceProjectRow: View {
     }
 }
 
-private struct ProjectChapterPill: View {
+struct ProjectChapterPill: View {
     @Environment(\.colorScheme) private var colorScheme
     let label: String
     let value: String
@@ -2323,7 +2351,7 @@ private struct NewProjectSheet: View {
     }
 }
 
-private struct WorkspaceMetricBadge: View {
+struct WorkspaceMetricBadge: View {
     @Environment(\.colorScheme) private var colorScheme
     let label: String
     let value: String
@@ -2357,7 +2385,7 @@ private struct WorkspaceMetricBadge: View {
     }
 }
 
-private struct WorkspaceChecklist: View {
+struct WorkspaceChecklist: View {
     @Environment(\.colorScheme) private var colorScheme
     let title: String
     let items: [String]
