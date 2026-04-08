@@ -1,6 +1,6 @@
+import AuthenticationServices
 import Foundation
 import Observation
-import Security
 
 @MainActor
 @Observable
@@ -8,12 +8,20 @@ final class AppState {
     private enum StorageKey {
         static let selectedProvider = "OpenWriting.selectedProvider"
         static let modelName = "OpenWriting.modelName"
+        static let apiKey = "OpenWriting.apiKey"
         static let baseURL = "OpenWriting.baseURL"
         static let autoValidateOnLaunch = "OpenWriting.autoValidateOnLaunch"
         static let showWritingDeskCachePanel = "OpenWriting.showWritingDeskCachePanel"
         static let showWritingDeskTimeline = "OpenWriting.showWritingDeskTimeline"
+        static let legacyActiveAccountEmail = "OpenWriting.activeAccountEmail"
+        static let activeAppleUserID = "OpenWriting.activeAppleUserID"
+        static let activeAppleUserEmail = "OpenWriting.activeAppleUserEmail"
+        static let activeAppleUserName = "OpenWriting.activeAppleUserName"
         static let activeProjectID = "OpenWriting.activeProjectID"
         static let recentProjects = "OpenWriting.recentProjects"
+        static let projectSnapshotTimestamp = "OpenWriting.projectSnapshotTimestamp"
+        static let didMigrateLegacyDefaults = "OpenWriting.didMigrateLegacyDefaults"
+        static let didMigrateLegacyEmailScope = "OpenWriting.didMigrateLegacyEmailScope"
     }
 
     private enum LegacyStorageKey {
@@ -29,19 +37,12 @@ final class AppState {
         static let recentProjects = "\(prefix).recentProjects"
     }
 
-    private enum KeychainKey {
-        static let service = "OpenWriting.ModelConnection"
-        static let account = "apiKey"
-    }
-
-    private enum LegacyKeychainKey {
-        static let service = ("Open" + "Reading") + ".ModelConnection"
-        static let account = "apiKey"
-    }
-
     private static let emptyConfigurationMessage = "填入 API Key 与 Base URL 后即可验证。"
 
     private let userDefaults: UserDefaults
+    @ObservationIgnored private let cloudStore = ICloudProjectStore()
+    @ObservationIgnored private var cloudSaveTask: Task<Void, Never>?
+    @ObservationIgnored private var isHydratingAccountScopedData = false
 
     var selectedProvider: ModelProvider {
         didSet {
@@ -93,12 +94,33 @@ final class AppState {
     private var activeProjectID: NovelProject.ID? {
         didSet {
             persistActiveProjectID()
+            guard !isHydratingAccountScopedData else { return }
+            noteLocalProjectMutation()
+            scheduleCloudSnapshotSave()
+        }
+    }
+
+    var activeAccount: AppleAccountProfile? {
+        didSet {
+            persistActiveAccountProfile()
         }
     }
 
     var recentProjects: [NovelProject] {
         didSet {
             persistRecentProjects()
+            guard !isHydratingAccountScopedData else { return }
+            noteLocalProjectMutation()
+            scheduleCloudSnapshotSave()
+        }
+    }
+    var cloudSyncTitle = "本机保存"
+    var cloudSyncSymbolName = "icloud.slash"
+    var cloudSyncStatusMessage = "登录 Apple ID 后即可通过 iCloud 同步项目。"
+
+    private var currentProjectSnapshotTimestamp: TimeInterval {
+        didSet {
+            persistProjectSnapshotTimestamp()
         }
     }
 
@@ -125,50 +147,54 @@ final class AppState {
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
+        Self.migrateLegacyUserDefaultsIfNeeded(userDefaults)
+        Self.migrateLegacyEmailScopeIfNeeded(userDefaults)
+        let resolvedActiveAccount = Self.loadActiveAppleAccount(from: userDefaults)
+        let resolvedStorageScope = resolvedActiveAccount?.userID
+        self.activeAccount = resolvedActiveAccount
         self.selectedProvider = ModelProvider(
             rawValue: Self.stringValue(
                 forKey: StorageKey.selectedProvider,
-                legacyKey: LegacyStorageKey.selectedProvider,
                 userDefaults: userDefaults
             ) ?? ""
         ) ?? .openAICompatible
         self.modelName = Self.stringValue(
             forKey: StorageKey.modelName,
-            legacyKey: LegacyStorageKey.modelName,
             userDefaults: userDefaults
         ) ?? "gpt-4.1-mini"
-        self.apiKey = Self.loadAPIKeyFromKeychain() ?? ""
+        self.apiKey = Self.stringValue(
+            forKey: StorageKey.apiKey,
+            userDefaults: userDefaults
+        ) ?? ""
         self.baseURL = Self.stringValue(
             forKey: StorageKey.baseURL,
-            legacyKey: LegacyStorageKey.baseURL,
             userDefaults: userDefaults
         ) ?? "https://api.openai.com/v1"
         self.autoValidateOnLaunch = Self.boolValue(
             forKey: StorageKey.autoValidateOnLaunch,
-            legacyKey: LegacyStorageKey.autoValidateOnLaunch,
             userDefaults: userDefaults
         ) ?? true
         self.showWritingDeskCachePanel = Self.boolValue(
             forKey: StorageKey.showWritingDeskCachePanel,
-            legacyKey: LegacyStorageKey.showWritingDeskCachePanel,
             userDefaults: userDefaults
         ) ?? true
         self.showWritingDeskTimeline = Self.boolValue(
             forKey: StorageKey.showWritingDeskTimeline,
-            legacyKey: LegacyStorageKey.showWritingDeskTimeline,
             userDefaults: userDefaults
         ) ?? true
-        self.recentProjects = Self.loadRecentProjects(from: userDefaults) ?? Self.defaultRecentProjects
+        self.currentProjectSnapshotTimestamp = Self.doubleValue(
+            forKey: Self.projectSnapshotTimestampStorageKey(for: resolvedStorageScope),
+            userDefaults: userDefaults
+        ) ?? 0
+        self.recentProjects = Self.loadRecentProjects(for: resolvedStorageScope, from: userDefaults) ?? Self.defaultRecentProjects
         self.connectionStatus = .idle
         self.validationMessage = Self.emptyConfigurationMessage
         self.activeProjectID = Self.stringValue(
-            forKey: StorageKey.activeProjectID,
-            legacyKey: LegacyStorageKey.activeProjectID,
+            forKey: Self.activeProjectIDStorageKey(for: resolvedStorageScope),
             userDefaults: userDefaults
         )
         self.selectedProjectID = Self.stringValue(
-            forKey: StorageKey.activeProjectID,
-            legacyKey: LegacyStorageKey.activeProjectID,
+            forKey: Self.activeProjectIDStorageKey(for: resolvedStorageScope),
             userDefaults: userDefaults
         )
 
@@ -179,10 +205,39 @@ final class AppState {
         } else {
             refreshIdleValidationMessage()
         }
+
+        Task { @MainActor in
+            let hasValidAppleCredential = await refreshActiveAppleCredentialState()
+            await refreshCloudAvailability()
+
+            if hasValidAppleCredential {
+                await synchronizeWithICloud(forcePull: false)
+            }
+        }
     }
 
     var activeWorkspaceName: String {
         activeProject?.title ?? "当前工作区"
+    }
+
+    var isAccountSignedIn: Bool {
+        activeAccount != nil
+    }
+
+    var accountDisplayName: String {
+        activeAccount?.displayName ?? "未登录"
+    }
+
+    var accountSecondaryLabel: String {
+        activeAccount?.secondaryLabel ?? "使用 Apple ID 登录后即可开始同步。"
+    }
+
+    var accountStorageSummary: String {
+        if let activeAccount {
+            return "当前项目已绑定到 \(activeAccount.displayName)，修改会自动尝试同步到 iCloud。"
+        }
+
+        return "登录 Apple ID 后，项目会按 Apple 账户隔离，并同步到 iCloud。"
     }
 
     var dashboardStats: [DashboardStat] {
@@ -361,6 +416,46 @@ final class AppState {
         case .prompts:
             openPrompts()
         }
+    }
+
+    func bindAppleAccount(_ profile: AppleAccountProfile) {
+        let normalizedProfile = Self.normalizedAppleAccount(profile)
+        let targetScope = normalizedProfile.userID
+
+        if Self.loadRecentProjects(for: targetScope, from: userDefaults) == nil {
+            Self.copyAccountScopedProjectData(from: currentStorageScope, to: targetScope, userDefaults: userDefaults)
+        }
+
+        activeAccount = normalizedProfile
+        currentProjectSnapshotTimestamp = Self.doubleValue(
+            forKey: Self.projectSnapshotTimestampStorageKey(for: targetScope),
+            userDefaults: userDefaults
+        ) ?? 0
+        reloadAccountScopedProjects()
+
+        Task { @MainActor in
+            _ = await refreshActiveAppleCredentialState()
+            await synchronizeWithICloud(forcePull: false)
+        }
+    }
+
+    func logoutAccount() {
+        guard activeAccount != nil else { return }
+        cloudSaveTask?.cancel()
+        activeAccount = nil
+        currentProjectSnapshotTimestamp = Self.doubleValue(
+            forKey: Self.projectSnapshotTimestampStorageKey(for: nil),
+            userDefaults: userDefaults
+        ) ?? 0
+        reloadAccountScopedProjects()
+
+        Task { @MainActor in
+            await refreshCloudAvailability()
+        }
+    }
+
+    func refreshICloudProjects() async {
+        await synchronizeWithICloud(forcePull: true)
     }
 
     func selectProject(_ projectID: NovelProject.ID) {
@@ -703,17 +798,18 @@ final class AppState {
     }
 
     private func persistActiveProjectID() {
+        let key = Self.activeProjectIDStorageKey(for: currentStorageScope)
         if let activeProjectID {
-            userDefaults.set(activeProjectID, forKey: StorageKey.activeProjectID)
+            userDefaults.set(activeProjectID, forKey: key)
         } else {
-            userDefaults.removeObject(forKey: StorageKey.activeProjectID)
+            userDefaults.removeObject(forKey: key)
         }
     }
 
     private func persistRecentProjects() {
         let encoder = JSONEncoder()
         guard let data = try? encoder.encode(recentProjects) else { return }
-        userDefaults.set(data, forKey: StorageKey.recentProjects)
+        userDefaults.set(data, forKey: Self.recentProjectsStorageKey(for: currentStorageScope))
     }
 
     private func updateProject(_ projectID: NovelProject.ID, mutate: (inout NovelProject) -> Void) {
@@ -724,54 +820,63 @@ final class AppState {
     }
 
     private func persistAPIKey() {
-        let query = Self.apiKeyQuery
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !trimmedKey.isEmpty else {
-            SecItemDelete(query as CFDictionary)
-            SecItemDelete(Self.legacyAPIKeyQuery as CFDictionary)
+            userDefaults.removeObject(forKey: StorageKey.apiKey)
             return
         }
 
-        let encodedKey = Data(trimmedKey.utf8)
-        let status = SecItemCopyMatching(query as CFDictionary, nil)
+        userDefaults.set(trimmedKey, forKey: StorageKey.apiKey)
+    }
 
-        if status == errSecSuccess {
-            let attributes = [kSecValueData as String: encodedKey] as CFDictionary
-            SecItemUpdate(query as CFDictionary, attributes)
-            return
+    private func persistActiveAccountProfile() {
+        if let activeAccount {
+            userDefaults.set(activeAccount.userID, forKey: StorageKey.activeAppleUserID)
+
+            if activeAccount.email.isEmpty {
+                userDefaults.removeObject(forKey: StorageKey.activeAppleUserEmail)
+            } else {
+                userDefaults.set(activeAccount.email, forKey: StorageKey.activeAppleUserEmail)
+            }
+
+            if activeAccount.fullName.isEmpty {
+                userDefaults.removeObject(forKey: StorageKey.activeAppleUserName)
+            } else {
+                userDefaults.set(activeAccount.fullName, forKey: StorageKey.activeAppleUserName)
+            }
+        } else {
+            userDefaults.removeObject(forKey: StorageKey.activeAppleUserID)
+            userDefaults.removeObject(forKey: StorageKey.activeAppleUserEmail)
+            userDefaults.removeObject(forKey: StorageKey.activeAppleUserName)
         }
-
-        var newItem = query
-        newItem[kSecValueData as String] = encodedKey
-        newItem[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(newItem as CFDictionary, nil)
     }
 
-    private static var apiKeyQuery: [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: KeychainKey.service,
-            kSecAttrAccount as String: KeychainKey.account
-        ]
+    private func persistProjectSnapshotTimestamp() {
+        let key = Self.projectSnapshotTimestampStorageKey(for: currentStorageScope)
+
+        if currentProjectSnapshotTimestamp > 0 {
+            userDefaults.set(currentProjectSnapshotTimestamp, forKey: key)
+        } else {
+            userDefaults.removeObject(forKey: key)
+        }
     }
 
-    private static var legacyAPIKeyQuery: [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: LegacyKeychainKey.service,
-            kSecAttrAccount as String: LegacyKeychainKey.account
-        ]
+    private func reloadAccountScopedProjects() {
+        isHydratingAccountScopedData = true
+        recentProjects = Self.loadRecentProjects(for: currentStorageScope, from: userDefaults) ?? Self.defaultRecentProjects
+        activeProjectID = Self.stringValue(
+            forKey: Self.activeProjectIDStorageKey(for: currentStorageScope),
+            userDefaults: userDefaults
+        )
+        selectedProjectID = activeProjectID
+        normalizeProjectSelection()
+        isHydratingAccountScopedData = false
     }
 
-    private static func loadAPIKeyFromKeychain() -> String? {
-        loadAPIKey(using: apiKeyQuery) ?? loadAPIKey(using: legacyAPIKeyQuery)
-    }
-
-    private static func loadRecentProjects(from userDefaults: UserDefaults) -> [NovelProject]? {
+    private static func loadRecentProjects(for scope: String?, from userDefaults: UserDefaults) -> [NovelProject]? {
         guard let data = dataValue(
-            forKey: StorageKey.recentProjects,
-            legacyKey: LegacyStorageKey.recentProjects,
+            forKey: recentProjectsStorageKey(for: scope),
             userDefaults: userDefaults
         ) else {
             return nil
@@ -780,39 +885,378 @@ final class AppState {
         return try? JSONDecoder().decode([NovelProject].self, from: data)
     }
 
-    private static func stringValue(forKey key: String, legacyKey: String, userDefaults: UserDefaults) -> String? {
-        userDefaults.string(forKey: key) ?? userDefaults.string(forKey: legacyKey)
+    private static func stringValue(forKey key: String, userDefaults: UserDefaults) -> String? {
+        userDefaults.string(forKey: key)
     }
 
-    private static func boolValue(forKey key: String, legacyKey: String, userDefaults: UserDefaults) -> Bool? {
+    private static func boolValue(forKey key: String, userDefaults: UserDefaults) -> Bool? {
         if let value = userDefaults.object(forKey: key) as? Bool {
             return value
         }
 
-        return userDefaults.object(forKey: legacyKey) as? Bool
+        return nil
     }
 
-    private static func dataValue(forKey key: String, legacyKey: String, userDefaults: UserDefaults) -> Data? {
-        userDefaults.data(forKey: key) ?? userDefaults.data(forKey: legacyKey)
+    private static func doubleValue(forKey key: String, userDefaults: UserDefaults) -> Double? {
+        if let value = userDefaults.object(forKey: key) as? Double {
+            return value
+        }
+
+        if let value = userDefaults.object(forKey: key) as? NSNumber {
+            return value.doubleValue
+        }
+
+        return nil
     }
 
-    private static func loadAPIKey(using query: [String: Any]) -> String? {
-        var query = query
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
+    private static func dataValue(forKey key: String, userDefaults: UserDefaults) -> Data? {
+        userDefaults.data(forKey: key)
+    }
 
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
+    private var currentStorageScope: String? {
+        activeAccount?.userID
+    }
 
-        guard
-            status == errSecSuccess,
-            let data = item as? Data,
-            let apiKey = String(data: data, encoding: .utf8)
+    private func noteLocalProjectMutation() {
+        currentProjectSnapshotTimestamp = Date().timeIntervalSince1970
+    }
+
+    private func scheduleCloudSnapshotSave() {
+        cloudSaveTask?.cancel()
+
+        guard let scope = currentStorageScope else {
+            Task { @MainActor in
+                await refreshCloudAvailability()
+            }
+            return
+        }
+
+        let snapshot = AccountProjectSnapshot(
+            activeProjectID: activeProjectID,
+            recentProjects: recentProjects,
+            updatedAt: Date(timeIntervalSince1970: currentProjectSnapshotTimestamp)
+        )
+
+        cloudSaveTask = Task { [cloudStore] in
+            try? await Task.sleep(for: .milliseconds(900))
+            let availability = await cloudStore.availability()
+
+            switch availability {
+            case .available:
+                do {
+                    try await cloudStore.saveSnapshot(snapshot, for: scope)
+                    await MainActor.run {
+                        self.setCloudSyncStatus(
+                            title: "iCloud 已连接",
+                            symbolName: "icloud.fill",
+                            message: "最新修改已经推送到 iCloud。"
+                        )
+                    }
+                } catch {
+                    await MainActor.run {
+                        self.setCloudSyncStatus(
+                            title: "本机保存",
+                            symbolName: "icloud.slash",
+                            message: error.localizedDescription
+                        )
+                    }
+                }
+            case let .unavailable(message):
+                await MainActor.run {
+                    self.setCloudSyncStatus(
+                        title: "本机保存",
+                        symbolName: "icloud.slash",
+                        message: message
+                    )
+                }
+            }
+        }
+    }
+
+    private func refreshCloudAvailability() async {
+        guard activeAccount != nil else {
+            setCloudSyncStatus(
+                title: "本机保存",
+                symbolName: "icloud.slash",
+                message: "登录 Apple ID 后即可通过 iCloud 同步项目。"
+            )
+            return
+        }
+
+        let availability = await cloudStore.availability()
+        let isAvailable: Bool
+        switch availability {
+        case .available:
+            isAvailable = true
+        case .unavailable:
+            isAvailable = false
+        }
+
+        setCloudSyncStatus(
+            title: isAvailable ? "iCloud 已连接" : "本机保存",
+            symbolName: isAvailable ? "icloud.fill" : "icloud.slash",
+            message: availability.message
+        )
+    }
+
+    private func refreshActiveAppleCredentialState() async -> Bool {
+        guard let activeAccount else {
+            return false
+        }
+
+        do {
+            let credentialState = try await credentialState(for: activeAccount.userID)
+            switch credentialState {
+            case .authorized:
+                return true
+            case .revoked, .notFound:
+                logoutAccount()
+                setCloudSyncStatus(
+                    title: "本机保存",
+                    symbolName: "icloud.slash",
+                    message: "当前 Apple ID 授权已失效，请重新登录。"
+                )
+                return false
+            case .transferred:
+                return true
+            @unknown default:
+                return false
+            }
+        } catch {
+            return true
+        }
+    }
+
+    private func synchronizeWithICloud(forcePull: Bool) async {
+        guard let scope = currentStorageScope else {
+            await refreshCloudAvailability()
+            return
+        }
+
+        setCloudSyncStatus(
+            title: "正在同步",
+            symbolName: "arrow.triangle.2.circlepath.icloud",
+            message: "正在检查 iCloud 中的项目快照。"
+        )
+
+        let availability = await cloudStore.availability()
+        guard case .available = availability else {
+            setCloudSyncStatus(title: "本机保存", symbolName: "icloud.slash", message: availability.message)
+            return
+        }
+
+        do {
+            if let remoteSnapshot = try await cloudStore.loadSnapshot(for: scope) {
+                let remoteTimestamp = remoteSnapshot.updatedAt.timeIntervalSince1970
+
+                if forcePull || remoteTimestamp > currentProjectSnapshotTimestamp {
+                    applyCloudSnapshot(remoteSnapshot)
+                    setCloudSyncStatus(
+                        title: "iCloud 已连接",
+                        symbolName: "icloud.fill",
+                        message: "已从 iCloud 拉取最新项目。"
+                    )
+                    return
+                }
+            }
+
+            if !recentProjects.isEmpty {
+                let snapshot = AccountProjectSnapshot(
+                    activeProjectID: activeProjectID,
+                    recentProjects: recentProjects,
+                    updatedAt: Date(timeIntervalSince1970: max(currentProjectSnapshotTimestamp, Date().timeIntervalSince1970))
+                )
+                try await cloudStore.saveSnapshot(snapshot, for: scope)
+                if currentProjectSnapshotTimestamp == 0 {
+                    currentProjectSnapshotTimestamp = snapshot.updatedAt.timeIntervalSince1970
+                }
+            }
+
+            setCloudSyncStatus(
+                title: "iCloud 已连接",
+                symbolName: "icloud.fill",
+                message: "当前设备上的项目已与 iCloud 对齐。"
+            )
+        } catch {
+            setCloudSyncStatus(
+                title: "本机保存",
+                symbolName: "icloud.slash",
+                message: error.localizedDescription
+            )
+        }
+    }
+
+    private func applyCloudSnapshot(_ snapshot: AccountProjectSnapshot) {
+        currentProjectSnapshotTimestamp = snapshot.updatedAt.timeIntervalSince1970
+        isHydratingAccountScopedData = true
+        recentProjects = snapshot.recentProjects
+        activeProjectID = snapshot.activeProjectID
+        selectedProjectID = snapshot.activeProjectID
+        normalizeProjectSelection()
+        isHydratingAccountScopedData = false
+    }
+
+    private func setCloudSyncStatus(title: String, symbolName: String, message: String) {
+        cloudSyncTitle = title
+        cloudSyncSymbolName = symbolName
+        cloudSyncStatusMessage = message
+    }
+
+    private func credentialState(for userID: String) async throws -> ASAuthorizationAppleIDProvider.CredentialState {
+        try await withCheckedThrowingContinuation { continuation in
+            ASAuthorizationAppleIDProvider().getCredentialState(forUserID: userID) { state, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: state)
+                }
+            }
+        }
+    }
+
+    private static func activeProjectIDStorageKey(for scope: String?) -> String {
+        scopedStorageKey(base: StorageKey.activeProjectID, scope: scope)
+    }
+
+    private static func recentProjectsStorageKey(for scope: String?) -> String {
+        scopedStorageKey(base: StorageKey.recentProjects, scope: scope)
+    }
+
+    private static func projectSnapshotTimestampStorageKey(for scope: String?) -> String {
+        scopedStorageKey(base: StorageKey.projectSnapshotTimestamp, scope: scope)
+    }
+
+    private static func scopedStorageKey(base: String, scope: String?) -> String {
+        guard let scope = normalizedStorageScope(scope) else {
+            return base
+        }
+
+        return "\(base).\(sanitizedStorageComponent(scope))"
+    }
+
+    private static func normalizedStorageScope(_ scope: String?) -> String? {
+        guard let scope else { return nil }
+        let trimmed = scope.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return trimmed
+    }
+
+    private static func normalizedAppleAccount(_ profile: AppleAccountProfile) -> AppleAccountProfile {
+        AppleAccountProfile(
+            userID: profile.userID.trimmingCharacters(in: .whitespacesAndNewlines),
+            email: profile.email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            fullName: profile.fullName.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    private static func loadActiveAppleAccount(from userDefaults: UserDefaults) -> AppleAccountProfile? {
+        guard let userID = stringValue(forKey: StorageKey.activeAppleUserID, userDefaults: userDefaults)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !userID.isEmpty
         else {
             return nil
         }
 
-        return apiKey
+        return AppleAccountProfile(
+            userID: userID,
+            email: stringValue(forKey: StorageKey.activeAppleUserEmail, userDefaults: userDefaults) ?? "",
+            fullName: stringValue(forKey: StorageKey.activeAppleUserName, userDefaults: userDefaults) ?? ""
+        )
+    }
+
+    private static func sanitizedStorageComponent(_ value: String) -> String {
+        value.map { character in
+            if character.isLetter || character.isNumber {
+                return String(character)
+            }
+
+            if character == "." || character == "_" || character == "-" {
+                return String(character)
+            }
+
+            return "_"
+        }
+        .joined()
+    }
+
+    private static func migrateLegacyUserDefaultsIfNeeded(_ userDefaults: UserDefaults) {
+        guard !userDefaults.bool(forKey: StorageKey.didMigrateLegacyDefaults) else { return }
+
+        copyStringValue(from: LegacyStorageKey.selectedProvider, to: StorageKey.selectedProvider, userDefaults: userDefaults)
+        copyStringValue(from: LegacyStorageKey.modelName, to: StorageKey.modelName, userDefaults: userDefaults)
+        copyStringValue(from: LegacyStorageKey.baseURL, to: StorageKey.baseURL, userDefaults: userDefaults)
+        copyBoolValue(from: LegacyStorageKey.autoValidateOnLaunch, to: StorageKey.autoValidateOnLaunch, userDefaults: userDefaults)
+        copyBoolValue(from: LegacyStorageKey.showWritingDeskCachePanel, to: StorageKey.showWritingDeskCachePanel, userDefaults: userDefaults)
+        copyBoolValue(from: LegacyStorageKey.showWritingDeskTimeline, to: StorageKey.showWritingDeskTimeline, userDefaults: userDefaults)
+        copyStringValue(from: LegacyStorageKey.activeProjectID, to: StorageKey.activeProjectID, userDefaults: userDefaults)
+        copyDataValue(from: LegacyStorageKey.recentProjects, to: StorageKey.recentProjects, userDefaults: userDefaults)
+
+        // API Key intentionally stays out of automatic legacy migration so app launch never
+        // touches old keychain entries or triggers repeated password prompts.
+        userDefaults.set(true, forKey: StorageKey.didMigrateLegacyDefaults)
+    }
+
+    private static func migrateLegacyEmailScopeIfNeeded(_ userDefaults: UserDefaults) {
+        guard !userDefaults.bool(forKey: StorageKey.didMigrateLegacyEmailScope) else { return }
+        defer { userDefaults.set(true, forKey: StorageKey.didMigrateLegacyEmailScope) }
+
+        guard let legacyEmail = stringValue(forKey: StorageKey.legacyActiveAccountEmail, userDefaults: userDefaults)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased(),
+            !legacyEmail.isEmpty
+        else {
+            return
+        }
+
+        copyAccountScopedProjectData(from: legacyEmail, to: nil, userDefaults: userDefaults)
+        userDefaults.removeObject(forKey: StorageKey.legacyActiveAccountEmail)
+    }
+
+    private static func copyAccountScopedProjectData(from sourceScope: String?, to targetScope: String?, userDefaults: UserDefaults) {
+        let sourceRecentProjectsKey = recentProjectsStorageKey(for: sourceScope)
+        let targetRecentProjectsKey = recentProjectsStorageKey(for: targetScope)
+        if userDefaults.data(forKey: targetRecentProjectsKey) == nil,
+           let recentProjectsData = userDefaults.data(forKey: sourceRecentProjectsKey) {
+            userDefaults.set(recentProjectsData, forKey: targetRecentProjectsKey)
+        }
+
+        let sourceActiveProjectKey = activeProjectIDStorageKey(for: sourceScope)
+        let targetActiveProjectKey = activeProjectIDStorageKey(for: targetScope)
+        if userDefaults.string(forKey: targetActiveProjectKey) == nil,
+           let activeProjectID = userDefaults.string(forKey: sourceActiveProjectKey) {
+            userDefaults.set(activeProjectID, forKey: targetActiveProjectKey)
+        }
+
+        let sourceTimestampKey = projectSnapshotTimestampStorageKey(for: sourceScope)
+        let targetTimestampKey = projectSnapshotTimestampStorageKey(for: targetScope)
+        if userDefaults.object(forKey: targetTimestampKey) == nil,
+           let timestamp = userDefaults.object(forKey: sourceTimestampKey) {
+            userDefaults.set(timestamp, forKey: targetTimestampKey)
+        }
+    }
+
+    private static func copyStringValue(from legacyKey: String, to currentKey: String, userDefaults: UserDefaults) {
+        guard userDefaults.string(forKey: currentKey) == nil, let value = userDefaults.string(forKey: legacyKey) else {
+            return
+        }
+
+        userDefaults.set(value, forKey: currentKey)
+    }
+
+    private static func copyBoolValue(from legacyKey: String, to currentKey: String, userDefaults: UserDefaults) {
+        guard userDefaults.object(forKey: currentKey) == nil, let value = userDefaults.object(forKey: legacyKey) as? Bool else {
+            return
+        }
+
+        userDefaults.set(value, forKey: currentKey)
+    }
+
+    private static func copyDataValue(from legacyKey: String, to currentKey: String, userDefaults: UserDefaults) {
+        guard userDefaults.data(forKey: currentKey) == nil, let value = userDefaults.data(forKey: legacyKey) else {
+            return
+        }
+
+        userDefaults.set(value, forKey: currentKey)
     }
 
     private static func currentTimestampLabel() -> String {

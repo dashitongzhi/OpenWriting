@@ -38,6 +38,8 @@ enum LiteraryQuoteLibrary {
     private static func quotesResourceURL() -> URL? {
         let legacyBundleName = ("Open" + "Reading") + "_" + ("Open" + "Reading") + ".bundle"
         let resourcePaths = [
+            "LiteraryQuotes.zh-Hans.tsv",
+            "Resources/LiteraryQuotes.zh-Hans.tsv",
             "OpenWriting_OpenWriting.bundle/LiteraryQuotes.zh-Hans.tsv",
             "\(legacyBundleName)/LiteraryQuotes.zh-Hans.tsv"
         ]
