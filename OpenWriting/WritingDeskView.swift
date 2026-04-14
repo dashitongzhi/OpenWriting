@@ -1314,6 +1314,7 @@ private struct WritingDeskToolbarAction: Identifiable {
 }
 
 private struct WritingDeskSectionCard<Content: View>: View {
+    @Environment(\.colorScheme) private var colorScheme
     let title: String
     let badgeText: String?
     let statusLabel: String?
@@ -1376,7 +1377,7 @@ private struct WritingDeskSectionCard<Content: View>: View {
                         .padding(.vertical, 6)
                         .background(
                             Capsule(style: .continuous)
-                                .fill(Color.white.opacity(0.52))
+                                .fill(chipBackgroundColor)
                         )
                 }
 
@@ -1402,7 +1403,7 @@ private struct WritingDeskSectionCard<Content: View>: View {
                             .frame(width: 38, height: 38)
                             .background(
                                 Circle()
-                                    .fill(Color.white.opacity(0.72))
+                                    .fill(toolbarButtonBackgroundColor)
                             )
                     }
                     .buttonStyle(.plain)
@@ -1417,7 +1418,7 @@ private struct WritingDeskSectionCard<Content: View>: View {
 
             if !isCollapsed {
                 Divider()
-                    .overlay(Color.white.opacity(0.16))
+                    .overlay(dividerColor)
 
                 VStack(alignment: .leading, spacing: 14) {
                     content
@@ -1435,9 +1436,25 @@ private struct WritingDeskSectionCard<Content: View>: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 30, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+                .strokeBorder(borderColor, lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(0.08), radius: 18, y: 12)
+    }
+
+    private var chipBackgroundColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.52)
+    }
+
+    private var toolbarButtonBackgroundColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.14) : Color.white.opacity(0.72)
+    }
+
+    private var dividerColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.16)
+    }
+
+    private var borderColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.18)
     }
 }
 
@@ -1501,6 +1518,7 @@ private struct WritingDeskInlineField<Content: View>: View {
 }
 
 private struct WritingDeskTextSurface: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Binding var text: String
     let placeholder: String
     let minHeight: CGFloat
@@ -1517,7 +1535,7 @@ private struct WritingDeskTextSurface: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                    .strokeBorder(borderColor, lineWidth: 1)
             )
             .overlay(alignment: .topLeading) {
                 if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -1530,9 +1548,14 @@ private struct WritingDeskTextSurface: View {
                 }
             }
     }
+
+    private var borderColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.16)
+    }
 }
 
 private struct WritingDeskCacheSurface: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Binding var text: String
     let placeholder: String
     let minHeight: CGFloat
@@ -1550,7 +1573,7 @@ private struct WritingDeskCacheSurface: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                    .strokeBorder(borderColor, lineWidth: 1)
             )
             .overlay(alignment: .topLeading) {
                 if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -1562,6 +1585,10 @@ private struct WritingDeskCacheSurface: View {
                         .allowsHitTesting(false)
                 }
             }
+    }
+
+    private var borderColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.16)
     }
 }
 
@@ -1579,6 +1606,7 @@ private struct WritingDeskTimelineRow: View {
 }
 
 private struct WritingDeskTimelineNode: View {
+    @Environment(\.colorScheme) private var colorScheme
     let title: String
     let value: Double
 
@@ -1600,13 +1628,18 @@ private struct WritingDeskTimelineNode: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                .strokeBorder(borderColor, lineWidth: 1)
         )
+    }
+
+    private var borderColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.16)
     }
 }
 
 private struct WritingDeskOutlineGeneratorSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
 
     let projectTitle: String
     @Binding var profile: OutlineGenerationProfile
@@ -1794,7 +1827,7 @@ private struct WritingDeskOutlineGeneratorSheet: View {
                 .padding(.vertical, 6)
                 .background(
                     Capsule(style: .continuous)
-                        .fill(Color.white.opacity(0.62))
+                        .fill(colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.62))
                 )
         }
         .padding(16)
@@ -1804,12 +1837,13 @@ private struct WritingDeskOutlineGeneratorSheet: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+                .strokeBorder(colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.18), lineWidth: 1)
         )
     }
 }
 
 private struct WritingDeskOutlinePromptGroupCard<Content: View>: View {
+    @Environment(\.colorScheme) private var colorScheme
     let title: String
     let description: String
     @ViewBuilder let content: Content
@@ -1849,7 +1883,7 @@ private struct WritingDeskOutlinePromptGroupCard<Content: View>: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+                .strokeBorder(colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.18), lineWidth: 1)
         )
     }
 }

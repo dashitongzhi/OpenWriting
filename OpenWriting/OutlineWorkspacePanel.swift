@@ -2,6 +2,7 @@ import Observation
 import SwiftUI
 
 struct OutlineWorkspacePanel: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Bindable var appState: AppState
 
     @State private var selectedSavedChapterID: ChapterDraft.ID?
@@ -82,14 +83,14 @@ struct OutlineWorkspacePanel: View {
                         HStack(spacing: 14) {
                             Text(String(format: "%02d", chapterDraft.chapterNumber))
                                 .font(.caption.weight(.bold))
-                                .foregroundStyle(chapterDraft.id == selectedSavedChapterID ? Color.blue : .secondary)
+                                .foregroundStyle(chapterDraft.id == selectedSavedChapterID ? Color.blue : chapterNumberColor)
                                 .frame(width: 34, height: 34)
                                 .background(
                                     Circle()
                                         .fill(
                                             chapterDraft.id == selectedSavedChapterID
                                                 ? Color.blue.opacity(0.14)
-                                                : Color.white.opacity(0.58)
+                                                : chapterNumberBackgroundColor
                                         )
                                 )
 
@@ -105,14 +106,14 @@ struct OutlineWorkspacePanel: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(
                             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .fill(Color.white.opacity(chapterDraft.id == selectedSavedChapterID ? 0.82 : 0.52))
+                                .fill(chapterDraft.id == selectedSavedChapterID ? selectedRowBackgroundColor : rowBackgroundColor)
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 18, style: .continuous)
                                 .strokeBorder(
                                     chapterDraft.id == selectedSavedChapterID
                                         ? Color.blue.opacity(0.32)
-                                        : Color.white.opacity(0.16),
+                                        : rowBorderColor,
                                     lineWidth: 1
                                 )
                         )
@@ -231,9 +232,30 @@ struct OutlineWorkspacePanel: View {
         formatter.dateFormat = "今天 HH:mm"
         return formatter.string(from: Date())
     }
+
+    private var chapterNumberColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.72) : .secondary
+    }
+
+    private var chapterNumberBackgroundColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.58)
+    }
+
+    private var rowBackgroundColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.52)
+    }
+
+    private var selectedRowBackgroundColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.14) : Color.white.opacity(0.82)
+    }
+
+    private var rowBorderColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.16)
+    }
 }
 
 private struct OutlineEditorSurface: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Binding var text: String
     let placeholder: String
     let minHeight: CGFloat
@@ -250,7 +272,7 @@ private struct OutlineEditorSurface: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                    .strokeBorder(borderColor, lineWidth: 1)
             )
             .overlay(alignment: .topLeading) {
                 if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -263,9 +285,14 @@ private struct OutlineEditorSurface: View {
                 }
             }
     }
+
+    private var borderColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.16)
+    }
 }
 
 private struct SavedChapterPreviewSurface: View {
+    @Environment(\.colorScheme) private var colorScheme
     let text: String
     let placeholder: String
 
@@ -284,7 +311,11 @@ private struct SavedChapterPreviewSurface: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                .strokeBorder(borderColor, lineWidth: 1)
         )
+    }
+
+    private var borderColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.16)
     }
 }

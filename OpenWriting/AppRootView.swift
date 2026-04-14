@@ -4,7 +4,6 @@ import Observation
 import SwiftUI
 
 struct AppRootView: View {
-    @AppStorage("appAppearance") private var appAppearanceRawValue = AppAppearance.system.rawValue
     @Bindable var appState: AppState
     let openSettings: () -> Void
     @State private var presentedSheet: AppRootSheet?
@@ -30,15 +29,13 @@ struct AppRootView: View {
                 refreshToken: appState.selectedSidebarItem.rawValue
             )
         )
-        .task(id: appAppearanceRawValue) {
-            AppAppearance.apply(selectedAppearance)
-        }
         .sheet(item: $presentedSheet) { sheet in
             switch sheet {
             case .accountPortal:
                 AccountPortalSheet(appState: appState, portalState: accountPortalState)
             }
         }
+        .appAppearanceBridge()
     }
 
     private var sidebar: some View {
@@ -123,11 +120,6 @@ struct AppRootView: View {
         .padding(.vertical, 14)
         .background(.regularMaterial)
     }
-
-    private var selectedAppearance: AppAppearance {
-        AppAppearance(rawValue: appAppearanceRawValue) ?? .system
-    }
-
     private var sidebarSelection: Binding<SidebarItem?> {
         Binding(
             get: { appState.selectedSidebarItem },
@@ -435,6 +427,7 @@ private struct AccountPortalSheet: View {
 }
 
 private struct SidebarAccountButtonContent: View {
+    @Environment(\.colorScheme) private var colorScheme
     let displayName: String
     let secondaryLabel: String
     let syncTitle: String
@@ -483,17 +476,48 @@ private struct SidebarAccountButtonContent: View {
         .padding(14)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(.thinMaterial)
+                .fill(backgroundFill)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08))
+                .strokeBorder(borderColor)
         )
-        .shadow(color: Color.black.opacity(0.04), radius: 10, y: 4)
+        .shadow(color: shadowColor, radius: 10, y: 4)
+    }
+
+    private var backgroundFill: LinearGradient {
+        if colorScheme == .dark {
+            return LinearGradient(
+                colors: [
+                    Color(red: 0.14, green: 0.14, blue: 0.16).opacity(0.96),
+                    Color(red: 0.10, green: 0.10, blue: 0.12).opacity(0.94)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
+
+        return LinearGradient(
+            colors: [
+                Color.white.opacity(0.82),
+                Color.white.opacity(0.68)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    private var borderColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.10) : Color.primary.opacity(0.08)
+    }
+
+    private var shadowColor: Color {
+        Color.black.opacity(colorScheme == .dark ? 0.18 : 0.04)
     }
 }
 
 private struct NativeAccountCard<Content: View>: View {
+    @Environment(\.colorScheme) private var colorScheme
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -504,17 +528,48 @@ private struct NativeAccountCard<Content: View>: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(.thinMaterial)
+                .fill(backgroundFill)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08))
+                .strokeBorder(borderColor)
         )
-        .shadow(color: Color.black.opacity(0.035), radius: 16, y: 8)
+        .shadow(color: shadowColor, radius: 16, y: 8)
+    }
+
+    private var backgroundFill: LinearGradient {
+        if colorScheme == .dark {
+            return LinearGradient(
+                colors: [
+                    Color(red: 0.13, green: 0.13, blue: 0.15).opacity(0.98),
+                    Color(red: 0.09, green: 0.09, blue: 0.11).opacity(0.96)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
+
+        return LinearGradient(
+            colors: [
+                Color.white.opacity(0.86),
+                Color.white.opacity(0.70)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    private var borderColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.10) : Color.primary.opacity(0.08)
+    }
+
+    private var shadowColor: Color {
+        Color.black.opacity(colorScheme == .dark ? 0.16 : 0.035)
     }
 }
 
 private struct AccountAvatarView: View {
+    @Environment(\.colorScheme) private var colorScheme
     let displayName: String
     let secondaryLabel: String
     let isSignedIn: Bool
@@ -526,7 +581,7 @@ private struct AccountAvatarView: View {
                 .fill(backgroundGradient)
 
             Circle()
-                .strokeBorder(Color.white.opacity(isSignedIn ? 0.34 : 0.18), lineWidth: 1)
+                .strokeBorder(ringColor, lineWidth: 1)
 
             if isSignedIn {
                 Text(monogram)
@@ -535,7 +590,7 @@ private struct AccountAvatarView: View {
             } else {
                 Image(systemName: "person.crop.circle.fill")
                     .font(.system(size: size * 0.52, weight: .regular))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(colorScheme == .dark ? Color.white.opacity(0.68) : .secondary)
             }
         }
         .frame(width: size, height: size)
@@ -548,6 +603,17 @@ private struct AccountAvatarView: View {
                 colors: [
                     Color(nsColor: .controlAccentColor).opacity(0.95),
                     Color(nsColor: .selectedControlColor).opacity(0.72)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
+
+        if colorScheme == .dark {
+            return LinearGradient(
+                colors: [
+                    Color(red: 0.19, green: 0.19, blue: 0.23),
+                    Color(red: 0.10, green: 0.10, blue: 0.12)
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -589,6 +655,14 @@ private struct AccountAvatarView: View {
 
         let trimmedSecondary = secondaryLabel.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmedSecondary
+    }
+
+    private var ringColor: Color {
+        if isSignedIn {
+            return Color.white.opacity(colorScheme == .dark ? 0.24 : 0.34)
+        }
+
+        return colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.18)
     }
 }
 

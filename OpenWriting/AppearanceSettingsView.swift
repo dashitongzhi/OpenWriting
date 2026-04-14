@@ -3,6 +3,8 @@ import Observation
 import SwiftUI
 
 enum AppAppearance: String, CaseIterable, Identifiable {
+    static let storageKey = "appAppearance"
+
     case system
     case light
     case dark
@@ -42,7 +44,18 @@ enum AppAppearance: String, CaseIterable, Identifiable {
         }
     }
 
-    var appearance: NSAppearance? {
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system:
+            return nil
+        case .light:
+            return .light
+        case .dark:
+            return .dark
+        }
+    }
+
+    var nsAppearance: NSAppearance? {
         switch self {
         case .system:
             return nil
@@ -53,15 +66,20 @@ enum AppAppearance: String, CaseIterable, Identifiable {
         }
     }
 
-    @MainActor
-    static func apply(_ appearance: AppAppearance) {
-        NSApp.appearance = appearance.appearance
+    static func current(userDefaults: UserDefaults = .standard) -> AppAppearance {
+        guard let rawValue = userDefaults.string(forKey: storageKey),
+              let appearance = AppAppearance(rawValue: rawValue)
+        else {
+            return .system
+        }
+
+        return appearance
     }
 }
 
 struct AppearanceSettingsView: View {
     @Bindable var appState: AppState
-    @AppStorage("appAppearance") private var appAppearanceRawValue = AppAppearance.system.rawValue
+    @AppStorage(AppAppearance.storageKey) private var appAppearanceRawValue = AppAppearance.system.rawValue
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -113,6 +131,7 @@ struct AppearanceSettingsView: View {
         }
         .padding(24)
         .frame(width: 460, height: 620, alignment: .topLeading)
+        .appAppearanceBridge()
     }
 
     private var selectedAppearance: AppAppearance {
@@ -124,6 +143,49 @@ struct AppearanceSettingsView: View {
             get: { selectedAppearance },
             set: { appAppearanceRawValue = $0.rawValue }
         )
+    }
+}
+
+private struct AppAppearanceBridgeModifier: ViewModifier {
+    @AppStorage(AppAppearance.storageKey) private var appAppearanceRawValue = AppAppearance.system.rawValue
+
+    func body(content: Content) -> some View {
+        let appearance = AppAppearance(rawValue: appAppearanceRawValue) ?? .system
+
+        content
+            .preferredColorScheme(appearance.colorScheme)
+            .background(
+                WindowAppearanceSyncView(appearance: appearance)
+            )
+    }
+}
+
+private struct WindowAppearanceSyncView: NSViewRepresentable {
+    let appearance: AppAppearance
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        view.isHidden = true
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        let applyAppearance = {
+            guard let window = nsView.window else { return }
+            window.appearance = appearance.nsAppearance
+        }
+
+        if nsView.window == nil {
+            DispatchQueue.main.async(execute: applyAppearance)
+        } else {
+            applyAppearance()
+        }
+    }
+}
+
+extension View {
+    func appAppearanceBridge() -> some View {
+        modifier(AppAppearanceBridgeModifier())
     }
 }
 

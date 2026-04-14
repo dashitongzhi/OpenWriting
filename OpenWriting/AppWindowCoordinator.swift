@@ -197,6 +197,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         window.collectionBehavior.insert(.fullScreenPrimary)
         window.isReleasedWhenClosed = false
         window.isMovableByWindowBackground = true
+        window.appearance = AppAppearance.current().nsAppearance
         window.setFrameAutosaveName("OpenWriting.MainWindow")
         window.minSize = NSSize(width: 1_180, height: 760)
         window.center()
@@ -412,6 +413,7 @@ final class SettingsWindowController: NSWindowController {
     }
 
     private func configureWindow(_ window: NSWindow) {
+        window.appearance = AppAppearance.current().nsAppearance
         window.title = "设置"
         window.titleVisibility = .visible
         window.toolbarStyle = .preference

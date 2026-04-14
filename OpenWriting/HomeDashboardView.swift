@@ -2443,8 +2443,7 @@ private struct LibraryWorkspacePanel: View {
                 }
                 .frame(minHeight: 320)
                 .background(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .fill(.ultraThinMaterial)
+                    DashboardInsetPanelBackground(cornerRadius: 22, palette: palette)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -3327,7 +3326,7 @@ private struct PromptWorkflowRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(isSelected ? Color.white.opacity(0.82) : palette.panelBase.opacity(palette.isDark ? 0.82 : 0.68))
+                .fill(isSelected ? palette.selectedPanel : palette.panelBase.opacity(palette.isDark ? 0.82 : 0.68))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -3362,8 +3361,7 @@ private struct PromptEditableSurface: View {
                 .padding(14)
                 .frame(minHeight: minHeight, alignment: .topLeading)
                 .background(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .fill(.ultraThinMaterial)
+                    DashboardInsetPanelBackground(cornerRadius: 22, palette: palette)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -3409,8 +3407,7 @@ private struct PromptTextPreviewSurface: View {
             }
             .frame(minHeight: 180)
             .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                DashboardInsetPanelBackground(cornerRadius: 22, palette: palette)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -3463,7 +3460,7 @@ private struct LibraryCategoryChip: View {
                     .padding(.vertical, 4)
                     .background(
                         Capsule()
-                            .fill(Color.white.opacity(isSelected ? 0.32 : 0.18))
+                            .fill(isSelected ? palette.badgeFillSelected : palette.badgeFill)
                     )
             }
             .foregroundStyle(isSelected ? .white : palette.textPrimary)
@@ -3527,7 +3524,7 @@ private struct LibraryDocumentRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(isSelected ? Color.white.opacity(0.82) : palette.panelBase.opacity(palette.isDark ? 0.82 : 0.68))
+                .fill(isSelected ? palette.selectedPanel : palette.panelBase.opacity(palette.isDark ? 0.82 : 0.68))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -3942,7 +3939,7 @@ private struct GlassPanelBackground: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(palette.glassUnderlay)
 
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(
@@ -3963,9 +3960,34 @@ private struct GlassPanelBackground: View {
                 .fill(
                     LinearGradient(
                         colors: [
-                            Color.white.opacity(palette.isDark ? 0.10 : 0.38),
+                            palette.glassHighlightStrong,
                             .clear,
-                            Color.white.opacity(palette.isDark ? 0.02 : 0.12)
+                            palette.glassHighlightSoft
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        }
+    }
+}
+
+private struct DashboardInsetPanelBackground: View {
+    let cornerRadius: CGFloat
+    let palette: DashboardPalette
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(palette.insetPanel)
+
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            palette.glassHighlightStrong.opacity(palette.isDark ? 0.55 : 0.80),
+                            .clear,
+                            palette.glassHighlightSoft.opacity(palette.isDark ? 0.65 : 0.90)
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
@@ -3981,11 +4003,18 @@ private struct DashboardPalette {
     let backgroundBottom: Color
     let panelBase: Color
     let panelSecondary: Color
+    let insetPanel: Color
+    let selectedPanel: Color
     let textPrimary: Color
     let textSecondary: Color
     let warmAccent: Color
     let coolAccent: Color
     let successAccent: Color
+    let badgeFill: Color
+    let badgeFillSelected: Color
+    let glassUnderlay: Color
+    let glassHighlightStrong: Color
+    let glassHighlightSoft: Color
     let stroke: Color
     let shadow: Color
 
@@ -3997,11 +4026,18 @@ private struct DashboardPalette {
             backgroundBottom = Color(red: 0.10, green: 0.10, blue: 0.12)
             panelBase = Color(red: 0.12, green: 0.12, blue: 0.14)
             panelSecondary = Color(red: 0.07, green: 0.07, blue: 0.09)
+            insetPanel = Color(red: 0.09, green: 0.09, blue: 0.11).opacity(0.98)
+            selectedPanel = Color(red: 0.17, green: 0.19, blue: 0.23).opacity(0.96)
             textPrimary = Color.white.opacity(0.96)
             textSecondary = Color.white.opacity(0.70)
             warmAccent = Color(red: 1.00, green: 0.53, blue: 0.33)
             coolAccent = Color(red: 0.26, green: 0.72, blue: 0.98)
             successAccent = Color(red: 0.43, green: 0.84, blue: 0.66)
+            badgeFill = Color.white.opacity(0.10)
+            badgeFillSelected = Color.white.opacity(0.16)
+            glassUnderlay = Color(red: 0.08, green: 0.08, blue: 0.10).opacity(0.96)
+            glassHighlightStrong = Color.white.opacity(0.06)
+            glassHighlightSoft = Color.white.opacity(0.015)
             stroke = Color.white.opacity(0.12)
             shadow = Color.black.opacity(0.52)
         } else {
@@ -4009,11 +4045,18 @@ private struct DashboardPalette {
             backgroundBottom = Color(red: 0.92, green: 0.95, blue: 0.99)
             panelBase = Color.white.opacity(0.70)
             panelSecondary = Color(red: 0.94, green: 0.96, blue: 0.99).opacity(0.72)
+            insetPanel = Color.white.opacity(0.82)
+            selectedPanel = Color.white.opacity(0.82)
             textPrimary = Color(red: 0.12, green: 0.13, blue: 0.20)
             textSecondary = Color(red: 0.30, green: 0.34, blue: 0.43)
             warmAccent = Color(red: 0.92, green: 0.55, blue: 0.30)
             coolAccent = Color(red: 0.27, green: 0.56, blue: 0.92)
             successAccent = Color(red: 0.26, green: 0.68, blue: 0.52)
+            badgeFill = Color.white.opacity(0.18)
+            badgeFillSelected = Color.white.opacity(0.32)
+            glassUnderlay = Color.white.opacity(0.44)
+            glassHighlightStrong = Color.white.opacity(0.38)
+            glassHighlightSoft = Color.white.opacity(0.12)
             stroke = Color.white.opacity(0.58)
             shadow = Color.black.opacity(0.10)
         }
