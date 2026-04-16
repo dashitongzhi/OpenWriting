@@ -12,8 +12,9 @@ struct WritingDeskView: View {
     @State private var isImportingOutline = false
     @State private var isImportingRequirements = false
     @State private var isOutlineGeneratorPresented = false
+    @State private var isPolishRequirementsPresented = false
     @State private var aiSuggestion = ""
-    @State private var draftBufferText = ""
+    @State private var polishRequirementsText = ""
     @State private var aiStatusMessage = "准备就绪，可先补大纲、参考文本和特殊要求，再开始当前章节写作。"
     @State private var saveMessage = "自动保存已开启，可按章节收录"
     @State private var isGenerating = false
@@ -22,6 +23,7 @@ struct WritingDeskView: View {
     @State private var autoScrollLocked = false
     @State private var areConfigurationCardsCollapsed = false
     @State private var pendingScrollAnchor: WritingDeskScrollAnchor?
+    @State private var pendingPolishProjectID: NovelProject.ID?
     @State private var timingSnapshot = AIWriterTimingSnapshot.idle
 
     private let contentTopPadding: CGFloat = 18
@@ -36,6 +38,11 @@ struct WritingDeskView: View {
 
     private var activeProject: NovelProject? {
         appState.activeProject
+    }
+
+    private var pendingPolishProject: NovelProject? {
+        guard let pendingPolishProjectID else { return activeProject }
+        return appState.project(for: pendingPolishProjectID)
     }
 
     private var supportedImportTypes: [UTType] {
@@ -84,6 +91,19 @@ struct WritingDeskView: View {
                     onGenerate: {
                         generateOutline(for: appState.project(for: activeProject.id) ?? activeProject)
                     }
+                )
+            }
+        }
+        .sheet(
+            isPresented: $isPolishRequirementsPresented,
+            onDismiss: { pendingPolishProjectID = nil }
+        ) {
+            if let pendingPolishProject {
+                WritingDeskPolishRequirementsSheet(
+                    projectTitle: pendingPolishProject.title,
+                    chapterSummary: pendingPolishProject.currentChapterSummary,
+                    instructionText: $polishRequirementsText,
+                    onConfirm: confirmDraftPolish
                 )
             }
         }
@@ -303,7 +323,7 @@ struct WritingDeskView: View {
                         accessibilityLabel: "润色当前草稿",
                         isEnabled: !isGenerating && !isSavingChapter && project.draftWordCount > 0
                     ) {
-                        polishDraft(for: project)
+                        presentDraftPolishPrompt(for: project)
                     }
                 ],
                 fillContentHeight: layout != nil
@@ -369,7 +389,7 @@ struct WritingDeskView: View {
             if appState.showWritingDeskCachePanel {
                 WritingDeskSectionCard(
                     title: "缓存区",
-                    badgeText: isCacheCollapsed ? "已收起" : "临时暂存",
+                    badgeText: isCacheCollapsed ? "已收起" : "\(project.draftContinuationCacheCount)/400 字",
                     headerTapAction: {
                         withAnimation(.easeOut(duration: 0.2)) {
                             isCacheCollapsed.toggle()
@@ -383,29 +403,16 @@ struct WritingDeskView: View {
                             .foregroundStyle(.secondary)
                     } else {
                         WritingDeskCacheSurface(
-                            text: $draftBufferText,
-                            placeholder: "AI 结果送到缓存区后，会先停在这里，确认无误再采纳进草稿箱。",
+                            text: project.draftContinuationCache,
+                            placeholder: "保存过上一章后，这里会显示上一已保存章节的末尾 400 字，作为 AI 续写当前章节时的近端参考。",
                             minHeight: layout?.cacheEditorHeight ?? 152
                         )
                         .id(WritingDeskScrollAnchor.cache.rawValue)
 
-                        HStack(spacing: 10) {
-                            Button("采纳到草稿箱") {
-                                acceptCacheIntoDraft(for: project)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(draftBufferText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                            Button("清空缓存") {
-                                draftBufferText = ""
-                                aiStatusMessage = "缓存区已清空。"
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(draftBufferText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
+                        HStack {
                             Spacer()
 
-                            Text(draftBufferText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "暂无缓存内容" : "可继续编辑后再采纳")
+                            Text(project.draftContinuationCache.isEmpty ? "上一章还没有可用缓存" : "缓存区展示上一已保存章节的结尾，并会作为 AI 续写当前章节的近端参考")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -503,14 +510,6 @@ struct WritingDeskView: View {
                     .buttonStyle(.bordered)
                     .disabled(isGenerating || isSavingChapter || appState.aiConfiguration == nil)
 
-                    if appState.showWritingDeskCachePanel {
-                        Button("暂存到缓存区") {
-                            moveAISuggestionToCache()
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-
                     Button("清空结果") {
                         aiSuggestion = ""
                         aiStatusMessage = "AI 结果区已清空。"
@@ -537,14 +536,6 @@ struct WritingDeskView: View {
                     }
                     .buttonStyle(.bordered)
                     .disabled(isGenerating || isSavingChapter || appState.aiConfiguration == nil)
-
-                    if appState.showWritingDeskCachePanel {
-                        Button("暂存到缓存区") {
-                            moveAISuggestionToCache()
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
 
                     Button("清空结果") {
                         aiSuggestion = ""
@@ -850,7 +841,26 @@ struct WritingDeskView: View {
         startWriting(for: project, rejectedSuggestion: rejectedSuggestion.isEmpty ? nil : rejectedSuggestion)
     }
 
-    private func polishDraft(for project: NovelProject) {
+    private func presentDraftPolishPrompt(for project: NovelProject) {
+        pendingPolishProjectID = project.id
+        isPolishRequirementsPresented = true
+    }
+
+    private func confirmDraftPolish() {
+        let project = pendingPolishProject
+        let additionalInstruction = polishRequirementsText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        pendingPolishProjectID = nil
+        isPolishRequirementsPresented = false
+
+        guard let project else { return }
+
+        DispatchQueue.main.async {
+            polishDraft(for: project, additionalInstruction: additionalInstruction)
+        }
+    }
+
+    private func polishDraft(for project: NovelProject, additionalInstruction: String) {
         guard let configuration = appState.aiConfiguration else {
             aiStatusMessage = "当前模型配置不完整，请先到设置里填写 API Key、Base URL 和模型名称。"
             return
@@ -864,7 +874,9 @@ struct WritingDeskView: View {
         }
 
         isGenerating = true
-        aiStatusMessage = "AI 正在润色当前草稿尾段，尽量保持当前章节气质和叙述连续性…"
+        aiStatusMessage = additionalInstruction.isEmpty
+            ? "AI 正在润色当前草稿尾段，尽量保持当前章节气质和叙述连续性…"
+            : "AI 正在按你的要求润色当前草稿尾段，尽量保持当前章节气质和叙述连续性…"
         timingSnapshot = .queued
 
         Task {
@@ -874,7 +886,8 @@ struct WritingDeskView: View {
                 let polished = try await AIWritingService.polishPassage(
                     configuration: configuration,
                     project: latestProject,
-                    passage: passage
+                    passage: passage,
+                    additionalInstruction: additionalInstruction
                 )
 
                 let total = Date().timeIntervalSince(startedAt)
@@ -912,28 +925,6 @@ struct WritingDeskView: View {
         aiSuggestion = ""
         saveMessage = "已接受 AI 候选稿到草稿箱"
         aiStatusMessage = "候选稿已放入草稿箱，可继续编辑或保存当前章。"
-        focusDraftEditor()
-        requestAutoScroll(to: .draft)
-    }
-
-    private func moveAISuggestionToCache() {
-        let trimmed = aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-
-        draftBufferText = trimmed
-        aiStatusMessage = "AI 候选稿已暂存到缓存区，确认后可采纳进草稿箱。"
-        isCacheCollapsed = false
-        requestAutoScroll(to: .cache)
-    }
-
-    private func acceptCacheIntoDraft(for project: NovelProject) {
-        let trimmed = draftBufferText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-
-        appState.appendDraftText(trimmed, for: project.id)
-        draftBufferText = ""
-        saveMessage = "缓存内容已采纳进草稿箱"
-        aiStatusMessage = "缓存内容已采纳到草稿箱，可继续编辑并按章节保存。"
         focusDraftEditor()
         requestAutoScroll(to: .draft)
     }
@@ -1038,17 +1029,131 @@ struct WritingDeskView: View {
     }
 
     private func preferredLength(for wordTargetText: String) -> AIWritingLength {
-        let digits = wordTargetText.compactMap(\.wholeNumberValue)
-        let number = digits.reduce(0) { ($0 * 10) + $1 }
+        let number = inferredTargetWordCount(from: wordTargetText)
 
         switch number {
-        case 0 ..< 900:
+        case 0 ..< 850:
             return .short
-        case 1_800...:
+        case 1_700...:
             return .long
         default:
             return .medium
         }
+    }
+
+    private func inferredTargetWordCount(from text: String) -> Int {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return 0 }
+
+        let nsText = trimmed as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+        let rangePattern = #"(\d+(?:\.\d+)?)\s*(万|千)?\s*[-~—–至到]\s*(\d+(?:\.\d+)?)\s*(万|千)?\s*字?"#
+        let singlePattern = #"(\d+(?:\.\d+)?)\s*(万|千)?\s*字"#
+        let chapterKeywords = ["本章", "本次", "当前章节", "单章", "章节", "章均", "每章"]
+        let projectKeywords = ["全书", "全文", "总字数", "总计", "预计", "完本", "全稿"]
+        let adjustmentKeywords = ["上浮", "下浮", "浮动", "%", "百分"]
+
+        struct Candidate {
+            let value: Int
+            let score: Int
+        }
+
+        func normalizedValue(_ numberText: String, unit: String?) -> Int? {
+            guard let base = Double(numberText) else { return nil }
+            let multiplier: Double
+
+            switch unit {
+            case "万":
+                multiplier = 10_000
+            case "千":
+                multiplier = 1_000
+            default:
+                multiplier = 1
+            }
+
+            return Int(base * multiplier)
+        }
+
+        func context(for range: NSRange) -> String {
+            let lowerBound = max(0, range.location - 12)
+            let upperBound = min(nsText.length, range.location + range.length + 12)
+            return nsText.substring(with: NSRange(location: lowerBound, length: upperBound - lowerBound))
+        }
+
+        func score(for context: String, value: Int, prefersRange: Bool) -> Int {
+            var score = prefersRange ? 8 : 4
+
+            if chapterKeywords.contains(where: context.contains) {
+                score += 8
+            }
+
+            if projectKeywords.contains(where: context.contains) {
+                score -= 8
+            }
+
+            if adjustmentKeywords.contains(where: context.contains) {
+                score -= 5
+            }
+
+            if value > 10_000 {
+                score -= 10
+            } else if value >= 800, value <= 4_500 {
+                score += 5
+            }
+
+            return score
+        }
+
+        var candidates: [Candidate] = []
+
+        if let rangeExpression = try? NSRegularExpression(pattern: rangePattern) {
+            for match in rangeExpression.matches(in: trimmed, range: fullRange) {
+                guard match.numberOfRanges >= 5 else { continue }
+                let lowerText = nsText.substring(with: match.range(at: 1))
+                let lowerUnit = match.range(at: 2).location == NSNotFound ? nil : nsText.substring(with: match.range(at: 2))
+                let upperText = nsText.substring(with: match.range(at: 3))
+                let upperUnit = match.range(at: 4).location == NSNotFound ? lowerUnit : nsText.substring(with: match.range(at: 4))
+                guard
+                    let lower = normalizedValue(lowerText, unit: lowerUnit),
+                    let upper = normalizedValue(upperText, unit: upperUnit)
+                else { continue }
+
+                let midpoint = (lower + upper) / 2
+                let candidateContext = context(for: match.range)
+                candidates.append(.init(value: midpoint, score: score(for: candidateContext, value: midpoint, prefersRange: true)))
+            }
+        }
+
+        if let singleExpression = try? NSRegularExpression(pattern: singlePattern) {
+            for match in singleExpression.matches(in: trimmed, range: fullRange) {
+                guard match.numberOfRanges >= 3 else { continue }
+                let numberText = nsText.substring(with: match.range(at: 1))
+                let unit = match.range(at: 2).location == NSNotFound ? nil : nsText.substring(with: match.range(at: 2))
+                guard let value = normalizedValue(numberText, unit: unit) else { continue }
+                let candidateContext = context(for: match.range)
+                candidates.append(.init(value: value, score: score(for: candidateContext, value: value, prefersRange: false)))
+            }
+        }
+
+        if let bestCandidate = candidates.max(by: {
+            if $0.score == $1.score {
+                return abs($0.value - 2_000) > abs($1.value - 2_000)
+            }
+            return $0.score < $1.score
+        }) {
+            return bestCandidate.value
+        }
+
+        let fallbackNumbers = trimmed
+            .split(whereSeparator: { !$0.isNumber })
+            .compactMap { Int($0) }
+            .filter { (500 ... 5_000).contains($0) }
+
+        if let fallback = fallbackNumbers.min(by: { abs($0 - 2_000) < abs($1 - 2_000) }) {
+            return fallback
+        }
+
+        return 0
     }
 
     private func generationInstruction(rejecting rejectedSuggestion: String?) -> String {
@@ -1178,7 +1283,8 @@ struct WritingDeskView: View {
 
     private func resetSessionState() {
         aiSuggestion = ""
-        draftBufferText = ""
+        isPolishRequirementsPresented = false
+        pendingPolishProjectID = nil
         isGenerating = false
         isSavingChapter = false
         isCacheCollapsed = false
@@ -1556,17 +1662,21 @@ private struct WritingDeskTextSurface: View {
 
 private struct WritingDeskCacheSurface: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Binding var text: String
+    let text: String
     let placeholder: String
     let minHeight: CGFloat
 
     var body: some View {
-        TextEditor(text: $text)
-            .font(.system(size: 15, weight: .regular, design: .serif))
-            .lineSpacing(4)
-            .scrollContentBackground(.hidden)
-            .padding(14)
-            .frame(minHeight: minHeight, alignment: .topLeading)
+        ScrollView {
+            Text(text)
+                .font(.system(size: 15, weight: .regular, design: .serif))
+                .lineSpacing(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+                .padding(14)
+        }
+        .frame(minHeight: minHeight, alignment: .topLeading)
+        .scrollIndicators(.visible)
             .background(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .fill(.ultraThinMaterial)
@@ -1634,6 +1744,71 @@ private struct WritingDeskTimelineNode: View {
 
     private var borderColor: Color {
         colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.16)
+    }
+}
+
+private struct WritingDeskPolishRequirementsSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let projectTitle: String
+    let chapterSummary: String
+    @Binding var instructionText: String
+    let onConfirm: () -> Void
+
+    var body: some View {
+        ZStack {
+            PageBackground()
+
+            VStack(alignment: .leading, spacing: 18) {
+                Text("润色草稿")
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundStyle(.primary)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(projectTitle)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+
+                    Text(chapterSummary)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                Text("输入这次润色想强调的方向。比如节奏更克制、动作更清晰、对白更有张力，或明确要求不要扩写剧情。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineSpacing(3)
+
+                WritingDeskInlineField(title: "润色要求") {
+                    WritingDeskTextSurface(
+                        text: $instructionText,
+                        placeholder: "例如：保留当前剧情和节奏，重点增强人物情绪暗流、动作细节和对白张力，不要新增剧情，不要扩写篇幅。",
+                        minHeight: 210
+                    )
+                }
+
+                Text("留空也可以确认，此时会按默认方式润色当前草稿尾段。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack {
+                    Spacer()
+
+                    Button("取消") {
+                        dismiss()
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("确认润色") {
+                        dismiss()
+                        onConfirm()
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+            .padding(24)
+            .frame(width: 560, alignment: .topLeading)
+        }
     }
 }
 
@@ -1972,8 +2147,9 @@ private struct WritingDeskBounceLockView: NSViewRepresentable {
                 object: discoveredScrollView,
                 queue: .main
             ) { [weak self] _ in
-                Task { @MainActor in
-                    self?.snapBackToTopIfNeeded()
+                guard let self else { return }
+                MainActor.assumeIsolated {
+                    self.snapBackToTopIfNeeded()
                 }
             }
         }

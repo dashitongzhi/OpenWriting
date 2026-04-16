@@ -250,7 +250,10 @@ actor ICloudProjectStore {
 
         do {
             let data = try Data(contentsOf: assetURL)
-            return try decoder.decode(AccountProjectSnapshot.self, from: data)
+            let decoder = self.decoder
+            return try await MainActor.run {
+                try decoder.decode(AccountProjectSnapshot.self, from: data)
+            }
         } catch {
             throw StoreError.decodeFailed(error.localizedDescription)
         }
@@ -262,7 +265,10 @@ actor ICloudProjectStore {
         }
 
         do {
-            let data = try encoder.encode(snapshot)
+            let encoder = self.encoder
+            let data = try await MainActor.run {
+                try encoder.encode(snapshot)
+            }
             let payloadURL = try writeTemporaryPayload(data, scope: scope)
             defer { try? fileManager.removeItem(at: payloadURL) }
 

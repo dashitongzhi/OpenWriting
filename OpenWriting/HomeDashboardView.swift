@@ -1759,8 +1759,9 @@ private struct TopAnchorBounceLockView: NSViewRepresentable {
                 object: discoveredScrollView,
                 queue: .main
             ) { [weak self] _ in
-                Task { @MainActor in
-                    self?.snapBackToTopIfNeeded()
+                guard let self else { return }
+                MainActor.assumeIsolated {
+                    self.snapBackToTopIfNeeded()
                 }
             }
         }

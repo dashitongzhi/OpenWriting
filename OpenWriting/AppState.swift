@@ -882,7 +882,11 @@ final class AppState {
             return nil
         }
 
-        return try? JSONDecoder().decode([NovelProject].self, from: data)
+        guard let decodedProjects = try? JSONDecoder().decode([NovelProject].self, from: data) else {
+            return nil
+        }
+
+        return decodedProjects.filter { !builtInProjectIDs.contains($0.id) }
     }
 
     private static func stringValue(forKey key: String, userDefaults: UserDefaults) -> String? {
@@ -1302,82 +1306,13 @@ final class AppState {
         return candidate
     }
 
-    private static let defaultRecentProjects: [NovelProject] = [
-        NovelProject(
-            id: "fog-harbor-chronicle",
-            title: "雾港纪事",
-            genre: "海港悬疑",
-            summary: "一座被潮汐与钟楼控制节奏的城市，正在吞没每个说谎的人。",
-            updatedAt: "今天 18:20",
-            currentChapterTitle: "钟楼退潮",
-            currentChapterNumber: 18,
-            writtenChapters: 18,
-            chapterFocus: "让主角在钟楼退潮的片刻发现新的证词，并把港口谎言与失踪案并到同一条线索里。",
-            draftText: "钟楼的钟声在退潮前第三次敲响，雾像一张被谁悄悄掀开的幕布，沿着码头的木板一层层退开。\n\n顾临站在潮痕线外，靴底沾着盐粒。她知道这座城总在钟声之后说真话，但真话从不完整。今天留下来的，是一枚被海水反复冲刷却还带着体温的铜纽扣。\n\n她把纽扣放进掌心，抬头望向钟楼。那扇面朝港口的小窗刚刚关上，像有人在她看见之前，先一步把秘密收了回去。",
-            outlineText: "第一卷：港雾与钟楼\n1. 失踪案在退潮夜启动\n2. 顾临发现钟楼与谎言节律有关\n3. 港务局、钟楼守夜人和失踪名单逐渐并线\n4. 第一卷结尾揭开钟楼记录真话的方式",
-            structureNotes: "第一卷：港雾与钟楼\n第 16 章：潮位异常第一次被公开提起\n第 17 章：港务局旧档案出现缺页\n第 18 章：铜纽扣与守夜人证词并线\n第 19 章：守夜人身份与钟楼记录方式反转",
-            sceneProgressNotes: "1. 开场先让顾临确认退潮时钟楼异常静止\n2. 中段让铜纽扣和旧证词对上时间差\n3. 结尾把视线抛向钟楼小窗后的守夜人",
-            characterArcNotes: "顾临：从冷静观察转向主动试探港务局\n守夜人：表面沉默，内里开始暴露防御性\n港务局记录员：从旁观配合转向刻意遮掩",
-            foreshadowNotes: "铜纽扣：第 18 章出现，第 21 章对应失踪名单\n钟楼缺页：第 17 章露头，第 19 章解释来源\n港口谎言节律：第一卷末尾回收到钟声记录机制",
-            outlineSummary: "当前结构判断：第一卷已经把“潮汐、钟楼、失踪案”三条线并到同一节奏里，结构重心很稳。第 18 章的位置适合作为中段证词翻面的节点，需要继续把线索导向守夜人。\n\n本章推进建议：先让顾临确认退潮异常，再把铜纽扣与旧证词做一次并线。结尾不要一次性揭露守夜人真相，只给出足以推动下一章追查的缺口。\n\n角色弧线提醒：顾临正在从观察者转向行动者，这一步需要在本章体现。守夜人不能过早露出底牌，要让他的防御感先于真相出现。\n\n伏笔与回收：铜纽扣和钟楼缺页都已经具备继续回收的条件，但仍要保留一层解释延迟。港口谎言节律要继续通过钟声和潮位间接提示。\n\n下一步整理动作：继续补第 19 到 21 章的节点关系，明确守夜人与港务局的连接，再把第一卷结尾的揭示顺序写清。",
-            outlineSummaryUpdatedAt: "今天 18:26",
-            referenceContextText: "保持海雾、潮声、金属与钟楼的意象，风格克制、悬疑感慢慢推进。",
-            specialRequirements: "不要让线索一次性说透，继续保留港口谎言的回声感。",
-            wordTargetText: "本章建议 1800-2200 字，重点放在证词出现与线索并线。",
-            continuityNotes: "顾临说话克制、观察敏锐，不轻易下判断。海港城市本身像有生命的旁观者，叙事要保留潮湿、冷白和金属感。",
-            referenceDocuments: [
-                ReferenceDocument(title: "港口气氛参考", content: "海雾、潮声、木栈桥与铜钟的意象要反复出现，让城市像一座会呼吸的谜宫。", importedAt: "示例素材")
-            ]
-        ),
-        NovelProject(
-            id: "glass-mountain-letters",
-            title: "玻璃山来信",
-            genre: "成长奇幻",
-            summary: "失忆的制图师追查一封寄给未来自己的信，逐渐拼回山脉的真实形状。",
-            updatedAt: "昨天 21:40",
-            currentChapterTitle: "向玻璃山回信",
-            currentChapterNumber: 9,
-            writtenChapters: 9,
-            chapterFocus: "把“未来来信”的内容和制图师记忆缺口对应起来，推进她上山的决定。",
-            draftText: "信纸在灯下泛出很浅的银光，像山脊上的雪线。陆遥盯着最后那句“请在山雾到来之前回信”，忽然意识到这不是提醒，而像一次迟到多年的邀请。\n\n她摊开地图，把自己重新标在玻璃山以南的旧驿站。那里明明早该废弃，却在信封背面的速写里，被画成一座仍有人居住的小屋。",
-            outlineText: "第一幕：收到未来来信并确认地图异常\n第二幕：沿着旧驿站与山径上行，逐步恢复记忆\n第三幕：在玻璃山顶完成回信，也理解山脉真实形状",
-            structureNotes: "第一幕：来信触发上山动机\n第 7 章：确认旧驿站仍有人居住\n第 8 章：地图坐标出现偏移\n第 9 章：回信决定正式成立\n第 10 章：进入山路并恢复第一段记忆",
-            sceneProgressNotes: "1. 先对照来信和旧地图差异\n2. 再让陆遥确认驿站位置仍在使用\n3. 结尾落到“必须上山”这一决定",
-            characterArcNotes: "陆遥：从迟疑观察转向主动回应未来自己\n未来来信的‘她’：保持神秘，但要让语气显出熟悉感",
-            foreshadowNotes: "旧驿站灯光：第 9 章看见，第 11 章解释是谁点亮\n地图偏移：第 8 章出现，第 10 章成为上山依据",
-            referenceContextText: "保持玻璃、雪线和失真地图的视觉感，句子可稍微更轻更空灵。",
-            specialRequirements: "让记忆恢复通过景物和动作显现，不要直接解释。",
-            wordTargetText: "本章建议 1600-2000 字，推进上山决定即可。",
-            continuityNotes: "文本要有玻璃、雪线和失真地图的视觉感。陆遥偏内省，情绪波动要通过景物和动作慢慢显出来。",
-            referenceDocuments: [
-                ReferenceDocument(title: "山脉意象参考", content: "玻璃山的质感像被风吹亮的冰层，远看透明，近看却遍布细密裂纹。", importedAt: "示例素材")
-            ]
-        ),
-        NovelProject(
-            id: "zero-sunset",
-            title: "零号日落",
-            genre: "近未来科幻",
-            summary: "当城市开始共享黄昏，主角必须在同一晚里做出三次不同的人生选择。",
-            updatedAt: "周一 09:10",
-            currentChapterTitle: "黄昏拷贝体",
-            currentChapterNumber: 6,
-            writtenChapters: 6,
-            chapterFocus: "写清第一次见到“拷贝体”的震撼感，并让主角意识到今晚的选择会被重复三次。",
-            draftText: "天边那道橘金色迟迟不肯沉下去，像有人把整座城按在同一秒里反复播放。沈渡在轻轨站台看见了第二个自己。\n\n那个人站在对面，衣角、姿势、甚至抬头看时间的动作都和他分毫不差。唯一不同的是，对方的手背上多了一道刚愈合的伤，像某个还没来得及发生在他身上的决定。",
-            outlineText: "序章：共享黄昏开始覆盖整座城\n第一幕：沈渡发现时间复制现象\n第二幕：每次黄昏都会产生一个不同选择的自己\n第三幕：必须决定保留哪个版本的人生",
-            structureNotes: "序章：共享黄昏的规则第一次出现\n第 4 章：城市开始出现同步停滞\n第 5 章：沈渡意识到选择会被复制\n第 6 章：第一次见到拷贝体\n第 7 章：规则验证与代价显形",
-            sceneProgressNotes: "1. 先建立黄昏停滞的生理不适\n2. 再让沈渡和拷贝体形成镜面对视\n3. 结尾确认今晚的选择会被重复",
-            characterArcNotes: "沈渡：理性压制恐惧，但身体反应先失控\n拷贝体：像被延迟执行的另一种选择，不要写得像纯反派",
-            foreshadowNotes: "手背伤痕：第 6 章出现，第 8 章解释是哪次选择留下\n共享黄昏规则：第 4 章提出，第 7 章确认可复制三次",
-            referenceContextText: "科技感要克制，把黄昏残影和轻轨金属光泽写得更冷一些。",
-            specialRequirements: "优先强化第一次遇到拷贝体的生理反应和理性压制恐惧的矛盾。",
-            wordTargetText: "本章建议 1800 字左右，重点是建立规则与惊异感。",
-            continuityNotes: "城市科技感要克制，重点是时间错位带来的陌生和压迫。沈渡的第一反应是理性压制恐惧，但身体会先于语言暴露异常。",
-            referenceDocuments: [
-                ReferenceDocument(title: "近未来城市场景", content: "黄昏停留太久后，玻璃幕墙和轻轨金属边缘会出现像复制残影一样的重影。", importedAt: "示例素材")
-            ]
-        )
+    private static let builtInProjectIDs: Set<String> = [
+        "fog-harbor-chronicle",
+        "glass-mountain-letters",
+        "zero-sunset"
     ]
+
+    private static let defaultRecentProjects: [NovelProject] = []
 }
 
 enum ModelProvider: String, CaseIterable, Identifiable {
@@ -1500,7 +1435,7 @@ struct ChapterDraft: Identifiable, Codable, Hashable {
         return String(trimmed.prefix(80)) + "…"
     }
 
-    static func sortDescending(_ lhs: ChapterDraft, _ rhs: ChapterDraft) -> Bool {
+    nonisolated static func sortDescending(_ lhs: ChapterDraft, _ rhs: ChapterDraft) -> Bool {
         if lhs.chapterNumber == rhs.chapterNumber {
             return lhs.savedAt > rhs.savedAt
         }
@@ -2107,6 +2042,30 @@ struct NovelProject: Identifiable, Codable {
         guard !trimmed.isEmpty else { return "正文还没有展开，可以先写下当前场景的起笔句。" }
         guard trimmed.count > 120 else { return trimmed }
         return String(trimmed.suffix(120))
+    }
+
+    var draftContinuationCache: String {
+        let source = previousChapterDraftForContinuation?.content ?? ""
+        let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        guard trimmed.count > 400 else { return trimmed }
+        return String(trimmed.suffix(400))
+    }
+
+    var draftContinuationCacheCount: Int {
+        draftContinuationCache.count
+    }
+
+    var previousChapterDraftForContinuation: ChapterDraft? {
+        let sortedDrafts = sortedChapterDrafts
+
+        if let directPrevious = sortedDrafts.first(where: { $0.chapterNumber == currentChapterNumber - 1 }) {
+            return directPrevious
+        }
+
+        return sortedDrafts
+            .filter { $0.chapterNumber < currentChapterNumber }
+            .max { $0.chapterNumber < $1.chapterNumber }
     }
 
     private static func outlineNodeCount(in text: String) -> Int {

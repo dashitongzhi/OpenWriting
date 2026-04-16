@@ -137,7 +137,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         window.contentView?.superview?.wantsLayer = true
         window.contentView?.superview?.layer?.backgroundColor = NSColor.clear.cgColor
         window.toolbar?.displayMode = .iconOnly
-        window.toolbar?.showsBaselineSeparator = false
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -281,7 +280,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = false
         toolbar.autosavesConfiguration = false
-        toolbar.showsBaselineSeparator = false
 
         if window.toolbar !== toolbar {
             window.toolbar = toolbar
@@ -333,7 +331,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = false
         toolbar.autosavesConfiguration = false
-        toolbar.showsBaselineSeparator = false
         return toolbar
     }
 }

@@ -24,7 +24,7 @@ enum LiteraryQuoteLibrary {
 
     private static let all: [LiteraryQuote] = loadQuotes()
 
-    private static func loadQuotes() -> [LiteraryQuote] {
+    private nonisolated static func loadQuotes() -> [LiteraryQuote] {
         guard let url = quotesResourceURL(),
               let content = try? String(contentsOf: url, encoding: .utf8) else {
             return []
@@ -35,7 +35,7 @@ enum LiteraryQuoteLibrary {
             .compactMap(parseLine)
     }
 
-    private static func quotesResourceURL() -> URL? {
+    private nonisolated static func quotesResourceURL() -> URL? {
         let legacyBundleName = ("Open" + "Reading") + "_" + ("Open" + "Reading") + ".bundle"
         let resourcePaths = [
             "LiteraryQuotes.zh-Hans.tsv",
@@ -58,7 +58,7 @@ enum LiteraryQuoteLibrary {
         }) ?? nil
     }
 
-    private static func parseLine(_ line: Substring) -> LiteraryQuote? {
+    private nonisolated static func parseLine(_ line: Substring) -> LiteraryQuote? {
         let columns = line.split(separator: "\t", maxSplits: 3, omittingEmptySubsequences: false)
         guard columns.count == 4 else { return nil }
 
@@ -77,7 +77,7 @@ enum LiteraryQuoteLibrary {
         )
     }
 
-    private static func sanitizeSource(_ source: String) -> String {
+    private nonisolated static func sanitizeSource(_ source: String) -> String {
         var sanitized = source.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if let range = sanitized.range(of: "衍生") {
@@ -91,7 +91,7 @@ enum LiteraryQuoteLibrary {
         return sanitized.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func simplifiedChinese(_ text: String) -> String {
+    private nonisolated static func simplifiedChinese(_ text: String) -> String {
         guard !text.isEmpty else { return text }
 
         let mutable = NSMutableString(string: text) as CFMutableString
@@ -99,7 +99,7 @@ enum LiteraryQuoteLibrary {
         return String(mutable)
     }
 
-    private static func containsChineseCharacters(_ text: String) -> Bool {
+    private nonisolated static func containsChineseCharacters(_ text: String) -> Bool {
         text.unicodeScalars.contains { scalar in
             switch scalar.value {
             case 0x3400 ... 0x4DBF, 0x4E00 ... 0x9FFF, 0xF900 ... 0xFAFF:
@@ -110,7 +110,7 @@ enum LiteraryQuoteLibrary {
         }
     }
 
-    private static func stableHash(_ text: String) -> Int {
+    private nonisolated static func stableHash(_ text: String) -> Int {
         let prime: UInt64 = 1_099_511_628_211
         var hash: UInt64 = 14_695_981_039_346_656_037
 

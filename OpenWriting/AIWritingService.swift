@@ -46,33 +46,33 @@ enum AIWritingLength: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .short:
-            return "600 字"
+            return "700 字"
         case .medium:
-            return "1200 字"
+            return "1400 字"
         case .long:
-            return "2000 字"
+            return "2200 字"
         }
     }
 
     var maxTokens: Int {
         switch self {
         case .short:
-            return 900
+            return 1_050
         case .medium:
-            return 1500
+            return 1_850
         case .long:
-            return 2400
+            return 3_000
         }
     }
 
     var instruction: String {
         switch self {
         case .short:
-            return "续写约 600 字，保持推进迅速。"
+            return "续写约 700 到 900 字，保持推进迅速。"
         case .medium:
-            return "续写约 1200 字，兼顾推进与氛围。"
+            return "续写约 1400 到 1700 字，兼顾推进与氛围。"
         case .long:
-            return "续写约 2000 字，允许完整展开一个场景。"
+            return "续写约 2200 到 2600 字，允许完整展开一个场景。"
         }
     }
 }
@@ -115,12 +115,17 @@ enum AIWritingService {
     static func polishPassage(
         configuration: AIConnectionConfiguration,
         project: NovelProject,
-        passage: String
+        passage: String,
+        additionalInstruction: String
     ) async throws -> String {
         try await completeText(
             configuration: configuration,
             systemPrompt: polishSystemPrompt,
-            userPrompt: polishUserPrompt(project: project, passage: passage),
+            userPrompt: polishUserPrompt(
+                project: project,
+                passage: passage,
+                additionalInstruction: additionalInstruction
+            ),
             temperature: 0.65,
             maxTokens: 1400
         )
@@ -228,7 +233,7 @@ enum AIWritingService {
     你的任务是续写当前章节，而不是重写设定。
     必须遵守：
     1. 保持人物语气、世界观规则和既有叙事视角一致。
-    2. 优先延续已有正文最后一段的节奏、句式和情绪。
+    2. 优先承接上一已保存章节结尾与当前章节既定目标，保持节奏、句式和情绪连续。
     3. 只输出可直接接在正文后的小说内容，不要解释，不要列提纲，不要加标题。
     4. 如果参考文本与当前项目冲突，以当前项目摘要、大纲、全局记忆和已有正文为准。
     5. 保持长篇创作连续性，避免突然跳到未来情节或重复已写内容。
@@ -311,6 +316,20 @@ enum AIWritingService {
             }
             .joined(separator: "\n\n")
 
+        let previousChapterSummary = normalized(
+            project.previousChapterDraftForContinuation?.chapterSummary ?? "",
+            fallback: "暂无上一已保存章节，请直接依据当前章节目标起笔。"
+        )
+        let previousChapterEnding = normalized(
+            project.draftContinuationCache,
+            fallback: "暂无上一章节结尾缓存，请依据当前章节目标稳妥起笔。"
+        )
+        let recentChapterSummaries = project.sortedChapterDrafts
+            .filter { $0.chapterNumber < project.currentChapterNumber }
+            .prefix(3)
+            .map(\.chapterSummary)
+            .joined(separator: "、")
+
         return """
         项目名称：\(project.title)
         类型：\(project.genre)
@@ -342,8 +361,14 @@ enum AIWritingService {
         字数设定：
         \(normalized(project.wordTargetText, fallback: "暂无专门字数设定，请按正常章节节奏展开。"))
 
-        当前正文结尾：
-        \(excerpt(from: project.draftText, limit: 4200))
+        上一已保存章节：
+        \(previousChapterSummary)
+
+        缓存区（上一章节末尾 400 字）：
+        \(previousChapterEnding)
+
+        近三章标题：
+        \(normalized(recentChapterSummaries, fallback: "暂无可参考的已保存章节标题。"))
 
         额外指令：
         \(normalized(additionalInstruction, fallback: "延续当前场景，不要跳章节。"))
@@ -351,11 +376,19 @@ enum AIWritingService {
         输出要求：
         \(length.instruction)
         必须保持与当前章节位置、角色口吻、时间线状态和伏笔进度一致。
+        如果提供了上一章节缓存，请优先承接缓存区里的最后一句、段落节奏和场景状态，但不要重复复述上一章已经写出的动作、对白、心理或信息。
+        开场两段避免重复解释既有设定、人物关系和刚刚发生过的事件，默认读者记得上一章。
+        每次续写至少推进一个新的情节拍点、关系变化或信息增量，不要用改写前文来充字数。
+        若需承上启下，请用新的动作、冲突、观察或结果进入当前章节，而不是复述上一章摘要。
         请直接输出续写后的正文。
         """
     }
 
-    private static func polishUserPrompt(project: NovelProject, passage: String) -> String {
+    private static func polishUserPrompt(
+        project: NovelProject,
+        passage: String,
+        additionalInstruction: String
+    ) -> String {
         let references = project.referenceDocuments
             .prefix(3)
             .map { document in
@@ -387,11 +420,15 @@ enum AIWritingService {
         字数设定：
         \(normalized(project.wordTargetText, fallback: "润色时保持段落体量稳定，不额外扩写。"))
 
+        本次润色要求：
+        \(normalized(additionalInstruction, fallback: "若无额外指定，请优先优化流畅度、节奏、氛围和动作细节，但不要改变剧情与信息。"))
+
         待润色正文：
         \(normalized(passage, fallback: "暂无可润色文本。"))
 
         输出要求：
         在不改剧情走向和核心信息的前提下，让文字更顺、更稳、更贴近当前项目风格。
+        如果用户额外写了润色要求，请优先满足；若与既有设定冲突，以正文事实和项目设定为准。
         请直接输出润色后的正文。
         """
     }
