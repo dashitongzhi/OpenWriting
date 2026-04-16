@@ -975,6 +975,7 @@ struct PlaceholderWorkspaceView: View {
     let item: SidebarItem
     @Bindable var appState: AppState
     let openSettings: () -> Void
+    @State private var isNewProjectSheetPresented = false
 
     private let contentTopPadding: CGFloat = 18
     private let contentHorizontalPadding: CGFloat = 32
@@ -1040,6 +1041,19 @@ struct PlaceholderWorkspaceView: View {
                                 if let activeProject {
                                     workspaceContextStrip(for: activeProject)
                                 }
+
+                                if item == .projects {
+                                    Spacer(minLength: 0)
+
+                                    Button {
+                                        isNewProjectSheetPresented = true
+                                    } label: {
+                                        Label("新建项目", systemImage: "plus")
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.large)
+                                    .tint(palette.coolAccent)
+                                }
                             }
                             .padding(24)
                             .frame(
@@ -1091,6 +1105,11 @@ struct PlaceholderWorkspaceView: View {
                 .onChange(of: appState.projectSpaceSelectionPulse) {
                     scrollToExplicitProject(using: proxy, animated: true)
                 }
+            }
+        }
+        .sheet(isPresented: $isNewProjectSheetPresented) {
+            NewProjectSheet { title in
+                appState.createProject(named: title)
             }
         }
     }
@@ -2179,9 +2198,17 @@ private struct ProjectsWorkspacePanel: View {
     var body: some View {
         DashboardPanel(
             title: "项目列表",
-            subtitle: "首页的最近项目、继续写作和新建项目都会直接落到这里的对应位置。"
+            subtitle: "这里集中展示最近项目，创建新项目后也会立刻出现在这里。"
         ) {
             VStack(alignment: .leading, spacing: 14) {
+                if appState.recentProjects.isEmpty {
+                    Text("还没有项目。先用上方第一张卡片底部的“新建项目”开始一本书，创建后会立刻出现在这里。")
+                        .font(.subheadline)
+                        .foregroundStyle(palette.textSecondary)
+                        .lineSpacing(3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
                 ForEach(appState.recentProjects) { project in
                     Button {
                         appState.selectProject(project.id)

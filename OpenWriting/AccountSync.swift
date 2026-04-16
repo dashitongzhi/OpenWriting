@@ -90,7 +90,7 @@ enum NativeAppleServiceAvailability {
 }
 
 enum NativeAppleAccountRuntime {
-    static func signInWithAppleAvailability(bundle: Bundle = .main) -> NativeAppleServiceAvailability {
+    nonisolated static func signInWithAppleAvailability(bundle: Bundle = .main) -> NativeAppleServiceAvailability {
         guard let bundleIdentifier = bundle.bundleIdentifier, !bundleIdentifier.isEmpty else {
             return .unavailable("当前应用没有可用的 Bundle ID，无法发起 Apple ID 登录。")
         }
@@ -104,11 +104,8 @@ enum NativeAppleAccountRuntime {
         return .available
     }
 
-    static func iCloudEntitlementAvailability() -> NativeAppleServiceAvailability {
-        let hasICloudEntitlement =
-            (entitlementArray(for: "com.apple.developer.ubiquity-container-identifiers")?.isEmpty == false) ||
-            (entitlementArray(for: "com.apple.developer.icloud-container-identifiers")?.isEmpty == false) ||
-            (entitlementArray(for: "com.apple.developer.icloud-services")?.isEmpty == false)
+    nonisolated static func iCloudEntitlementAvailability() -> NativeAppleServiceAvailability {
+        let hasICloudEntitlement = iCloudContainerIdentifier() != nil
 
         if hasICloudEntitlement {
             return .available
@@ -117,7 +114,25 @@ enum NativeAppleAccountRuntime {
         return .unavailable("当前预览包没有启用 iCloud capability，所以只能显示本机保存状态。")
     }
 
-    private static func entitlementArray(for key: String) -> [String]? {
+    nonisolated static func cloudKitContainer() -> CKContainer? {
+        guard let identifier = iCloudContainerIdentifier() else {
+            return nil
+        }
+
+        return CKContainer(identifier: identifier)
+    }
+
+    private nonisolated static func iCloudContainerIdentifier() -> String? {
+        let identifiers =
+            entitlementArray(for: "com.apple.developer.icloud-container-identifiers") ??
+            entitlementArray(for: "com.apple.developer.ubiquity-container-identifiers")
+
+        return identifiers?
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty })
+    }
+
+    private nonisolated static func entitlementArray(for key: String) -> [String]? {
         guard let task = SecTaskCreateFromSelf(nil),
               let rawValue = SecTaskCopyValueForEntitlement(task, key as CFString, nil)
         else {
@@ -174,18 +189,18 @@ actor ICloudProjectStore {
         static let scope = "scope"
     }
 
-    private let container: CKContainer
-    private let database: CKDatabase
+    private let container: CKContainer?
+    private let database: CKDatabase?
     private let fileManager: FileManager
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
     init(
-        container: CKContainer = .default(),
+        container: CKContainer? = NativeAppleAccountRuntime.cloudKitContainer(),
         fileManager: FileManager = .default
     ) {
         self.container = container
-        self.database = container.privateCloudDatabase
+        self.database = container?.privateCloudDatabase
         self.fileManager = fileManager
 
         let encoder = JSONEncoder()
@@ -200,7 +215,8 @@ actor ICloudProjectStore {
 
     func availability() async -> ICloudSyncAvailability {
         do {
-            let status = try await accountStatus()
+            let (container, _) = try configuredContainerAndDatabase()
+            let status = try await accountStatus(using: container)
             switch status {
             case .available:
                 _ = try await container.userRecordID()
@@ -224,7 +240,8 @@ actor ICloudProjectStore {
     }
 
     func loadSnapshot(for scope: String) async throws -> AccountProjectSnapshot? {
-        guard try await accountStatus() == .available else {
+        let (container, database) = try configuredContainerAndDatabase()
+        guard try await accountStatus(using: container) == .available else {
             throw StoreError.notSignedIntoICloud
         }
 
@@ -260,7 +277,8 @@ actor ICloudProjectStore {
     }
 
     func saveSnapshot(_ snapshot: AccountProjectSnapshot, for scope: String) async throws {
-        guard try await accountStatus() == .available else {
+        let (container, database) = try configuredContainerAndDatabase()
+        guard try await accountStatus(using: container) == .available else {
             throw StoreError.notSignedIntoICloud
         }
 
@@ -273,7 +291,7 @@ actor ICloudProjectStore {
             defer { try? fileManager.removeItem(at: payloadURL) }
 
             let recordID = snapshotRecordID(for: scope)
-            let record = try await existingRecord(for: recordID)
+            let record = try await existingRecord(for: recordID, in: database)
                 ?? CKRecord(recordType: CloudKitKey.recordType, recordID: recordID)
             record[CloudKitKey.scope] = sanitized(scope) as NSString
             record[CloudKitKey.updatedAt] = snapshot.updatedAt as NSDate
@@ -292,7 +310,15 @@ actor ICloudProjectStore {
         }
     }
 
-    private func existingRecord(for recordID: CKRecord.ID) async throws -> CKRecord? {
+    private func configuredContainerAndDatabase() throws -> (CKContainer, CKDatabase) {
+        guard let container, let database else {
+            throw StoreError.missingContainer
+        }
+
+        return (container, database)
+    }
+
+    private func existingRecord(for recordID: CKRecord.ID, in database: CKDatabase) async throws -> CKRecord? {
         let fetchedRecords = try await database.records(for: [recordID])
         guard let result = fetchedRecords[recordID] else { return nil }
 
@@ -306,7 +332,7 @@ actor ICloudProjectStore {
         }
     }
 
-    private func accountStatus() async throws -> CKAccountStatus {
+    private func accountStatus(using container: CKContainer) async throws -> CKAccountStatus {
         try await withCheckedThrowingContinuation { continuation in
             container.accountStatus { status, error in
                 if let error {
