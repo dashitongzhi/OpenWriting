@@ -95,7 +95,7 @@ struct AppRootView: View {
         case .writingDesk:
             WritingDeskView(appState: appState, openSettings: openSettings)
         case .projects, .outline, .library, .prompts:
-            PlaceholderWorkspaceView(item: appState.selectedSidebarItem, appState: appState, openSettings: openSettings)
+            PlaceholderWorkspaceView(item: appState.selectedSidebarItem, appState: appState)
         }
     }
 
@@ -787,7 +787,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .library:
             return "素材库"
         case .prompts:
-            return "提示工作流"
+            return "润色"
         }
     }
 
@@ -821,7 +821,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .library:
             return "这里会集中管理人物、地点、组织和世界观素材。"
         case .prompts:
-            return "这里会编排设定补完、续写和润色等 AI 工作流。"
+            return "这里会回看已保存章节，支持修改、润色和保存定稿。"
         }
     }
 }

@@ -134,8 +134,8 @@ final class AppState {
             detail: "让大纲、场景目标和伏笔回收保持可追踪，而不是散落在备忘录里。"
         ),
         StoryPillar(
-            title: "模型协作",
-            detail: "为设定补完、风格延展、对白优化分别准备独立提示工作流。"
+            title: "章节润色",
+            detail: "回看已保存章节，直接修改、AI 润色并保存定稿。"
         )
     ]
 
@@ -668,6 +668,45 @@ final class AppState {
         }
     }
 
+    @discardableResult
+    func updateSavedChapterDraft(
+        _ chapterDraftID: ChapterDraft.ID,
+        title: String,
+        content: String,
+        for projectID: NovelProject.ID
+    ) -> ChapterDraft? {
+        var updatedDraft: ChapterDraft?
+
+        updateProject(projectID) { project in
+            guard let existingIndex = project.chapterDrafts.firstIndex(where: { $0.id == chapterDraftID }) else { return }
+
+            let trimmedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedContent.isEmpty else { return }
+
+            let normalizedTitle = Self.normalizedChapterTitle(title)
+            let timestamp = Self.currentTimestampLabel()
+
+            project.chapterDrafts[existingIndex].chapterTitle = normalizedTitle
+            project.chapterDrafts[existingIndex].content = trimmedContent
+            project.chapterDrafts[existingIndex].savedAt = timestamp
+
+            let chapterNumber = project.chapterDrafts[existingIndex].chapterNumber
+            let updated = project.chapterDrafts[existingIndex]
+            project.chapterDrafts.sort(by: ChapterDraft.sortDescending)
+
+            if project.currentChapterNumber == chapterNumber {
+                project.currentChapterTitle = normalizedTitle
+                project.draftText = trimmedContent
+            }
+
+            project.writtenChapters = max(project.writtenChapters, chapterNumber)
+            project.updatedAt = timestamp
+            updatedDraft = updated
+        }
+
+        return updatedDraft
+    }
+
     func touchProject(_ projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.updatedAt = Self.currentTimestampLabel()
@@ -733,7 +772,7 @@ final class AppState {
         switch pillar.title {
         case "章节树":
             return .outline
-        case "模型协作":
+        case "章节润色":
             return .prompts
         default:
             return .projects

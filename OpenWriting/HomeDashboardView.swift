@@ -974,7 +974,6 @@ struct PlaceholderWorkspaceView: View {
     @Environment(\.colorScheme) private var colorScheme
     let item: SidebarItem
     @Bindable var appState: AppState
-    let openSettings: () -> Void
     @State private var isNewProjectSheetPresented = false
 
     private let contentTopPadding: CGFloat = 18
@@ -1005,10 +1004,9 @@ struct PlaceholderWorkspaceView: View {
         item != .home && item != .writingDesk
     }
 
-    init(item: SidebarItem, appState: AppState, openSettings: @escaping () -> Void = {}) {
+    init(item: SidebarItem, appState: AppState) {
         self.item = item
         self.appState = appState
-        self.openSettings = openSettings
     }
 
     var body: some View {
@@ -1082,7 +1080,6 @@ struct PlaceholderWorkspaceView: View {
                             WorkspaceUtilityCard(
                                 appState: appState,
                                 item: item,
-                                openSettings: openSettings,
                                 fixedHeight: workspaceHeaderHeight
                             )
                         }
@@ -1237,7 +1234,7 @@ struct PlaceholderWorkspaceView: View {
         } else if item == .library {
             LibraryWorkspacePanel(appState: appState)
         } else if item == .prompts {
-            PromptsWorkspacePanel(appState: appState, openSettings: openSettings)
+            PromptsWorkspacePanel(appState: appState)
         } else {
             DashboardPanel(
                 title: "下一步规划",
@@ -1835,7 +1832,6 @@ private struct WorkspaceUtilityCard: View {
     @Environment(\.colorScheme) private var colorScheme
     @Bindable var appState: AppState
     let item: SidebarItem
-    let openSettings: () -> Void
     let fixedHeight: CGFloat?
 
     private var palette: DashboardPalette {
@@ -2077,30 +2073,84 @@ private struct WorkspaceUtilityCard: View {
 
     private var promptsUtilityContent: some View {
         VStack(alignment: .leading, spacing: 16) {
-            utilityFeatureCard(
-                eyebrow: "当前模型",
-                title: appState.selectedProvider.title,
-                subtitle: appState.validationMessage,
-                trailing: appState.connectionStatus.label
-            )
+            HStack(alignment: .top, spacing: 12) {
+                utilityFeatureCard(
+                    eyebrow: "当前项目",
+                    title: activeProject?.title ?? "等待选中书籍",
+                    subtitle: promptsProjectCardSubtitle,
+                    trailing: promptsProjectCardTrailing
+                )
+                .frame(maxWidth: .infinity, minHeight: 148, alignment: .topLeading)
 
-            HStack(spacing: 12) {
-                WorkspaceMetricBadge(label: "接口类型", value: appState.selectedProvider.title)
-                WorkspaceMetricBadge(label: "状态", value: appState.connectionStatus.label)
+                utilityFeatureCard(
+                    eyebrow: "当前模型",
+                    title: appState.selectedProvider.title,
+                    subtitle: promptsModelCardSubtitle,
+                    trailing: appState.connectionStatus.label
+                )
+                .frame(maxWidth: .infinity, minHeight: 148, alignment: .topLeading)
+            }
+
+            if let activeProject {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) {
+                        WorkspaceMetricBadge(label: "已保存章节", value: "\(activeProject.savedChapterCount) 章")
+                        WorkspaceMetricBadge(label: "当前章节", value: activeProject.currentChapterSummary)
+                        WorkspaceMetricBadge(label: "状态", value: appState.connectionStatus.label)
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        WorkspaceMetricBadge(label: "已保存章节", value: "\(activeProject.savedChapterCount) 章")
+                        WorkspaceMetricBadge(label: "当前章节", value: activeProject.currentChapterSummary)
+                        WorkspaceMetricBadge(label: "状态", value: appState.connectionStatus.label)
+                    }
+                }
+            } else {
+                HStack(spacing: 12) {
+                    WorkspaceMetricBadge(label: "接口类型", value: appState.selectedProvider.title)
+                    WorkspaceMetricBadge(label: "状态", value: appState.connectionStatus.label)
+                }
             }
 
             WorkspaceChecklist(
-                title: "推荐工作流",
+                title: "这里可以做的事",
                 items: [
-                    "设定补完：补人物、地点与规则细节",
-                    "章节续写：延展当前场景的推进节奏",
-                    "对白润色：统一角色语气和信息密度"
-                ]
+                    "回看当前项目的已保存章节，并逐章切换查看",
+                    "直接修改章节标题和正文，不必先跳回写作台",
+                    "填写润色要求后调用 AI，再决定是否保存回项目"
+                ],
+                compact: true
             )
 
-            Button("打开模型设置", action: openSettings)
-                .buttonStyle(.borderedProminent)
-                .tint(palette.coolAccent)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var promptsProjectCardSubtitle: String {
+        guard let activeProject else {
+            return "先在项目空间或写作台打开一本书，再回来查看已保存章节。"
+        }
+
+        if activeProject.sortedChapterDrafts.isEmpty {
+            return "还没有可润色的已保存章节，先去写作台保存一章。"
+        }
+
+        return "已保存 \(activeProject.sortedChapterDrafts.count) 章，可直接回看、修改和润色。"
+    }
+
+    private var promptsProjectCardTrailing: String {
+        guard let activeProject else { return "未打开" }
+        return activeProject.sortedChapterDrafts.isEmpty ? "待保存" : "\(activeProject.sortedChapterDrafts.count) 章"
+    }
+
+    private var promptsModelCardSubtitle: String {
+        switch appState.connectionStatus {
+        case .ready:
+            return "连接状态正常，可以直接对已保存章节发起 AI 润色。"
+        case .needsAttention:
+            return "先检查 API Key、Base URL 和模型名称，再开始润色。"
+        case .idle:
+            return "模型还没完成校验，建议先确认连接状态再发起润色。"
         }
     }
 
@@ -2115,7 +2165,7 @@ private struct WorkspaceUtilityCard: View {
         case .library:
             return "素材整理"
         case .prompts:
-            return "AI 工作流"
+            return "润色"
         case .home:
             return "工作卡"
         }
@@ -2132,7 +2182,7 @@ private struct WorkspaceUtilityCard: View {
         case .library:
             return "优先补齐对当前创作最有用的人物与世界观资料。"
         case .prompts:
-            return "把模型状态和最常用的写作工作流放在眼前。"
+            return "回看已保存章节，直接修改、润色并保存回项目。"
         case .home:
             return "首页概览。"
         }
@@ -2585,13 +2635,13 @@ private struct LibraryWorkspacePanel: View {
 private struct PromptsWorkspacePanel: View {
     @Environment(\.colorScheme) private var colorScheme
     @Bindable var appState: AppState
-    let openSettings: () -> Void
 
-    @State private var selectedCategory: PromptWorkflowCategory?
-    @State private var selectedWorkflowID: PromptWorkflowKind = .settingExpansion
-    @State private var taskInput = ""
-    @State private var extraRequirements = ""
-    @State private var promptStatusMessage = "提示工作流会只围绕当前打开的项目生成。"
+    @State private var selectedSavedChapterID: ChapterDraft.ID?
+    @State private var editedChapterTitle = ""
+    @State private var editedChapterContent = ""
+    @State private var polishRequirements = ""
+    @State private var polishStatusMessage = "润色页只处理当前项目已经保存过的章节。"
+    @State private var isPolishing = false
 
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
@@ -2601,20 +2651,14 @@ private struct PromptsWorkspacePanel: View {
         appState.activeProject
     }
 
-    private var visibleWorkflows: [PromptWorkflowKind] {
-        let workflows = PromptWorkflowKind.allCases
-        guard let selectedCategory else { return workflows }
-        return workflows.filter { $0.category == selectedCategory }
-    }
-
     var body: some View {
         Group {
             if let project = activeProject {
-                promptsPanel(for: project)
+                polishingPanel(for: project)
             } else {
                 DashboardPanel(
-                    title: "提示工作流",
-                    subtitle: "当前还没有打开的项目。先去项目空间或写作台选中一本书，再让提示词跟着当前项目自动带上下文。"
+                    title: "润色",
+                    subtitle: "当前还没有打开的项目。先去项目空间或写作台选中一本书，再回来查看已保存章节并继续润色。"
                 ) {
                     Button("前往项目空间") {
                         appState.openProjectSpace()
@@ -2625,730 +2669,330 @@ private struct PromptsWorkspacePanel: View {
             }
         }
         .task(id: activeProject?.id) {
-            selectedCategory = nil
-            selectedWorkflowID = PromptWorkflowKind.allCases.first ?? .settingExpansion
-            taskInput = ""
-            extraRequirements = ""
             if let activeProject {
-                promptStatusMessage = "当前只为《\(activeProject.title)》生成提示工作流。"
+                let firstSavedChapter = activeProject.sortedChapterDrafts.first
+                selectedSavedChapterID = firstSavedChapter?.id
+                polishRequirements = ""
+
+                if let firstSavedChapter {
+                    loadEditorState(from: firstSavedChapter)
+                    polishStatusMessage = "已载入《\(firstSavedChapter.chapterSummary)》，可以直接查看和修改。"
+                } else {
+                    editedChapterTitle = ""
+                    editedChapterContent = ""
+                    polishStatusMessage = "当前项目还没有已保存章节。先去写作台保存一章，再回来润色。"
+                }
             } else {
-                promptStatusMessage = "提示工作流会只围绕当前打开的项目生成。"
+                selectedSavedChapterID = nil
+                editedChapterTitle = ""
+                editedChapterContent = ""
+                polishRequirements = ""
+                polishStatusMessage = "润色页只处理当前项目已经保存过的章节。"
             }
         }
-        .onChange(of: selectedCategory) { _, _ in
-            syncSelectedWorkflow()
+        .onChange(of: selectedSavedChapterID) { _, selectedSavedChapterID in
+            guard let activeProject,
+                  let selectedSavedChapterID,
+                  let selectedChapter = activeProject.sortedChapterDrafts.first(where: { $0.id == selectedSavedChapterID })
+            else { return }
+
+            polishRequirements = ""
+            loadEditorState(from: selectedChapter)
+            polishStatusMessage = "已切换到《\(selectedChapter.chapterSummary)》。"
+        }
+        .onChange(of: activeProject?.chapterDrafts) { _, chapterDrafts in
+            syncSelectedSavedChapter(with: chapterDrafts ?? [])
         }
     }
 
-    private func promptsPanel(for project: NovelProject) -> some View {
-        let workflow = selectedWorkflow(for: project)
-
+    private func polishingPanel(for project: NovelProject) -> some View {
         return DashboardPanel(
-            title: "提示工作流",
-            subtitle: "按“规划 / 创作 / 修订”整理常用工作流。左侧选流程，右侧会自动带入当前项目上下文，并给出可直接复制的系统提示词和用户提示词。"
+            title: "润色",
+            subtitle: "这里只处理当前项目《\(project.title)》的已保存章节。你可以再次查看正文、手动修改、调用 AI 润色，并把结果直接保存回项目。"
         ) {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 12) {
                     WorkspaceMetricBadge(label: "当前项目", value: project.title)
-                    WorkspaceMetricBadge(label: "工作流", value: "\(PromptWorkflowKind.allCases.count) 个")
+                    WorkspaceMetricBadge(label: "已保存章节", value: "\(project.savedChapterCount) 章")
                     WorkspaceMetricBadge(label: "模型状态", value: appState.connectionStatus.label)
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
                     WorkspaceMetricBadge(label: "当前项目", value: project.title)
                     HStack(spacing: 12) {
-                        WorkspaceMetricBadge(label: "工作流", value: "\(PromptWorkflowKind.allCases.count) 个")
+                        WorkspaceMetricBadge(label: "已保存章节", value: "\(project.savedChapterCount) 章")
                         WorkspaceMetricBadge(label: "模型状态", value: appState.connectionStatus.label)
                     }
                 }
             }
 
-            promptCategoryRow
+            if project.sortedChapterDrafts.isEmpty {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("当前还没有已保存章节。先去写作台点“AI 拟标题并保存”或更新当前章，再回来继续润色。")
+                        .font(.subheadline)
+                        .foregroundStyle(palette.textSecondary)
+                        .lineSpacing(3)
 
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 24) {
-                    promptWorkflowList(for: project)
-                        .frame(width: 350, alignment: .topLeading)
-
-                    promptWorkflowDetail(workflow, project: project)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                    Button("前往写作台") {
+                        appState.openWritingDesk(for: project.id)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(palette.coolAccent)
                 }
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 24) {
+                        savedChapterList(for: project)
+                            .frame(width: 350, alignment: .topLeading)
 
-                VStack(alignment: .leading, spacing: 24) {
-                    promptWorkflowList(for: project)
-                    promptWorkflowDetail(workflow, project: project)
+                        polishingDetail(for: selectedSavedChapter(in: project), project: project)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+
+                    VStack(alignment: .leading, spacing: 24) {
+                        savedChapterList(for: project)
+                        polishingDetail(for: selectedSavedChapter(in: project), project: project)
+                    }
                 }
             }
 
-            Label(promptStatusMessage, systemImage: "sparkles.rectangle.stack")
+            Label(
+                polishStatusMessage,
+                systemImage: isPolishing ? "wand.and.stars" : "square.and.arrow.down"
+            )
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
     }
 
-    private var promptCategoryRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                LibraryCategoryChip(
-                    title: "全部",
-                    count: PromptWorkflowKind.allCases.count,
-                    isSelected: selectedCategory == nil
-                ) {
-                    selectedCategory = nil
-                }
+    private func savedChapterList(for project: NovelProject) -> some View {
+        return VStack(alignment: .leading, spacing: 16) {
+            Text("已保存章节")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(palette.textPrimary)
 
-                ForEach(PromptWorkflowCategory.allCases) { category in
-                    LibraryCategoryChip(
-                        title: category.title,
-                        count: PromptWorkflowKind.allCases.filter { $0.category == category }.count,
-                        isSelected: selectedCategory == category,
-                        symbolName: category.symbolName
-                    ) {
-                        selectedCategory = category
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(project.sortedChapterDrafts) { chapterDraft in
+                    Button {
+                        selectedSavedChapterID = chapterDraft.id
+                    } label: {
+                        savedChapterRow(
+                            chapterDraft,
+                            isSelected: chapterDraft.id == selectedSavedChapterID
+                        )
                     }
+                    .buttonStyle(.plain)
                 }
             }
             .padding(.vertical, 2)
         }
+        .frame(
+            maxWidth: .infinity,
+            minHeight: 300,
+            alignment: .topLeading
+        )
     }
 
-    private func promptWorkflowList(for project: NovelProject) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(selectedCategory == nil ? "常用流程" : "\(selectedCategory?.title ?? "")流程")
+    private func polishingDetail(for chapterDraft: ChapterDraft?, project: NovelProject) -> some View {
+        return VStack(alignment: .leading, spacing: 16) {
+            if let chapterDraft {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("章节润色")
+                            .font(.title3.weight(.bold))
+                            .foregroundStyle(palette.textPrimary)
+
+                        Text("你可以重新查看《\(chapterDraft.chapterSummary)》，直接修改正文、补充润色要求，再把修改版保存回当前项目。")
+                            .font(.subheadline)
+                            .foregroundStyle(palette.textSecondary)
+                            .lineSpacing(3)
+                    }
+
+                    Spacer()
+
+                    Text("已保存章节")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(palette.coolAccent)
+                }
+
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) {
+                        ProjectChapterPill(label: "当前项目", value: project.title)
+                        ProjectChapterPill(label: "当前章节", value: chapterDraft.chapterSummary)
+                        WorkspaceMetricBadge(label: "字数", value: "\(editedChapterContent.nonWhitespaceCount)")
+                        WorkspaceMetricBadge(label: "保存时间", value: chapterDraft.savedAt)
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        ProjectChapterPill(label: "当前项目", value: project.title)
+                        ProjectChapterPill(label: "当前章节", value: chapterDraft.chapterSummary)
+                        HStack(spacing: 12) {
+                            WorkspaceMetricBadge(label: "字数", value: "\(editedChapterContent.nonWhitespaceCount)")
+                            WorkspaceMetricBadge(label: "保存时间", value: chapterDraft.savedAt)
+                        }
+                    }
+                }
+
+                chapterTitleField
+
+                PromptEditableSurface(
+                    title: "章节正文",
+                    placeholder: "这里会显示已保存章节正文，你可以直接修改、润色再保存。",
+                    minHeight: 320,
+                    text: $editedChapterContent
+                )
+
+                PromptEditableSurface(
+                    title: "润色要求",
+                    placeholder: "例如：保留剧情与信息量，重点收紧句式、增强动作细节和对白张力，不要扩写剧情。",
+                    minHeight: 120,
+                    text: $polishRequirements
+                )
+
+                actionRow(for: chapterDraft, project: project)
+
+                WorkspaceChecklist(
+                    title: "建议操作",
+                    items: [
+                        "先通读已保存章节，再决定是手动改写还是先交给 AI 润色。",
+                        "如果只想调句式和气氛，把限制写进“润色要求”，避免 AI 擅自扩写。",
+                        "AI 润色后先检查人物口吻和事实细节，确认无误再保存回项目。"
+                    ]
+                )
+            } else {
+                Text("点击左侧章节后，这里会加载对应正文，你可以继续修改和润色。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var chapterTitleField: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("章节标题")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(palette.textPrimary)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(visibleWorkflows) { workflow in
-                        Button {
-                            selectedWorkflowID = workflow
-                            promptStatusMessage = "已切换到“\(workflow.title)”工作流。"
-                        } label: {
-                            PromptWorkflowRow(
-                                workflow: workflow,
-                                isSelected: workflow == selectedWorkflow(for: project)
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.vertical, 2)
-            }
-            .frame(minHeight: 300, maxHeight: 520)
+            TextField("例如：雨夜入城", text: $editedChapterTitle)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14, weight: .regular))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .background(
+                    DashboardInsetPanelBackground(cornerRadius: 22, palette: palette)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .strokeBorder(palette.stroke, lineWidth: 1)
+                )
         }
     }
 
-    private func promptWorkflowDetail(_ workflow: PromptWorkflowKind, project: NovelProject) -> some View {
-        let resolvedTask = resolvedTaskInput(for: workflow, project: project)
-        let systemPrompt = workflow.systemPrompt(project: project)
-        let userPrompt = workflow.userPrompt(
-            project: project,
-            task: resolvedTask,
-            extraRequirements: extraRequirements.trimmingCharacters(in: .whitespacesAndNewlines)
-        )
+    @ViewBuilder
+    private func actionRow(for chapterDraft: ChapterDraft, project: NovelProject) -> some View {
+        let hasUnsavedChanges = hasUnsavedChanges(comparedTo: chapterDraft)
 
-        return VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(workflow.title)
-                        .font(.title3.weight(.bold))
-                        .foregroundStyle(palette.textPrimary)
-
-                    Text(workflow.summary)
-                        .font(.subheadline)
-                        .foregroundStyle(palette.textSecondary)
-                        .lineSpacing(3)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                Button("保存修改") {
+                    saveSelectedChapter(for: project, chapterDraft: chapterDraft)
                 }
+                .buttonStyle(.borderedProminent)
+                .tint(palette.coolAccent)
+                .disabled(!hasUnsavedChanges || isPolishing || editedChapterContent.trimmedForWorkspace.isEmpty)
 
-                Spacer()
+                Button(isPolishing ? "润色中…" : "AI 润色") {
+                    polishSelectedChapter(for: project, chapterDraft: chapterDraft)
+                }
+                .buttonStyle(.bordered)
+                .disabled(isPolishing || editedChapterContent.trimmedForWorkspace.isEmpty)
 
-                VStack(alignment: .trailing, spacing: 6) {
-                    Text(workflow.category.title)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(palette.coolAccent)
+                Button("恢复已保存版本") {
+                    loadEditorState(from: chapterDraft)
+                    polishStatusMessage = "已恢复到《\(chapterDraft.chapterSummary)》最近保存版本。"
+                }
+                .buttonStyle(.bordered)
+                .disabled(!hasUnsavedChanges || isPolishing)
 
-                    Text(workflow.outputLabel)
+                Button("载入写作台继续编辑") {
+                    appState.loadChapterDraft(chapterDraft.id, for: project.id)
+                    appState.openWritingDesk(for: project.id)
+                }
+                .buttonStyle(.bordered)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Button("保存修改") {
+                    saveSelectedChapter(for: project, chapterDraft: chapterDraft)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(palette.coolAccent)
+                .disabled(!hasUnsavedChanges || isPolishing || editedChapterContent.trimmedForWorkspace.isEmpty)
+
+                Button(isPolishing ? "润色中…" : "AI 润色") {
+                    polishSelectedChapter(for: project, chapterDraft: chapterDraft)
+                }
+                .buttonStyle(.bordered)
+                .disabled(isPolishing || editedChapterContent.trimmedForWorkspace.isEmpty)
+
+                Button("恢复已保存版本") {
+                    loadEditorState(from: chapterDraft)
+                    polishStatusMessage = "已恢复到《\(chapterDraft.chapterSummary)》最近保存版本。"
+                }
+                .buttonStyle(.bordered)
+                .disabled(!hasUnsavedChanges || isPolishing)
+
+                Button("载入写作台继续编辑") {
+                    appState.loadChapterDraft(chapterDraft.id, for: project.id)
+                    appState.openWritingDesk(for: project.id)
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    private func savedChapterRow(_ chapterDraft: ChapterDraft, isSelected: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Text(String(format: "%02d", chapterDraft.chapterNumber))
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(isSelected ? palette.coolAccent : palette.textSecondary)
+                    .frame(width: 34, height: 34)
+                    .background(
+                        Circle()
+                            .fill(
+                                isSelected
+                                    ? palette.coolAccent.opacity(palette.isDark ? 0.18 : 0.12)
+                                    : palette.panelBase.opacity(palette.isDark ? 0.70 : 0.52)
+                            )
+                    )
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(chapterDraft.chapterTitle)
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(palette.textPrimary)
+                        .lineLimit(1)
+
+                    Text(chapterDraft.previewText)
                         .font(.caption)
                         .foregroundStyle(palette.textSecondary)
-                }
-            }
-
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) {
-                    ProjectChapterPill(label: "当前项目", value: project.title)
-                    ProjectChapterPill(label: "当前章节", value: project.currentChapterSummary)
-                    ProjectChapterPill(label: "工作流目标", value: workflow.goalLabel)
+                        .lineLimit(2)
                 }
 
-                VStack(alignment: .leading, spacing: 10) {
-                    ProjectChapterPill(label: "当前项目", value: project.title)
-                    ProjectChapterPill(label: "当前章节", value: project.currentChapterSummary)
-                    ProjectChapterPill(label: "工作流目标", value: workflow.goalLabel)
-                }
+                Spacer(minLength: 0)
             }
 
-            VStack(alignment: .leading, spacing: 12) {
-                PromptEditableSurface(
-                    title: "本次任务",
-                    placeholder: workflow.focusPlaceholder(for: project),
-                    minHeight: 98,
-                    text: $taskInput
-                )
+            HStack(spacing: 12) {
+                Text(chapterDraft.savedAt)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(palette.textSecondary)
 
-                PromptEditableSurface(
-                    title: "额外要求",
-                    placeholder: workflow.constraintsPlaceholder,
-                    minHeight: 84,
-                    text: $extraRequirements
-                )
+                Spacer(minLength: 0)
+
+                Text("\(chapterDraft.wordCount) 字")
+                    .font(.caption2)
+                    .foregroundStyle(palette.textSecondary)
             }
-
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) {
-                    Button("复制完整工作流") {
-                        copyPromptBundle(systemPrompt: systemPrompt, userPrompt: userPrompt, workflow: workflow)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(palette.coolAccent)
-
-                    Button("复制系统提示词") {
-                        copyText(systemPrompt, message: "已复制“\(workflow.title)”的系统提示词。")
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button("复制用户提示词") {
-                        copyText(userPrompt, message: "已复制“\(workflow.title)”的用户提示词。")
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button("打开模型设置", action: openSettings)
-                        .buttonStyle(.bordered)
-                }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Button("复制完整工作流") {
-                        copyPromptBundle(systemPrompt: systemPrompt, userPrompt: userPrompt, workflow: workflow)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(palette.coolAccent)
-
-                    Button("复制系统提示词") {
-                        copyText(systemPrompt, message: "已复制“\(workflow.title)”的系统提示词。")
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button("复制用户提示词") {
-                        copyText(userPrompt, message: "已复制“\(workflow.title)”的用户提示词。")
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button("打开模型设置", action: openSettings)
-                        .buttonStyle(.bordered)
-                }
-            }
-
-            PromptTextPreviewSurface(
-                title: "系统提示词",
-                text: systemPrompt
-            )
-
-            PromptTextPreviewSurface(
-                title: "用户提示词",
-                text: userPrompt
-            )
-
-            WorkspaceChecklist(
-                title: "使用建议",
-                items: workflow.usageTips
-            )
-        }
-    }
-
-    private func selectedWorkflow(for project: NovelProject) -> PromptWorkflowKind {
-        let visible = visibleWorkflows
-        if visible.contains(selectedWorkflowID) {
-            return selectedWorkflowID
-        }
-
-        return visible.first ?? .settingExpansion
-    }
-
-    private func syncSelectedWorkflow() {
-        guard !visibleWorkflows.isEmpty else { return }
-        if !visibleWorkflows.contains(selectedWorkflowID) {
-            selectedWorkflowID = visibleWorkflows.first ?? .settingExpansion
-        }
-    }
-
-    private func resolvedTaskInput(for workflow: PromptWorkflowKind, project: NovelProject) -> String {
-        let trimmedTask = taskInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmedTask.isEmpty ? workflow.defaultTask(for: project) : trimmedTask
-    }
-
-    private func copyPromptBundle(
-        systemPrompt: String,
-        userPrompt: String,
-        workflow: PromptWorkflowKind
-    ) {
-        let bundle = """
-        系统提示词：
-        \(systemPrompt)
-
-        用户提示词：
-        \(userPrompt)
-        """
-
-        copyText(bundle, message: "已复制“\(workflow.title)”完整工作流。")
-    }
-
-    private func copyText(_ text: String, message: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        promptStatusMessage = message
-    }
-}
-
-private enum PromptWorkflowCategory: String, CaseIterable, Identifiable {
-    case planning
-    case drafting
-    case revision
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .planning:
-            return "规划"
-        case .drafting:
-            return "创作"
-        case .revision:
-            return "修订"
-        }
-    }
-
-    var symbolName: String {
-        switch self {
-        case .planning:
-            return "map"
-        case .drafting:
-            return "square.and.pencil"
-        case .revision:
-            return "wand.and.stars"
-        }
-    }
-}
-
-private enum PromptWorkflowKind: String, CaseIterable, Identifiable {
-    case settingExpansion
-    case worldRuleAudit
-    case chapterAdvance
-    case dialogueRewrite
-    case stylePolish
-    case continuityRepair
-
-    var id: Self { self }
-
-    var category: PromptWorkflowCategory {
-        switch self {
-        case .settingExpansion, .worldRuleAudit:
-            return .planning
-        case .chapterAdvance, .dialogueRewrite:
-            return .drafting
-        case .stylePolish, .continuityRepair:
-            return .revision
-        }
-    }
-
-    var title: String {
-        switch self {
-        case .settingExpansion:
-            return "设定补完"
-        case .worldRuleAudit:
-            return "世界规则校准"
-        case .chapterAdvance:
-            return "章节续写指令"
-        case .dialogueRewrite:
-            return "对白强化"
-        case .stylePolish:
-            return "文风润色"
-        case .continuityRepair:
-            return "一致性修正"
-        }
-    }
-
-    var summary: String {
-        switch self {
-        case .settingExpansion:
-            return "补人物、势力、地点和核心设定细节，适合把模糊想法扩成真正可写的世界。"
-        case .worldRuleAudit:
-            return "检查规则、境界、代价和冲突逻辑是否自洽，避免越写越散。"
-        case .chapterAdvance:
-            return "围绕当前章节目标生成可执行的续写任务，适合直接喂给写作模型。"
-        case .dialogueRewrite:
-            return "强化角色对白区分度、信息密度和情绪张力，但不改剧情事实。"
-        case .stylePolish:
-            return "统一语气、句式和氛围密度，让一段文本更贴近当前项目的整体风格。"
-        case .continuityRepair:
-            return "按大纲、全局记忆和已保存章节排查冲突，适合写崩后拉回正轨。"
-        }
-    }
-
-    var outputLabel: String {
-        switch self {
-        case .settingExpansion:
-            return "输出：设定条目"
-        case .worldRuleAudit:
-            return "输出：规则漏洞与修补"
-        case .chapterAdvance:
-            return "输出：续写提示词"
-        case .dialogueRewrite:
-            return "输出：对白改写"
-        case .stylePolish:
-            return "输出：润色稿"
-        case .continuityRepair:
-            return "输出：冲突清单与修正方案"
-        }
-    }
-
-    var goalLabel: String {
-        switch self {
-        case .settingExpansion:
-            return "补设定"
-        case .worldRuleAudit:
-            return "校规则"
-        case .chapterAdvance:
-            return "推章节"
-        case .dialogueRewrite:
-            return "强对白"
-        case .stylePolish:
-            return "润语言"
-        case .continuityRepair:
-            return "修一致性"
-        }
-    }
-
-    var constraintsPlaceholder: String {
-        switch self {
-        case .settingExpansion:
-            return "例如：不要改题材底色；保留港口悬疑气质；只补足必要细节。"
-        case .worldRuleAudit:
-            return "例如：优先检查境界晋升代价和组织权力链，不要引入新体系。"
-        case .chapterAdvance:
-            return "例如：不要跳章节；必须保留雾港冷湿感；本章结尾只揭一半真相。"
-        case .dialogueRewrite:
-            return "例如：保留原信息顺序；主角说话更克制；反派压迫感更强。"
-        case .stylePolish:
-            return "例如：不要扩剧情；句子更稳一点；压缩重复描述。"
-        case .continuityRepair:
-            return "例如：优先检查人物伤势、地点切换、时间线和伏笔状态。"
-        }
-    }
-
-    var usageTips: [String] {
-        switch self {
-        case .settingExpansion:
-            return [
-                "先把本次要补的对象写进“本次任务”，例如主城势力、功法体系或主角金手指。",
-                "如果不想大改题材方向，把限制写进“额外要求”，避免 AI 擅自发散。",
-                "适合在写作前补空白，也适合写到一半发现设定支撑不足时回填。 "
-            ]
-        case .worldRuleAudit:
-            return [
-                "更适合排查世界规则、境界、代价和权力结构，而不是直接续写正文。",
-                "本次任务里尽量点明你最担心的部分，例如晋升逻辑或阵营制衡。",
-                "拿到结果后，优先把真正确定的部分写回大纲或全局记忆。 "
-            ]
-        case .chapterAdvance:
-            return [
-                "适合把当前章节目标重新压成更清晰的续写任务，再复制给正文模型。",
-                "如果你只想推进某一场戏，把本次任务写成“推进第 X 章的某个场景”。",
-                "额外要求建议写节奏、视角、气氛和不能突破的剧情边界。"
-            ]
-        case .dialogueRewrite:
-            return [
-                "本次任务建议直接写明要重做哪一段对白，或者想强化哪两个人的对话张力。",
-                "适合对白发虚、人物说话像一个人、信息太直白时使用。",
-                "如果只想改口吻不改信息，一定把这个限制写进额外要求。"
-            ]
-        case .stylePolish:
-            return [
-                "适合在已有文本基础上统一语感、节奏和画面密度，而不是推新剧情。",
-                "本次任务里可直接点明要处理的片段或段落功能。",
-                "额外要求建议写清楚要保留的风格锚点，例如冷湿、克制、悬疑回声感。"
-            ]
-        case .continuityRepair:
-            return [
-                "适合章节写乱、人物状态串线、道具或伤势前后不一致时使用。",
-                "本次任务里尽量指出你怀疑冲突的章节、角色或设定。",
-                "结果拿到后，优先更新全局记忆和大纲，再继续往后写。"
-            ]
-        }
-    }
-
-    func focusPlaceholder(for project: NovelProject) -> String {
-        switch self {
-        case .settingExpansion:
-            return "例如：补完《\(project.title)》里主城势力结构、主角金手指限制和修炼资源分配。"
-        case .worldRuleAudit:
-            return "例如：检查《\(project.title)》的境界体系、晋升代价和阵营制衡是否自洽。"
-        case .chapterAdvance:
-            return "例如：为\(project.currentChapterSummary)准备一条可以直接续写的任务提示词。"
-        case .dialogueRewrite:
-            return "例如：强化\(project.currentChapterSummary)里主角与守夜人的试探对白。"
-        case .stylePolish:
-            return "例如：把当前章节尾段润得更稳、更冷、更有回声感。"
-        case .continuityRepair:
-            return "例如：检查当前章与全局记忆、章节目录和伏笔状态有没有冲突。"
-        }
-    }
-
-    func defaultTask(for project: NovelProject) -> String {
-        switch self {
-        case .settingExpansion:
-            return "补完《\(project.title)》里当前最影响写作推进的设定空白。"
-        case .worldRuleAudit:
-            return "检查《\(project.title)》的世界规则、境界体系和势力逻辑是否稳固。"
-        case .chapterAdvance:
-            return "围绕\(project.currentChapterSummary)和“\(project.chapterFocus)”生成一条更清晰的续写任务。"
-        case .dialogueRewrite:
-            return "强化\(project.currentChapterSummary)的对白区分度与信息张力。"
-        case .stylePolish:
-            return "把当前章节相关文本润成更贴近《\(project.title)》整体气质的版本。"
-        case .continuityRepair:
-            return "按大纲、全局记忆和已保存章节检查当前项目的一致性问题。"
-        }
-    }
-
-    func systemPrompt(project: NovelProject) -> String {
-        switch self {
-        case .settingExpansion:
-            return """
-            你是一位擅长中文长篇网文设定策划的编辑。
-            你的任务是补完用户正在创作小说的设定空白，而不是脱离原项目另起炉灶。
-            必须遵守：
-            1. 优先服从用户现有的大纲、全局记忆、题材、人物底色和章节状态。
-            2. 只补最有助于继续写作的设定，避免空泛堆砌。
-            3. 输出要具体，能直接写回项目文档。
-            4. 不要解释推理过程，直接给出设定方案。
-            """
-        case .worldRuleAudit:
-            return """
-            你是一位擅长长篇小说规则校准的设定编辑。
-            你的任务是检查小说世界观、境界、代价和势力逻辑是否自洽，并提出补强方案。
-            必须遵守：
-            1. 不擅自更换题材方向或世界底层规则。
-            2. 优先指出真正会影响后续创作的漏洞。
-            3. 输出要分成“现存问题、风险、建议修补”三层。
-            4. 不要空谈理论，直接围绕当前项目回答。
-            """
-        case .chapterAdvance:
-            return """
-            你是一位擅长中文长篇小说推进的写作策划。
-            你的任务是把用户当前章节的需求压缩成一条更清晰、可执行的续写工作流提示词。
-            必须遵守：
-            1. 严格服从当前章节位置、大纲、全局记忆和特殊要求。
-            2. 不要跳章节，不要偷跑后续重大揭示。
-            3. 输出应直接服务于正文生成。
-            4. 直接给出可复制的结果，不要解释。
-            """
-        case .dialogueRewrite:
-            return """
-            你是一位擅长中文小说对白打磨的编辑。
-            你的任务是重写对白表达，让角色之间更有区分度、张力和潜台词。
-            必须遵守：
-            1. 不改变剧情事实、人物关系和关键信息顺序。
-            2. 让对白更像具体人物在说话，而不是作者解释。
-            3. 需要保留当前项目的气质和世界观约束。
-            4. 直接输出改写方案，不要附加解释。
-            """
-        case .stylePolish:
-            return """
-            你是一位擅长中文长篇小说文风统一的润色编辑。
-            你的任务是根据项目上下文，给出更稳、更顺、更贴风格的润色提示词。
-            必须遵守：
-            1. 不推动新剧情，不新增设定。
-            2. 优先统一句式节奏、氛围密度、动作细节和语气控制。
-            3. 结果要能直接交给润色模型继续执行。
-            4. 直接输出，不要解释。
-            """
-        case .continuityRepair:
-            return """
-            你是一位擅长长篇小说连续性修正的编辑。
-            你的任务是根据大纲、全局记忆和章节目录，排查当前项目的一致性问题并给出修正路径。
-            必须遵守：
-            1. 优先关注人物状态、时间线、地点切换、伤势、道具和伏笔状态。
-            2. 不要凭空发明问题，只指出有依据的冲突。
-            3. 输出应包含“冲突点、影响、修正建议”。
-            4. 直接围绕当前项目回答。
-            """
-        }
-    }
-
-    func userPrompt(project: NovelProject, task: String, extraRequirements: String) -> String {
-        let context = Self.projectContext(for: project)
-        let extra = extraRequirements.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        switch self {
-        case .settingExpansion:
-            return """
-            \(context)
-
-            本次任务：
-            \(task)
-
-            输出要求：
-            1. 请补完最关键的设定空白。
-            2. 按“设定条目 / 作用 / 对后续剧情的帮助”组织回答。
-            3. 能落地就不要空泛。
-            \(Self.extraRequirementsBlock(extra))
-            """
-        case .worldRuleAudit:
-            return """
-            \(context)
-
-            本次任务：
-            \(task)
-
-            输出要求：
-            1. 按“现存问题 / 风险 / 修补建议”输出。
-            2. 优先处理真正会影响后续连载的规则漏洞。
-            3. 若项目已有稳定部分，请明确保留而不是推翻。
-            \(Self.extraRequirementsBlock(extra))
-            """
-        case .chapterAdvance:
-            return """
-            \(context)
-
-            本次任务：
-            \(task)
-
-            输出要求：
-            1. 请给出一条可直接交给正文模型的续写工作流提示词。
-            2. 结果里要明确：开场怎么接、冲突怎么推进、结尾停在什么位置。
-            3. 必须服从当前章节、大纲、全局记忆和特殊要求。
-            \(Self.extraRequirementsBlock(extra))
-            """
-        case .dialogueRewrite:
-            return """
-            \(context)
-
-            本次任务：
-            \(task)
-
-            输出要求：
-            1. 请给出一条适合对白重写的工作流提示词。
-            2. 重点强化人物区分度、潜台词和压迫感，但不改事实信息。
-            3. 如有必要，可提示模型保留哪些信息不能动。
-            \(Self.extraRequirementsBlock(extra))
-            """
-        case .stylePolish:
-            return """
-            \(context)
-
-            本次任务：
-            \(task)
-
-            输出要求：
-            1. 请给出一条适合文风润色的工作流提示词。
-            2. 重点写清楚要保留的叙事气质、节奏密度和禁止改动的边界。
-            3. 结果要能直接复制给润色模型使用。
-            \(Self.extraRequirementsBlock(extra))
-            """
-        case .continuityRepair:
-            return """
-            \(context)
-
-            本次任务：
-            \(task)
-
-            输出要求：
-            1. 请给出一条适合一致性排查与修正的工作流提示词。
-            2. 重点关注人物关系、身份变化、伤势、地点、道具和伏笔状态。
-            3. 结果应让模型先找冲突，再给修正建议，而不是直接乱改。
-            \(Self.extraRequirementsBlock(extra))
-            """
-        }
-    }
-
-    private static func projectContext(for project: NovelProject) -> String {
-        let referenceTitles = project.referenceDocuments
-            .prefix(3)
-            .map(\.title)
-            .joined(separator: "、")
-        let savedChapterTitles = project.sortedChapterDrafts
-            .prefix(4)
-            .map(\.chapterSummary)
-            .joined(separator: "、")
-
-        return """
-        项目名称：\(project.title)
-        类型：\(project.genre)
-        项目摘要：\(normalized(project.summary, fallback: "暂无项目摘要。"))
-        当前章节：\(project.currentChapterSummary)
-        本章目标：\(normalized(project.chapterFocus, fallback: "暂无明确章节目标。"))
-        作品大纲：\(normalized(excerpt(project.outlineText, limit: 600), fallback: "暂无完整大纲。"))
-        全局记忆：\(normalized(excerpt(project.continuityNotes, limit: 900), fallback: "暂无全局记忆。"))
-        特殊要求：\(normalized(project.specialRequirements, fallback: "暂无额外特殊要求。"))
-        字数设定：\(normalized(project.wordTargetText, fallback: "暂无额外字数设定。"))
-        已保存章节：\(savedChapterTitles.isEmpty ? "暂无已保存章节。" : savedChapterTitles)
-        参考资料：\(referenceTitles.isEmpty ? "暂无导入参考资料。" : referenceTitles)
-        """
-    }
-
-    private static func extraRequirementsBlock(_ text: String) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "额外要求：暂无。" }
-        return "额外要求：\(trimmed)"
-    }
-
-    private static func excerpt(_ text: String, limit: Int) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count > limit else { return trimmed }
-        return String(trimmed.prefix(limit)) + "…"
-    }
-
-    private static func normalized(_ text: String, fallback: String) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? fallback : trimmed
-    }
-}
-
-private struct PromptWorkflowRow: View {
-    @Environment(\.colorScheme) private var colorScheme
-    let workflow: PromptWorkflowKind
-    let isSelected: Bool
-
-    private var palette: DashboardPalette {
-        DashboardPalette(colorScheme: colorScheme)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Image(systemName: workflow.category.symbolName)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(isSelected ? palette.coolAccent : palette.textSecondary)
-
-                Text(workflow.title)
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(palette.textPrimary)
-
-                Spacer()
-
-                Text(workflow.category.title)
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(isSelected ? palette.coolAccent : palette.textSecondary)
-            }
-
-            Text(workflow.summary)
-                .font(.caption)
-                .foregroundStyle(palette.textSecondary)
-                .lineLimit(3)
-
-            Text(workflow.outputLabel)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(palette.textSecondary)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -3363,6 +3007,98 @@ private struct PromptWorkflowRow: View {
                     lineWidth: 1
                 )
         )
+    }
+
+    private func selectedSavedChapter(in project: NovelProject) -> ChapterDraft? {
+        if let selectedSavedChapterID,
+           let chapterDraft = project.sortedChapterDrafts.first(where: { $0.id == selectedSavedChapterID }) {
+            return chapterDraft
+        }
+
+        return project.sortedChapterDrafts.first
+    }
+
+    private func syncSelectedSavedChapter(with chapterDrafts: [ChapterDraft]) {
+        let sortedDrafts = chapterDrafts.sorted(by: ChapterDraft.sortDescending)
+
+        guard let selectedSavedChapterID else {
+            self.selectedSavedChapterID = sortedDrafts.first?.id
+            return
+        }
+
+        if sortedDrafts.contains(where: { $0.id == selectedSavedChapterID }) {
+            return
+        }
+
+        self.selectedSavedChapterID = sortedDrafts.first?.id
+    }
+
+    private func loadEditorState(from chapterDraft: ChapterDraft) {
+        editedChapterTitle = chapterDraft.chapterTitle
+        editedChapterContent = chapterDraft.content
+    }
+
+    private func hasUnsavedChanges(comparedTo chapterDraft: ChapterDraft) -> Bool {
+        editedChapterTitle.trimmedForWorkspace != chapterDraft.chapterTitle.trimmedForWorkspace ||
+            editedChapterContent.trimmedForWorkspace != chapterDraft.content.trimmedForWorkspace
+    }
+
+    private func saveSelectedChapter(for project: NovelProject, chapterDraft: ChapterDraft) {
+        guard !editedChapterContent.trimmedForWorkspace.isEmpty else {
+            polishStatusMessage = "章节正文不能为空，暂时无法保存。"
+            return
+        }
+
+        guard let updatedDraft = appState.updateSavedChapterDraft(
+            chapterDraft.id,
+            title: editedChapterTitle,
+            content: editedChapterContent,
+            for: project.id
+        ) else {
+            polishStatusMessage = "保存失败，当前章节可能已经被移除。"
+            return
+        }
+
+        loadEditorState(from: updatedDraft)
+        polishStatusMessage = "已保存《\(updatedDraft.chapterSummary)》。"
+    }
+
+    private func polishSelectedChapter(for project: NovelProject, chapterDraft: ChapterDraft) {
+        let passage = editedChapterContent.trimmedForWorkspace
+        guard !passage.isEmpty else {
+            polishStatusMessage = "当前章节还没有可润色的正文。"
+            return
+        }
+
+        guard let configuration = appState.aiConfiguration else {
+            polishStatusMessage = "模型配置还没有完成，先去设置里填好 API Key、Base URL 和模型名称。"
+            return
+        }
+
+        let additionalInstruction = polishRequirements.trimmedForWorkspace
+        let latestProject = appState.project(for: project.id) ?? project
+
+        isPolishing = true
+        polishStatusMessage = additionalInstruction.isEmpty
+            ? "AI 正在润色《\(chapterDraft.chapterSummary)》…"
+            : "AI 正在按你的要求润色《\(chapterDraft.chapterSummary)》…"
+
+        Task { @MainActor in
+            do {
+                let polished = try await AIWritingService.polishPassage(
+                    configuration: configuration,
+                    project: latestProject,
+                    passage: passage,
+                    additionalInstruction: additionalInstruction
+                )
+                editedChapterContent = polished
+                isPolishing = false
+                polishStatusMessage = "AI 已完成润色，请检查《\(chapterDraft.chapterSummary)》后再保存。"
+            } catch {
+                isPolishing = false
+                polishStatusMessage = "润色失败：\(error.localizedDescription)"
+            }
+        }
     }
 }
 
@@ -3405,42 +3141,6 @@ private struct PromptEditableSurface: View {
                             .allowsHitTesting(false)
                     }
                 }
-        }
-    }
-}
-
-private struct PromptTextPreviewSurface: View {
-    @Environment(\.colorScheme) private var colorScheme
-    let title: String
-    let text: String
-
-    private var palette: DashboardPalette {
-        DashboardPalette(colorScheme: colorScheme)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(palette.textPrimary)
-
-            ScrollView {
-                Text(text)
-                    .font(.system(size: 13, weight: .regular, design: .monospaced))
-                    .foregroundStyle(palette.textPrimary)
-                    .textSelection(.enabled)
-                    .lineSpacing(4)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .padding(18)
-            }
-            .frame(minHeight: 180)
-            .background(
-                DashboardInsetPanelBackground(cornerRadius: 22, palette: palette)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .strokeBorder(palette.stroke, lineWidth: 1)
-            )
         }
     }
 }
@@ -4100,5 +3800,17 @@ private struct HeroMinYPreferenceKey: PreferenceKey {
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
+    }
+}
+
+private extension String {
+    var trimmedForWorkspace: String {
+        trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var nonWhitespaceCount: Int {
+        unicodeScalars
+            .filter { !$0.properties.isWhitespace }
+            .count
     }
 }
