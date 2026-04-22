@@ -112,25 +112,6 @@ enum AIWritingService {
         )
     }
 
-    static func polishPassage(
-        configuration: AIConnectionConfiguration,
-        project: NovelProject,
-        passage: String,
-        additionalInstruction: String
-    ) async throws -> String {
-        try await completeText(
-            configuration: configuration,
-            systemPrompt: polishSystemPrompt,
-            userPrompt: polishUserPrompt(
-                project: project,
-                passage: passage,
-                additionalInstruction: additionalInstruction
-            ),
-            temperature: 0.65,
-            maxTokens: 1400
-        )
-    }
-
     static func suggestChapterTitle(
         configuration: AIConnectionConfiguration,
         project: NovelProject,
@@ -236,17 +217,8 @@ enum AIWritingService {
     2. 优先承接上一已保存章节结尾与当前章节既定目标，保持节奏、句式和情绪连续。
     3. 只输出可直接接在正文后的小说内容，不要解释，不要列提纲，不要加标题。
     4. 如果参考文本与当前项目冲突，以当前项目摘要、大纲、全局记忆和已有正文为准。
-    5. 保持长篇创作连续性，避免突然跳到未来情节或重复已写内容。
-    """
-
-    private static let polishSystemPrompt = """
-    你是一位擅长中文小说润色的写作助手。
-    你的任务是润色用户给出的现有正文片段，而不是续写新剧情。
-    必须遵守：
-    1. 不改变事件顺序、叙事视角、角色关系和核心信息。
-    2. 优先优化句式、节奏、氛围、动作细节和对白张力。
-    3. 保持人物口吻、世界观规则和长篇整体气质一致。
-    4. 只输出润色后的正文内容，不要解释，不要对比，不要附加说明。
+    5. 根据项目规模控制叙事：短篇要集中闭环，中篇要稳住阶段推进，长篇要维护分卷延展、长期伏笔和人物长期状态。
+    6. 保持连续性，避免突然跳到未来情节、提前透支长期真相或重复已写内容。
     """
 
     private static let outlineSummarySystemPrompt = """
@@ -277,7 +249,7 @@ enum AIWritingService {
     世界状态：
     未回收伏笔：
     4. 每个小节使用 1 到 4 条以“- ”开头的短句；如果没有明确变化，就写“- 暂无明确变化”或“- 暂无新增”。
-    5. 输出内容要能直接拿去做正文生成、润色、断点恢复和一致性修正。
+    5. 输出内容要能直接拿去做正文生成、断点恢复和一致性修正。
     6. 只输出全局记忆，不要解释。
     """
 
@@ -297,7 +269,7 @@ enum AIWritingService {
     必须遵守：
     1. 优先服从用户已经明确写出的总体流程、世界观、主角底色、预期字数和结局偏好。
     2. 若信息不足，只做最小必要补全，不要擅自改变题材方向、人物底色或结局倾向。
-    3. 输出要服务于长篇连载创作，尽量明确阶段推进、冲突升级、爽点释放和伏笔回收。
+    3. 输出要服务于当前创作规模：短篇强调闭环，中篇强调阶段推进，长篇强调分卷、长期冲突和多层伏笔回收。
     4. 不要解释提示词结构，不要写“根据你的要求”，直接输出中文大纲正文。
     5. 请按以下结构输出：作品定位、总纲主线、阶段/分卷推进、核心人物与关系、关键事件与伏笔、结局落点。
     6. 请根据预期字数控制规模，字数越长，阶段规划和伏笔层级应越完整。
@@ -329,12 +301,28 @@ enum AIWritingService {
             .prefix(3)
             .map(\.chapterSummary)
             .joined(separator: "、")
+        let volumePlan = normalized(
+            project.volumePlanNotes,
+            fallback: project.storyLength.supportsVolumePlanning
+                ? "当前还没有明确分卷规划，请至少先写清本卷目标、卷末回收点和下一卷的升级方向。"
+                : "当前项目不以分卷规划为主。"
+        )
+        let activeThreads = normalized(
+            project.activeThreadsNotes,
+            fallback: project.storyLength.supportsThreadTracking
+                ? "当前还没有整理在途线索，请至少明确主线、关系线和最近必须推进的伏笔线。"
+                : "当前项目以单次闭环为主，不强调多线并行。"
+        )
 
         return """
         项目名称：\(project.title)
         类型：\(project.genre)
+        创作规模：\(project.storyLength.title)
         项目摘要：\(project.summary)
         当前进度：已创作 \(project.writtenChapters) 章
+
+        规模要求：
+        \(project.storyLength.promptDirective)
 
         当前章节：\(project.currentChapterSummary)
         本章目标：\(project.chapterFocus)
@@ -348,6 +336,12 @@ enum AIWritingService {
 
         作品大纲：
         \(normalized(project.outlineText, fallback: "暂无大纲，请依据项目摘要和当前章节目标稳步推进。"))
+
+        分卷/阶段规划：
+        \(volumePlan)
+
+        在途线索：
+        \(activeThreads)
 
         手动参考文本：
         \(normalized(project.referenceContextText, fallback: "暂无手动补充的参考文本。"))
@@ -376,60 +370,12 @@ enum AIWritingService {
         输出要求：
         \(length.instruction)
         必须保持与当前章节位置、角色口吻、时间线状态和伏笔进度一致。
+        \(project.storyLength.continuityDirective)
         如果提供了上一章节缓存，请优先承接缓存区里的最后一句、段落节奏和场景状态，但不要重复复述上一章已经写出的动作、对白、心理或信息。
         开场两段避免重复解释既有设定、人物关系和刚刚发生过的事件，默认读者记得上一章。
         每次续写至少推进一个新的情节拍点、关系变化或信息增量，不要用改写前文来充字数。
         若需承上启下，请用新的动作、冲突、观察或结果进入当前章节，而不是复述上一章摘要。
         请直接输出续写后的正文。
-        """
-    }
-
-    private static func polishUserPrompt(
-        project: NovelProject,
-        passage: String,
-        additionalInstruction: String
-    ) -> String {
-        let references = project.referenceDocuments
-            .prefix(3)
-            .map { document in
-                "参考《\(document.title)》：\n\(excerpt(from: document.content, limit: 900))"
-            }
-            .joined(separator: "\n\n")
-
-        return """
-        项目名称：\(project.title)
-        类型：\(project.genre)
-        当前章节：\(project.currentChapterSummary)
-        本章目标：\(project.chapterFocus)
-
-        作品大纲：
-        \(normalized(project.outlineText, fallback: "暂无大纲。"))
-
-        全局记忆：
-        \(normalized(project.continuityNotes, fallback: "暂无全局记忆，请保持原文气质与视角。"))
-
-        手动参考文本：
-        \(normalized(project.referenceContextText, fallback: "暂无手动参考文本。"))
-
-        导入参考文本：
-        \(normalized(references, fallback: "暂无导入参考文本。"))
-
-        特殊要求：
-        \(normalized(project.specialRequirements, fallback: "以统一语气、增强流畅度为主。"))
-
-        字数设定：
-        \(normalized(project.wordTargetText, fallback: "润色时保持段落体量稳定，不额外扩写。"))
-
-        本次润色要求：
-        \(normalized(additionalInstruction, fallback: "若无额外指定，请优先优化流畅度、节奏、氛围和动作细节，但不要改变剧情与信息。"))
-
-        待润色正文：
-        \(normalized(passage, fallback: "暂无可润色文本。"))
-
-        输出要求：
-        在不改剧情走向和核心信息的前提下，让文字更顺、更稳、更贴近当前项目风格。
-        如果用户额外写了润色要求，请优先满足；若与既有设定冲突，以正文事实和项目设定为准。
-        请直接输出润色后的正文。
         """
     }
 
@@ -444,6 +390,7 @@ enum AIWritingService {
         return """
         项目名称：\(project.title)
         类型：\(project.genre)
+        创作规模：\(project.storyLength.title)
         项目摘要：\(project.summary)
         当前进度：已创作 \(project.writtenChapters) 章
         当前章节：\(project.currentChapterSummary)
@@ -464,6 +411,12 @@ enum AIWritingService {
         伏笔与回收记录：
         \(normalized(project.foreshadowNotes, fallback: "暂无伏笔回收记录。"))
 
+        分卷/阶段规划：
+        \(normalized(project.volumePlanNotes, fallback: project.storyLength.supportsVolumePlanning ? "暂无分卷规划。" : "当前项目不以分卷规划为主。"))
+
+        在途线索：
+        \(normalized(project.activeThreadsNotes, fallback: project.storyLength.supportsThreadTracking ? "暂无在途线索整理。" : "当前项目以单次闭环为主。"))
+
         全局记忆：
         \(normalized(project.continuityNotes, fallback: "暂无全局记忆。"))
 
@@ -475,6 +428,7 @@ enum AIWritingService {
 
         输出要求：
         请针对这一部小说，给出适合继续完善章节树的总结。
+        结论要符合当前创作规模：\(project.storyLength.outlineDirective)
         每个小节 2 到 4 句，尽量具体，不要空泛。
         """
     }
@@ -483,6 +437,7 @@ enum AIWritingService {
         """
         项目名称：\(project.title)
         类型：\(project.genre)
+        创作规模：\(project.storyLength.title)
         当前章节编号：\(project.currentChapterLabel)
         当前章节标题参考：\(normalized(project.currentChapterTitle, fallback: "暂无"))
         本章目标：\(project.chapterFocus)
@@ -511,9 +466,16 @@ enum AIWritingService {
         """
         项目名称：\(project.title)
         类型：\(project.genre)
+        创作规模：\(project.storyLength.title)
         项目摘要：\(normalized(project.summary, fallback: "暂无项目摘要。"))
         现有大纲参考：
         \(normalized(project.outlineText, fallback: "暂无现成大纲，请从零开始生成。"))
+
+        规模要求：
+        \(project.storyLength.outlineDirective)
+
+        分卷/阶段规划：
+        \(normalized(project.volumePlanNotes, fallback: project.storyLength.supportsVolumePlanning ? "暂无分卷规划，请按当前规模补足。" : "当前项目不以分卷规划为主。"))
 
         请将以下信息按 4 组理解并据此生成小说大纲：
 
@@ -553,6 +515,7 @@ enum AIWritingService {
         """
         项目名称：\(project.title)
         类型：\(project.genre)
+        创作规模：\(project.storyLength.title)
         项目摘要：\(normalized(project.summary, fallback: "暂无项目摘要。"))
         当前保存章节：\(chapterDraft.chapterSummary)
         当前创作进度：已创作 \(project.writtenChapters) 章
@@ -575,6 +538,12 @@ enum AIWritingService {
         伏笔与回收记录：
         \(normalized(project.foreshadowNotes, fallback: "暂无伏笔回收记录。"))
 
+        分卷/阶段规划：
+        \(normalized(project.volumePlanNotes, fallback: project.storyLength.supportsVolumePlanning ? "暂无分卷规划。" : "当前项目不以分卷规划为主。"))
+
+        在途线索：
+        \(normalized(project.activeThreadsNotes, fallback: project.storyLength.supportsThreadTracking ? "暂无在途线索整理。" : "当前项目以单次闭环为主。"))
+
         章节树总结：
         \(normalized(project.outlineSummary, fallback: "暂无章节树总结。"))
 
@@ -583,6 +552,7 @@ enum AIWritingService {
 
         输出要求：
         请把这次章节保存后，后续创作真正需要记住的长期信息整理出来。
+        \(project.storyLength.continuityDirective)
         重点覆盖：前文发生过什么、人物关系、身份变化、伤势、阵营、地点、道具、世界状态、尚未回收的伏笔。
         """
     }

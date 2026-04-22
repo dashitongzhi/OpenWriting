@@ -47,7 +47,7 @@ struct AppRootView: View {
             }
 
             Section {
-                sidebarRows([.library, .prompts])
+                sidebarRows([.library])
             } header: {
                 SidebarSectionHeader(title: "创作资源")
             }
@@ -94,7 +94,7 @@ struct AppRootView: View {
             HomeDashboardView(appState: appState, openSettings: openSettings)
         case .writingDesk:
             WritingDeskView(appState: appState, openSettings: openSettings)
-        case .projects, .outline, .library, .prompts:
+        case .projects, .outline, .library:
             PlaceholderWorkspaceView(item: appState.selectedSidebarItem, appState: appState)
         }
     }
@@ -770,7 +770,6 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case writingDesk
     case outline
     case library
-    case prompts
 
     var id: Self { self }
 
@@ -786,8 +785,6 @@ enum SidebarItem: String, CaseIterable, Identifiable {
             return "章节树"
         case .library:
             return "素材库"
-        case .prompts:
-            return "润色"
         }
     }
 
@@ -803,8 +800,6 @@ enum SidebarItem: String, CaseIterable, Identifiable {
             return "list.bullet.rectangle.portrait"
         case .library:
             return "books.vertical"
-        case .prompts:
-            return "sparkles.rectangle.stack"
         }
     }
 
@@ -820,8 +815,6 @@ enum SidebarItem: String, CaseIterable, Identifiable {
             return "这里会放章节树、场景卡片和剧情推进视图。"
         case .library:
             return "这里会集中管理人物、地点、组织和世界观素材。"
-        case .prompts:
-            return "这里会回看已保存章节，支持修改、润色和保存定稿。"
         }
     }
 }

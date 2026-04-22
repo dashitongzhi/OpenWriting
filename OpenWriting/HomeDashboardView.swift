@@ -64,8 +64,8 @@ struct HomeDashboardView: View {
             }
         }
         .sheet(isPresented: $isNewProjectSheetPresented) {
-            NewProjectSheet { title in
-                appState.createProject(named: title)
+            NewProjectSheet { title, length in
+                appState.createProject(named: title, length: length)
             }
         }
         .fileImporter(
@@ -140,7 +140,7 @@ struct HomeDashboardView: View {
                 .lineSpacing(4)
 
             HStack(spacing: 12) {
-                Button("新建长篇项目", action: presentNewProjectSheet)
+                Button("新建小说项目", action: presentNewProjectSheet)
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .tint(palette.coolAccent)
@@ -570,8 +570,6 @@ struct HomeDashboardView: View {
                         appState.openWritingDesk()
                     case .outline:
                         appState.openOutline()
-                    case .prompts:
-                        appState.openPrompts()
                     case .library:
                         appState.openLibrary()
                     case .home:
@@ -1105,8 +1103,8 @@ struct PlaceholderWorkspaceView: View {
             }
         }
         .sheet(isPresented: $isNewProjectSheetPresented) {
-            NewProjectSheet { title in
-                appState.createProject(named: title)
+            NewProjectSheet { title, length in
+                appState.createProject(named: title, length: length)
             }
         }
     }
@@ -1233,8 +1231,6 @@ struct PlaceholderWorkspaceView: View {
             OutlineWorkspacePanel(appState: appState)
         } else if item == .library {
             LibraryWorkspacePanel(appState: appState)
-        } else if item == .prompts {
-            PromptsWorkspacePanel(appState: appState)
         } else {
             DashboardPanel(
                 title: "下一步规划",
@@ -1293,9 +1289,21 @@ private struct CurrentProjectSnapshotCard: View {
                             .font(.title3.weight(.bold))
                             .foregroundStyle(palette.textPrimary)
 
-                        Text(project.genre)
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(palette.coolAccent)
+                        HStack(spacing: 8) {
+                            Text(project.genre)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(palette.coolAccent)
+
+                            Text(project.storyLengthTitle)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(palette.textPrimary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(
+                                    Capsule(style: .continuous)
+                                        .fill(palette.panelBase.opacity(palette.isDark ? 0.88 : 0.72))
+                                )
+                        }
                     }
 
                     Text(project.summary)
@@ -1855,8 +1863,6 @@ private struct WorkspaceUtilityCard: View {
                 outlineUtilityContent
             case .library:
                 libraryUtilityContent
-            case .prompts:
-                promptsUtilityContent
             case .home:
                 EmptyView()
             }
@@ -2071,109 +2077,6 @@ private struct WorkspaceUtilityCard: View {
         }
     }
 
-    private var promptsUtilityContent: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 12) {
-                    utilityFeatureCard(
-                        eyebrow: "当前项目",
-                        title: activeProject?.title ?? "等待选中书籍",
-                        subtitle: promptsProjectCardSubtitle,
-                        trailing: promptsProjectCardTrailing
-                    )
-                    .frame(maxWidth: .infinity, minHeight: 148, alignment: .topLeading)
-
-                    utilityFeatureCard(
-                        eyebrow: "当前模型",
-                        title: appState.selectedProvider.title,
-                        subtitle: promptsModelCardSubtitle,
-                        trailing: appState.connectionStatus.label
-                    )
-                    .frame(maxWidth: .infinity, minHeight: 148, alignment: .topLeading)
-                }
-
-                VStack(alignment: .leading, spacing: 12) {
-                    utilityFeatureCard(
-                        eyebrow: "当前项目",
-                        title: activeProject?.title ?? "等待选中书籍",
-                        subtitle: promptsProjectCardSubtitle,
-                        trailing: promptsProjectCardTrailing
-                    )
-                    .frame(maxWidth: .infinity, minHeight: 148, alignment: .topLeading)
-
-                    utilityFeatureCard(
-                        eyebrow: "当前模型",
-                        title: appState.selectedProvider.title,
-                        subtitle: promptsModelCardSubtitle,
-                        trailing: appState.connectionStatus.label
-                    )
-                    .frame(maxWidth: .infinity, minHeight: 148, alignment: .topLeading)
-                }
-            }
-
-            if let activeProject {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 12) {
-                        WorkspaceMetricBadge(label: "已保存章节", value: "\(activeProject.savedChapterCount) 章")
-                        WorkspaceMetricBadge(label: "当前章节", value: activeProject.currentChapterSummary)
-                        WorkspaceMetricBadge(label: "状态", value: appState.connectionStatus.label)
-                    }
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        WorkspaceMetricBadge(label: "已保存章节", value: "\(activeProject.savedChapterCount) 章")
-                        WorkspaceMetricBadge(label: "当前章节", value: activeProject.currentChapterSummary)
-                        WorkspaceMetricBadge(label: "状态", value: appState.connectionStatus.label)
-                    }
-                }
-            } else {
-                HStack(spacing: 12) {
-                    WorkspaceMetricBadge(label: "接口类型", value: appState.selectedProvider.title)
-                    WorkspaceMetricBadge(label: "状态", value: appState.connectionStatus.label)
-                }
-            }
-
-            WorkspaceChecklist(
-                title: "这里可以做的事",
-                items: [
-                    "回看当前项目的已保存章节，并逐章切换查看",
-                    "直接修改章节标题和正文，不必先跳回写作台",
-                    "填写润色要求后调用 AI，再决定是否保存回项目"
-                ],
-                compact: true
-            )
-
-            Spacer(minLength: 0)
-        }
-    }
-
-    private var promptsProjectCardSubtitle: String {
-        guard let activeProject else {
-            return "先在项目空间或写作台打开一本书，再回来查看已保存章节。"
-        }
-
-        if activeProject.sortedChapterDrafts.isEmpty {
-            return "还没有可润色的已保存章节，先去写作台保存一章。"
-        }
-
-        return "已保存 \(activeProject.sortedChapterDrafts.count) 章，可直接回看、修改和润色。"
-    }
-
-    private var promptsProjectCardTrailing: String {
-        guard let activeProject else { return "未打开" }
-        return activeProject.sortedChapterDrafts.isEmpty ? "待保存" : "\(activeProject.sortedChapterDrafts.count) 章"
-    }
-
-    private var promptsModelCardSubtitle: String {
-        switch appState.connectionStatus {
-        case .ready:
-            return "连接状态正常，可以直接对已保存章节发起 AI 润色。"
-        case .needsAttention:
-            return "先检查 API Key、Base URL 和模型名称，再开始润色。"
-        case .idle:
-            return "模型还没完成校验，建议先确认连接状态再发起润色。"
-        }
-    }
-
     private var itemUtilityTitle: String {
         switch item {
         case .projects:
@@ -2184,8 +2087,6 @@ private struct WorkspaceUtilityCard: View {
             return "结构导航"
         case .library:
             return "素材整理"
-        case .prompts:
-            return "润色"
         case .home:
             return "工作卡"
         }
@@ -2201,8 +2102,6 @@ private struct WorkspaceUtilityCard: View {
             return "快速看结构分布、章节推进和回收节点。"
         case .library:
             return "优先补齐对当前创作最有用的人物与世界观资料。"
-        case .prompts:
-            return "回看已保存章节，直接修改、润色并保存回项目。"
         case .home:
             return "首页概览。"
         }
@@ -2260,6 +2159,7 @@ private struct WorkspaceUtilityCard: View {
 private struct ProjectsWorkspacePanel: View {
     @Environment(\.colorScheme) private var colorScheme
     @Bindable var appState: AppState
+    @State private var pendingDeletionProject: NovelProject?
 
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
@@ -2280,17 +2180,45 @@ private struct ProjectsWorkspacePanel: View {
                 }
 
                 ForEach(appState.recentProjects) { project in
-                    Button {
-                        appState.selectProject(project.id)
-                    } label: {
-                        ProjectSpaceProjectRow(
-                            project: project,
-                            isSelected: appState.selectedProjectID == project.id
-                        )
-                    }
-                    .buttonStyle(.plain)
+                    ProjectSpaceProjectRow(
+                        project: project,
+                        isSelected: appState.selectedProjectID == project.id,
+                        onSelect: {
+                            appState.selectProject(project.id)
+                        },
+                        onDelete: {
+                            pendingDeletionProject = project
+                        }
+                    )
                     .id(project.id)
                 }
+            }
+        }
+        .confirmationDialog(
+            "删除项目",
+            isPresented: Binding(
+                get: { pendingDeletionProject != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        pendingDeletionProject = nil
+                    }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let pendingDeletionProject {
+                Button("删除《\(pendingDeletionProject.title)》", role: .destructive) {
+                    appState.deleteProject(pendingDeletionProject.id)
+                    self.pendingDeletionProject = nil
+                }
+            }
+
+            Button("取消", role: .cancel) {
+                pendingDeletionProject = nil
+            }
+        } message: {
+            if let pendingDeletionProject {
+                Text("《\(pendingDeletionProject.title)》会从当前账号下的项目列表中移除，章节草稿、素材库和结构记录也会一起删除。")
             }
         }
     }
@@ -2652,712 +2580,6 @@ private struct LibraryWorkspacePanel: View {
     }
 }
 
-private struct PromptsWorkspacePanel: View {
-    @Environment(\.colorScheme) private var colorScheme
-    @Bindable var appState: AppState
-
-    @State private var selectedSavedChapterID: ChapterDraft.ID?
-    @State private var selectedPolishPlan: PolishReferencePlan = .sentenceTightening
-    @State private var editedChapterTitle = ""
-    @State private var editedChapterContent = ""
-    @State private var polishRequirements = ""
-    @State private var polishStatusMessage = "润色页只处理当前项目已经保存过的章节。"
-    @State private var isPolishing = false
-
-    private var palette: DashboardPalette {
-        DashboardPalette(colorScheme: colorScheme)
-    }
-
-    private var activeProject: NovelProject? {
-        appState.activeProject
-    }
-
-    var body: some View {
-        Group {
-            if let project = activeProject {
-                polishingPanel(for: project)
-            } else {
-                DashboardPanel(
-                    title: "润色",
-                    subtitle: "当前还没有打开的项目。先去项目空间或写作台选中一本书，再回来查看已保存章节并继续润色。"
-                ) {
-                    Button("前往项目空间") {
-                        appState.openProjectSpace()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(palette.coolAccent)
-                }
-            }
-        }
-        .task(id: activeProject?.id) {
-            if let activeProject {
-                let firstSavedChapter = activeProject.sortedChapterDrafts.first
-                selectedSavedChapterID = firstSavedChapter?.id
-                selectedPolishPlan = .sentenceTightening
-                polishRequirements = ""
-
-                if let firstSavedChapter {
-                    loadEditorState(from: firstSavedChapter)
-                    polishStatusMessage = "已载入《\(firstSavedChapter.chapterSummary)》，可以直接查看和修改。"
-                } else {
-                    editedChapterTitle = ""
-                    editedChapterContent = ""
-                    polishStatusMessage = "当前项目还没有已保存章节。先去写作台保存一章，再回来润色。"
-                }
-            } else {
-                selectedSavedChapterID = nil
-                editedChapterTitle = ""
-                editedChapterContent = ""
-                polishRequirements = ""
-                polishStatusMessage = "润色页只处理当前项目已经保存过的章节。"
-            }
-        }
-        .onChange(of: selectedSavedChapterID) { _, selectedSavedChapterID in
-            guard let activeProject,
-                  let selectedSavedChapterID,
-                  let selectedChapter = activeProject.sortedChapterDrafts.first(where: { $0.id == selectedSavedChapterID })
-            else { return }
-
-            polishRequirements = ""
-            loadEditorState(from: selectedChapter)
-            polishStatusMessage = "已切换到《\(selectedChapter.chapterSummary)》。"
-        }
-        .onChange(of: activeProject?.chapterDrafts) { _, chapterDrafts in
-            syncSelectedSavedChapter(with: chapterDrafts ?? [])
-        }
-    }
-
-    private func polishingPanel(for project: NovelProject) -> some View {
-        return DashboardPanel(
-            title: "润色",
-            subtitle: "这里只处理当前项目《\(project.title)》的已保存章节。你可以再次查看正文、手动修改、调用 AI 润色，并把结果直接保存回项目。"
-        ) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 12) {
-                    WorkspaceMetricBadge(label: "当前项目", value: project.title)
-                    WorkspaceMetricBadge(label: "已保存章节", value: "\(project.savedChapterCount) 章")
-                }
-
-                WorkspaceMetricBadge(label: "模型状态", value: appState.connectionStatus.label)
-            }
-
-            if project.sortedChapterDrafts.isEmpty {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("当前还没有已保存章节。先去写作台点“AI 拟标题并保存”或更新当前章，再回来继续润色。")
-                        .font(.subheadline)
-                        .foregroundStyle(palette.textSecondary)
-                        .lineSpacing(3)
-
-                    Button("前往写作台") {
-                        appState.openWritingDesk(for: project.id)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(palette.coolAccent)
-                }
-            } else {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: 24) {
-                        savedChapterList(for: project)
-                            .frame(width: 350, alignment: .topLeading)
-
-                        polishingDetail(for: selectedSavedChapter(in: project), project: project)
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
-                    }
-
-                    VStack(alignment: .leading, spacing: 24) {
-                        savedChapterList(for: project)
-                        polishingDetail(for: selectedSavedChapter(in: project), project: project)
-                    }
-                }
-            }
-
-            Label(
-                polishStatusMessage,
-                systemImage: isPolishing ? "wand.and.stars" : "square.and.arrow.down"
-            )
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private func savedChapterList(for project: NovelProject) -> some View {
-        return VStack(alignment: .leading, spacing: 16) {
-            Text("已保存章节")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(palette.textPrimary)
-
-            VStack(alignment: .leading, spacing: 12) {
-                ForEach(project.sortedChapterDrafts) { chapterDraft in
-                    Button {
-                        selectedSavedChapterID = chapterDraft.id
-                    } label: {
-                        savedChapterRow(
-                            chapterDraft,
-                            isSelected: chapterDraft.id == selectedSavedChapterID
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.vertical, 2)
-        }
-        .frame(
-            maxWidth: .infinity,
-            minHeight: 300,
-            alignment: .topLeading
-        )
-    }
-
-    private func polishingDetail(for chapterDraft: ChapterDraft?, project: NovelProject) -> some View {
-        return VStack(alignment: .leading, spacing: 16) {
-            if let chapterDraft {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("章节润色")
-                            .font(.title3.weight(.bold))
-                            .foregroundStyle(palette.textPrimary)
-
-                        Text("你可以重新查看《\(chapterDraft.chapterSummary)》，直接修改正文、补充润色要求，再把修改版保存回当前项目。")
-                            .font(.subheadline)
-                            .foregroundStyle(palette.textSecondary)
-                            .lineSpacing(3)
-                    }
-
-                    Spacer()
-
-                    Text("已保存章节")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(palette.coolAccent)
-                }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 12) {
-                        ProjectChapterPill(label: "当前项目", value: project.title)
-                        ProjectChapterPill(label: "当前章节", value: chapterDraft.chapterSummary)
-                    }
-
-                    HStack(spacing: 12) {
-                        WorkspaceMetricBadge(label: "字数", value: "\(editedChapterContent.nonWhitespaceCount)")
-                        WorkspaceMetricBadge(label: "保存时间", value: chapterDraft.savedAt)
-                    }
-                }
-
-                chapterTitleField
-
-                PromptEditableSurface(
-                    title: "章节正文",
-                    placeholder: "这里会显示已保存章节正文，你可以直接修改、润色再保存。",
-                    minHeight: 320,
-                    text: $editedChapterContent
-                )
-
-                polishReferenceSection
-
-                PromptEditableSurface(
-                    title: "自定义润色要求",
-                    placeholder: "例如：保留剧情与信息量，重点收紧句式、增强动作细节和对白张力，不要扩写剧情。",
-                    minHeight: 120,
-                    text: $polishRequirements
-                )
-
-                actionRow(for: chapterDraft, project: project)
-
-                WorkspaceChecklist(
-                    title: "建议操作",
-                    items: [
-                        "先通读已保存章节，再决定是手动改写还是先交给 AI 润色。",
-                        "如果只想调句式和气氛，把限制写进“润色要求”，避免 AI 擅自扩写。",
-                        "AI 润色后先检查人物口吻和事实细节，确认无误再保存回项目。"
-                    ]
-                )
-            } else {
-                Text("点击左侧章节后，这里会加载对应正文，你可以继续修改和润色。")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var polishReferenceSection: some View {
-        let plans = PolishReferencePlan.allCases
-        let firstRow = Array(plans.prefix(2))
-        let secondRow = Array(plans.dropFirst(2))
-
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text("润色参考方案")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(palette.textPrimary)
-
-                Spacer()
-
-                Text("当前：\(selectedPolishPlan.title)")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(palette.coolAccent)
-            }
-
-            ViewThatFits(in: .horizontal) {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(alignment: .top, spacing: 12) {
-                        ForEach(firstRow) { plan in
-                            polishReferenceCard(for: plan)
-                        }
-                    }
-
-                    HStack(alignment: .top, spacing: 12) {
-                        ForEach(secondRow) { plan in
-                            polishReferenceCard(for: plan)
-                        }
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(plans) { plan in
-                        polishReferenceCard(for: plan)
-                    }
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("方案说明")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(palette.textSecondary)
-
-                Text(selectedPolishPlan.suggestedInstruction)
-                    .font(.subheadline)
-                    .foregroundStyle(palette.textPrimary)
-                    .lineSpacing(3)
-
-                Text("下方“自定义润色要求”会和当前方案一起提交给 AI。")
-                    .font(.caption)
-                    .foregroundStyle(palette.textSecondary)
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                DashboardInsetPanelBackground(cornerRadius: 22, palette: palette)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .strokeBorder(palette.stroke, lineWidth: 1)
-            )
-        }
-    }
-
-    private func polishReferenceCard(for plan: PolishReferencePlan) -> some View {
-        let isSelected = selectedPolishPlan == plan
-
-        return Button {
-            selectedPolishPlan = plan
-            polishStatusMessage = "已切换到“\(plan.title)”润色方案。"
-        } label: {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text(plan.title)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(palette.textPrimary)
-
-                    Spacer(minLength: 0)
-
-                    Text(plan.focusTag)
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(isSelected ? palette.coolAccent : palette.textSecondary)
-                }
-
-                Text(plan.summary)
-                    .font(.caption)
-                    .foregroundStyle(palette.textSecondary)
-                    .lineLimit(3)
-                    .lineSpacing(3)
-
-                Text(plan.resultHint)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(palette.textSecondary)
-                    .lineLimit(1)
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(isSelected ? palette.selectedPanel : palette.panelBase.opacity(palette.isDark ? 0.82 : 0.68))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .strokeBorder(
-                        isSelected ? palette.coolAccent.opacity(0.36) : palette.stroke,
-                        lineWidth: 1
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var chapterTitleField: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("章节标题")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(palette.textPrimary)
-
-            TextField("例如：雨夜入城", text: $editedChapterTitle)
-                .textFieldStyle(.plain)
-                .font(.system(size: 14, weight: .regular))
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
-                .background(
-                    DashboardInsetPanelBackground(cornerRadius: 22, palette: palette)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .strokeBorder(palette.stroke, lineWidth: 1)
-                )
-        }
-    }
-
-    @ViewBuilder
-    private func actionRow(for chapterDraft: ChapterDraft, project: NovelProject) -> some View {
-        let hasUnsavedChanges = hasUnsavedChanges(comparedTo: chapterDraft)
-
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) {
-                Button("保存修改") {
-                    saveSelectedChapter(for: project, chapterDraft: chapterDraft)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(palette.coolAccent)
-                .disabled(!hasUnsavedChanges || isPolishing || editedChapterContent.trimmedForWorkspace.isEmpty)
-
-                Button(isPolishing ? "润色中…" : "AI 润色") {
-                    polishSelectedChapter(for: project, chapterDraft: chapterDraft)
-                }
-                .buttonStyle(.bordered)
-                .disabled(isPolishing || editedChapterContent.trimmedForWorkspace.isEmpty)
-
-                Button("恢复已保存版本") {
-                    loadEditorState(from: chapterDraft)
-                    polishStatusMessage = "已恢复到《\(chapterDraft.chapterSummary)》最近保存版本。"
-                }
-                .buttonStyle(.bordered)
-                .disabled(!hasUnsavedChanges || isPolishing)
-
-                Button("载入写作台继续编辑") {
-                    appState.loadChapterDraft(chapterDraft.id, for: project.id)
-                    appState.openWritingDesk(for: project.id)
-                }
-                .buttonStyle(.bordered)
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                Button("保存修改") {
-                    saveSelectedChapter(for: project, chapterDraft: chapterDraft)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(palette.coolAccent)
-                .disabled(!hasUnsavedChanges || isPolishing || editedChapterContent.trimmedForWorkspace.isEmpty)
-
-                Button(isPolishing ? "润色中…" : "AI 润色") {
-                    polishSelectedChapter(for: project, chapterDraft: chapterDraft)
-                }
-                .buttonStyle(.bordered)
-                .disabled(isPolishing || editedChapterContent.trimmedForWorkspace.isEmpty)
-
-                Button("恢复已保存版本") {
-                    loadEditorState(from: chapterDraft)
-                    polishStatusMessage = "已恢复到《\(chapterDraft.chapterSummary)》最近保存版本。"
-                }
-                .buttonStyle(.bordered)
-                .disabled(!hasUnsavedChanges || isPolishing)
-
-                Button("载入写作台继续编辑") {
-                    appState.loadChapterDraft(chapterDraft.id, for: project.id)
-                    appState.openWritingDesk(for: project.id)
-                }
-                .buttonStyle(.bordered)
-            }
-        }
-    }
-
-    private func savedChapterRow(_ chapterDraft: ChapterDraft, isSelected: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                Text(String(format: "%02d", chapterDraft.chapterNumber))
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(isSelected ? palette.coolAccent : palette.textSecondary)
-                    .frame(width: 34, height: 34)
-                    .background(
-                        Circle()
-                            .fill(
-                                isSelected
-                                    ? palette.coolAccent.opacity(palette.isDark ? 0.18 : 0.12)
-                                    : palette.panelBase.opacity(palette.isDark ? 0.70 : 0.52)
-                            )
-                    )
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(chapterDraft.chapterTitle)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(palette.textPrimary)
-                        .lineLimit(1)
-
-                    Text(chapterDraft.previewText)
-                        .font(.caption)
-                        .foregroundStyle(palette.textSecondary)
-                        .lineLimit(2)
-                }
-
-                Spacer(minLength: 0)
-            }
-
-            HStack(spacing: 12) {
-                Text(chapterDraft.savedAt)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(palette.textSecondary)
-
-                Spacer(minLength: 0)
-
-                Text("\(chapterDraft.wordCount) 字")
-                    .font(.caption2)
-                    .foregroundStyle(palette.textSecondary)
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(isSelected ? palette.selectedPanel : palette.panelBase.opacity(palette.isDark ? 0.82 : 0.68))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(
-                    isSelected ? palette.coolAccent.opacity(0.36) : palette.stroke,
-                    lineWidth: 1
-                )
-        )
-    }
-
-    private func selectedSavedChapter(in project: NovelProject) -> ChapterDraft? {
-        if let selectedSavedChapterID,
-           let chapterDraft = project.sortedChapterDrafts.first(where: { $0.id == selectedSavedChapterID }) {
-            return chapterDraft
-        }
-
-        return project.sortedChapterDrafts.first
-    }
-
-    private func syncSelectedSavedChapter(with chapterDrafts: [ChapterDraft]) {
-        let sortedDrafts = chapterDrafts.sorted(by: ChapterDraft.sortDescending)
-
-        guard let selectedSavedChapterID else {
-            self.selectedSavedChapterID = sortedDrafts.first?.id
-            return
-        }
-
-        if sortedDrafts.contains(where: { $0.id == selectedSavedChapterID }) {
-            return
-        }
-
-        self.selectedSavedChapterID = sortedDrafts.first?.id
-    }
-
-    private func loadEditorState(from chapterDraft: ChapterDraft) {
-        editedChapterTitle = chapterDraft.chapterTitle
-        editedChapterContent = chapterDraft.content
-    }
-
-    private func hasUnsavedChanges(comparedTo chapterDraft: ChapterDraft) -> Bool {
-        editedChapterTitle.trimmedForWorkspace != chapterDraft.chapterTitle.trimmedForWorkspace ||
-            editedChapterContent.trimmedForWorkspace != chapterDraft.content.trimmedForWorkspace
-    }
-
-    private func saveSelectedChapter(for project: NovelProject, chapterDraft: ChapterDraft) {
-        guard !editedChapterContent.trimmedForWorkspace.isEmpty else {
-            polishStatusMessage = "章节正文不能为空，暂时无法保存。"
-            return
-        }
-
-        guard let updatedDraft = appState.updateSavedChapterDraft(
-            chapterDraft.id,
-            title: editedChapterTitle,
-            content: editedChapterContent,
-            for: project.id
-        ) else {
-            polishStatusMessage = "保存失败，当前章节可能已经被移除。"
-            return
-        }
-
-        loadEditorState(from: updatedDraft)
-        polishStatusMessage = "已保存《\(updatedDraft.chapterSummary)》。"
-    }
-
-    private func polishSelectedChapter(for project: NovelProject, chapterDraft: ChapterDraft) {
-        let passage = editedChapterContent.trimmedForWorkspace
-        guard !passage.isEmpty else {
-            polishStatusMessage = "当前章节还没有可润色的正文。"
-            return
-        }
-
-        guard let configuration = appState.aiConfiguration else {
-            polishStatusMessage = "模型配置还没有完成，先去设置里填好 API Key、Base URL 和模型名称。"
-            return
-        }
-
-        let customInstruction = polishRequirements.trimmedForWorkspace
-        let additionalInstruction = resolvedPolishInstruction(customInstruction)
-        let latestProject = appState.project(for: project.id) ?? project
-
-        isPolishing = true
-        polishStatusMessage = customInstruction.isEmpty
-            ? "AI 正在按“\(selectedPolishPlan.title)”润色《\(chapterDraft.chapterSummary)》…"
-            : "AI 正在按“\(selectedPolishPlan.title)”和你的补充要求润色《\(chapterDraft.chapterSummary)》…"
-
-        Task { @MainActor in
-            do {
-                let polished = try await AIWritingService.polishPassage(
-                    configuration: configuration,
-                    project: latestProject,
-                    passage: passage,
-                    additionalInstruction: additionalInstruction
-                )
-                editedChapterContent = polished
-                isPolishing = false
-                polishStatusMessage = "AI 已完成润色，请检查《\(chapterDraft.chapterSummary)》后再保存。"
-            } catch {
-                isPolishing = false
-                polishStatusMessage = "润色失败：\(error.localizedDescription)"
-            }
-        }
-    }
-
-    private func resolvedPolishInstruction(_ customInstruction: String) -> String {
-        let planInstruction = selectedPolishPlan.suggestedInstruction
-        guard !customInstruction.isEmpty else { return planInstruction }
-
-        return """
-        参考润色方案：\(selectedPolishPlan.title)
-        \(planInstruction)
-
-        用户补充要求：
-        \(customInstruction)
-        """
-    }
-}
-
-private enum PolishReferencePlan: String, CaseIterable, Identifiable {
-    case sentenceTightening
-    case dialogueSharpening
-    case atmosphereDeepening
-    case continuitySweep
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .sentenceTightening:
-            return "收紧句式"
-        case .dialogueSharpening:
-            return "对白提神"
-        case .atmosphereDeepening:
-            return "氛围加深"
-        case .continuitySweep:
-            return "一致性修补"
-        }
-    }
-
-    var focusTag: String {
-        switch self {
-        case .sentenceTightening:
-            return "节奏"
-        case .dialogueSharpening:
-            return "对白"
-        case .atmosphereDeepening:
-            return "氛围"
-        case .continuitySweep:
-            return "校对"
-        }
-    }
-
-    var summary: String {
-        switch self {
-        case .sentenceTightening:
-            return "压缩重复描述，让段落更顺、更稳，适合正文已经成型但读起来略松散时使用。"
-        case .dialogueSharpening:
-            return "强化人物口吻区分、潜台词和对抗感，适合对白发虚或信息说得太直时使用。"
-        case .atmosphereDeepening:
-            return "补强场景感官、动作细节和情绪回声，让画面更沉浸，但不拖慢推进。"
-        case .continuitySweep:
-            return "顺手检查称谓、时间、动作和设定细节是否统一，减少润色时带出的前后冲突。"
-        }
-    }
-
-    var resultHint: String {
-        switch self {
-        case .sentenceTightening:
-            return "输出：更稳更顺的正文版本"
-        case .dialogueSharpening:
-            return "输出：更有张力的对白版本"
-        case .atmosphereDeepening:
-            return "输出：更有画面感的正文版本"
-        case .continuitySweep:
-            return "输出：更统一的正文版本"
-        }
-    }
-
-    var suggestedInstruction: String {
-        switch self {
-        case .sentenceTightening:
-            return "优先收紧句式和段落节奏，压缩重复描述，让表述更稳、更顺；保留原有信息量、视角和剧情事实，不新增剧情。"
-        case .dialogueSharpening:
-            return "重点打磨对白，让角色口吻更有区分、潜台词更明显、对抗感更强；不要改变人物关系和事实信息，不把对白改成旁白解释。"
-        case .atmosphereDeepening:
-            return "优先加强环境感官、动作细节和情绪回声，让场景更有氛围和画面感；保持当前推进节奏，不扩写无关铺陈。"
-        case .continuitySweep:
-            return "在润色同时检查称谓、时间线、动作衔接和设定细节是否统一；发现冲突时优先微调表述，不要改动剧情走向。"
-        }
-    }
-}
-
-private struct PromptEditableSurface: View {
-    @Environment(\.colorScheme) private var colorScheme
-    let title: String
-    let placeholder: String
-    let minHeight: CGFloat
-    @Binding var text: String
-
-    private var palette: DashboardPalette {
-        DashboardPalette(colorScheme: colorScheme)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(palette.textPrimary)
-
-            TextEditor(text: $text)
-                .font(.system(size: 14, weight: .regular))
-                .scrollContentBackground(.hidden)
-                .padding(14)
-                .frame(minHeight: minHeight, alignment: .topLeading)
-                .background(
-                    DashboardInsetPanelBackground(cornerRadius: 22, palette: palette)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .strokeBorder(palette.stroke, lineWidth: 1)
-                )
-                .overlay(alignment: .topLeading) {
-                    if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(placeholder)
-                            .font(.subheadline)
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 18)
-                            .allowsHitTesting(false)
-                    }
-                }
-        }
-    }
-}
-
 private struct LibraryCategoryChip: View {
     @Environment(\.colorScheme) private var colorScheme
     let title: String
@@ -3481,6 +2703,8 @@ private struct ProjectSpaceProjectRow: View {
     @Environment(\.colorScheme) private var colorScheme
     let project: NovelProject
     let isSelected: Bool
+    let onSelect: () -> Void
+    let onDelete: () -> Void
 
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
@@ -3488,47 +2712,64 @@ private struct ProjectSpaceProjectRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(project.title)
-                        .font(.headline.weight(.bold))
-                        .foregroundStyle(palette.textPrimary)
+            Button(action: onSelect) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(project.title)
+                                .font(.headline.weight(.bold))
+                                .foregroundStyle(palette.textPrimary)
 
-                    Text(project.genre)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(isSelected ? palette.coolAccent : palette.textSecondary)
+                            Text(project.genre)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(isSelected ? palette.coolAccent : palette.textSecondary)
+                        }
+
+                        Spacer()
+
+                        if isSelected {
+                            Text("当前工作区")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(palette.coolAccent)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(
+                                    Capsule()
+                                        .fill(palette.coolAccent.opacity(palette.isDark ? 0.16 : 0.10))
+                                )
+                        }
+
+                        Text(project.updatedAt)
+                            .font(.caption)
+                            .foregroundStyle(palette.textSecondary)
+                    }
+
+                    Text(project.summary)
+                        .font(.subheadline)
+                        .foregroundStyle(palette.textSecondary)
+                        .lineSpacing(3)
+
+                    HStack(spacing: 12) {
+                        ProjectChapterPill(
+                            label: "当前创作",
+                            value: project.currentChapterSummary
+                        )
+                        WorkspaceMetricBadge(label: "已创作章节", value: "\(project.writtenChapters) 章")
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            }
+            .buttonStyle(.plain)
 
+            HStack {
                 Spacer()
 
-                if isSelected {
-                    Text("当前工作区")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(palette.coolAccent)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule()
-                                .fill(palette.coolAccent.opacity(palette.isDark ? 0.16 : 0.10))
-                        )
+                Button(role: .destructive, action: onDelete) {
+                    Label("删除项目", systemImage: "trash")
                 }
-
-                Text(project.updatedAt)
-                    .font(.caption)
-                    .foregroundStyle(palette.textSecondary)
-            }
-
-            Text(project.summary)
-                .font(.subheadline)
-                .foregroundStyle(palette.textSecondary)
-                .lineSpacing(3)
-
-            HStack(spacing: 12) {
-                ProjectChapterPill(
-                    label: "当前创作",
-                    value: project.currentChapterSummary
-                )
-                WorkspaceMetricBadge(label: "已创作章节", value: "\(project.writtenChapters) 章")
+                .buttonStyle(.borderless)
+                .foregroundStyle(Color.red)
             }
         }
         .padding(18)
@@ -3603,14 +2844,15 @@ private struct NewProjectSheet: View {
     @Environment(\.dismiss) private var dismiss
     @FocusState private var isNameFieldFocused: Bool
     @State private var projectTitle = ""
-    let onCreate: (String) -> Void
+    @State private var selectedLength: NovelLength = .long
+    let onCreate: (String, NovelLength) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("新建项目")
                 .font(.title2.weight(.semibold))
 
-            Text("先输入项目名称，再进入项目空间继续补齐设定、章节树和写作面板。")
+            Text("先输入项目名称，再选择短篇、中篇或长篇模式，系统会带上对应的结构模板和写作辅助。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .lineSpacing(3)
@@ -3623,6 +2865,48 @@ private struct NewProjectSheet: View {
                     .textFieldStyle(.roundedBorder)
                     .focused($isNameFieldFocused)
                     .onSubmit(createProject)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("创作模式")
+                    .font(.subheadline.weight(.semibold))
+
+                Picker("创作模式", selection: $selectedLength) {
+                    ForEach(NovelLength.allCases) { length in
+                        Text(length.title).tag(length)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 10) {
+                        Text(selectedLength.title)
+                            .font(.headline.weight(.bold))
+
+                        Text(selectedLength.targetRangeSummary)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Text(selectedLength.summary)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineSpacing(3)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(selectedLength.creationChecklist, id: \.self) { item in
+                            Label(item, systemImage: "checkmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(Color.secondary.opacity(0.08))
+                )
             }
 
             HStack {
@@ -3640,7 +2924,7 @@ private struct NewProjectSheet: View {
             }
         }
         .padding(24)
-        .frame(width: 420)
+        .frame(width: 520)
         .onAppear {
             DispatchQueue.main.async {
                 isNameFieldFocused = true
@@ -3651,7 +2935,7 @@ private struct NewProjectSheet: View {
     private func createProject() {
         let trimmedTitle = projectTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else { return }
-        onCreate(trimmedTitle)
+        onCreate(trimmedTitle, selectedLength)
         dismiss()
     }
 }

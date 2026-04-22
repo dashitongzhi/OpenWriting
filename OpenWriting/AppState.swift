@@ -2,6 +2,111 @@ import AuthenticationServices
 import Foundation
 import Observation
 
+enum NovelLength: String, CaseIterable, Codable, Identifiable {
+    case short
+    case medium
+    case long
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .short:
+            return "短篇"
+        case .medium:
+            return "中篇"
+        case .long:
+            return "长篇"
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .short:
+            return "适合单一冲突闭环、强情绪转折或一次真相揭示。"
+        case .medium:
+            return "适合一条主线搭配少量副线，让人物变化完整展开。"
+        case .long:
+            return "适合分卷连载、长线伏笔、多角色弧线和世界状态持续演化。"
+        }
+    }
+
+    var targetRangeSummary: String {
+        switch self {
+        case .short:
+            return "全文约 0.6 万到 1.5 万字"
+        case .medium:
+            return "全文约 3 万到 12 万字"
+        case .long:
+            return "全文约 30 万字以上"
+        }
+    }
+
+    var creationChecklist: [String] {
+        switch self {
+        case .short:
+            return [
+                "主线尽量单一，角色和场景控制在必要范围内",
+                "开场尽快给出钩子，中段加压，结尾形成闭环",
+                "不依赖复杂章节树，重点盯住节奏和回收"
+            ]
+        case .medium:
+            return [
+                "主线之外最多保留 1 到 2 条副线，避免信息发散",
+                "按阶段推进角色关系和主要冲突，适合 8 到 20 章规模",
+                "中段需要反转或升级，尾段要完成阶段回收"
+            ]
+        case .long:
+            return [
+                "先定分卷目标，再拆当前卷章节点和卷末回收点",
+                "持续维护在途线索、人物长期状态和未回收伏笔",
+                "避免单章透支底牌，关键真相分阶段揭示"
+            ]
+        }
+    }
+
+    var promptDirective: String {
+        switch self {
+        case .short:
+            return "按短篇模式创作：冲突集中、场景精简、结尾要形成明确闭环。"
+        case .medium:
+            return "按中篇模式创作：允许阶段推进和关系变化，但要持续围绕主线，不要支线蔓延。"
+        case .long:
+            return "按长篇模式创作：强调分卷推进、长期伏笔、角色长期变化和阶段性回收，避免一次性把底牌说透。"
+        }
+    }
+
+    var outlineDirective: String {
+        switch self {
+        case .short:
+            return "大纲要突出单次事件闭环、关键转折和结尾回收点。"
+        case .medium:
+            return "大纲要明确阶段推进、主要转折和主副线配比。"
+        case .long:
+            return "大纲必须明确分卷/阶段目标、卷末回收、长期反派压力和多条在途线索的衔接。"
+        }
+    }
+
+    var continuityDirective: String {
+        switch self {
+        case .short:
+            return "重点维护叙事视角、情绪线和结尾闭环，不要拖出无必要的远期悬念。"
+        case .medium:
+            return "重点维护主线推进、关系线变化和阶段伏笔回收，避免中段散掉。"
+        case .long:
+            return "重点维护分卷目标、在途线索、人物长期状态和跨章信息一致性。"
+        }
+    }
+
+    var supportsThreadTracking: Bool {
+        self != .short
+    }
+
+    var supportsVolumePlanning: Bool {
+        self == .long
+    }
+}
+
 @MainActor
 @Observable
 final class AppState {
@@ -132,10 +237,6 @@ final class AppState {
         StoryPillar(
             title: "章节树",
             detail: "让大纲、场景目标和伏笔回收保持可追踪，而不是散落在备忘录里。"
-        ),
-        StoryPillar(
-            title: "章节润色",
-            detail: "回看已保存章节，直接修改、AI 润色并保存定稿。"
         )
     ]
 
@@ -329,25 +430,33 @@ final class AppState {
         )
     }
 
-    func createProject(named title: String) {
+    func createProject(named title: String, length: NovelLength) {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let projectTitle = trimmedTitle.isEmpty ? "未命名计划" : trimmedTitle
         let draftProject = NovelProject(
             id: makeProjectIdentifier(from: projectTitle),
             title: projectTitle,
             genre: "待设定",
-            summary: "从一句 logline 开始，继续补齐角色目标、核心冲突和三幕结构。",
+            summary: Self.defaultProjectSummary(for: length),
+            storyLength: length,
             updatedAt: Self.currentTimestampLabel(),
             currentChapterTitle: "开篇设定",
             currentChapterNumber: 1,
-            writtenChapters: 1,
-            chapterFocus: "先写出开篇场景的情绪、主角目标和第一个冲突钩子。",
+            writtenChapters: 0,
+            chapterFocus: Self.defaultChapterFocus(for: length),
             draftText: "",
             outlineText: "",
+            outlineGenerationProfile: Self.defaultOutlineGenerationProfile(for: length),
+            structureNotes: Self.defaultStructureNotes(for: length),
+            sceneProgressNotes: Self.defaultSceneProgressNotes(for: length),
+            characterArcNotes: Self.defaultCharacterArcNotes(for: length),
+            foreshadowNotes: Self.defaultForeshadowNotes(for: length),
+            volumePlanNotes: Self.defaultVolumePlanNotes(for: length),
+            activeThreadsNotes: Self.defaultActiveThreadsNotes(for: length),
             referenceContextText: "",
-            specialRequirements: "",
-            wordTargetText: "例如：本章 1800-2200 字；全书约 80 万字；关键情节可上浮 20%",
-            continuityNotes: "先把主角动机、冲突来源和章节语气稳定下来，再逐步扩展世界观。",
+            specialRequirements: Self.defaultSpecialRequirements(for: length),
+            wordTargetText: Self.defaultWordTargetText(for: length),
+            continuityNotes: Self.defaultContinuityNotes(for: length),
             referenceDocuments: []
         )
 
@@ -397,10 +506,6 @@ final class AppState {
         selectedSidebarItem = .library
     }
 
-    func openPrompts() {
-        selectedSidebarItem = .prompts
-    }
-
     func navigate(to item: SidebarItem) {
         switch item {
         case .home:
@@ -413,8 +518,6 @@ final class AppState {
             openOutline()
         case .library:
             openLibrary()
-        case .prompts:
-            openPrompts()
         }
     }
 
@@ -461,6 +564,18 @@ final class AppState {
     func selectProject(_ projectID: NovelProject.ID) {
         activeProjectID = projectID
         selectedProjectID = projectID
+    }
+
+    func deleteProject(_ projectID: NovelProject.ID) {
+        guard recentProjects.contains(where: { $0.id == projectID }) else { return }
+
+        recentProjects.removeAll { $0.id == projectID }
+
+        if projectSpaceScrollTarget == projectID {
+            projectSpaceScrollTarget = nil
+        }
+
+        normalizeProjectSelection()
     }
 
     func clearProjectSpaceScrollTarget() {
@@ -533,6 +648,20 @@ final class AppState {
     func updateForeshadowNotes(_ text: String, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.foreshadowNotes = text
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func updateVolumePlanNotes(_ text: String, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.volumePlanNotes = text
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func updateActiveThreadsNotes(_ text: String, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.activeThreadsNotes = text
             project.updatedAt = Self.currentTimestampLabel()
         }
     }
@@ -772,8 +901,6 @@ final class AppState {
         switch pillar.title {
         case "章节树":
             return .outline
-        case "章节润色":
-            return .prompts
         default:
             return .projects
         }
@@ -1302,6 +1429,238 @@ final class AppState {
         userDefaults.set(value, forKey: currentKey)
     }
 
+    private static func defaultProjectSummary(for length: NovelLength) -> String {
+        switch length {
+        case .short:
+            return "围绕一个核心冲突或情绪爆点，完成一次清晰、集中、可回收的短篇叙事闭环。"
+        case .medium:
+            return "以一条主线带动少量副线，在有限篇幅内完成角色变化、冲突升级与阶段回收。"
+        case .long:
+            return "从一句 logline 起步，逐步补齐分卷目标、长期冲突、角色弧线与伏笔回收，支撑连续长篇创作。"
+        }
+    }
+
+    private static func defaultChapterFocus(for length: NovelLength) -> String {
+        switch length {
+        case .short:
+            return "尽快写出开场钩子、核心冲突和会在结尾回收的关键决定。"
+        case .medium:
+            return "先立稳主角目标、当前阶段阻力和第一轮关系变化，再推进本章转折。"
+        case .long:
+            return "先写出开篇场景的情绪、主角目标和第一个冲突钩子，并给长期主线留出延展空间。"
+        }
+    }
+
+    private static func defaultWordTargetText(for length: NovelLength) -> String {
+        switch length {
+        case .short:
+            return "全文建议 6000-15000 字；单次生成建议 700-1000 字；尽量在 1-3 个关键场景内完成闭环。"
+        case .medium:
+            return "全文建议 30000-120000 字；按 8-20 章推进；单章建议 1600-2400 字。"
+        case .long:
+            return "全文建议 300000 字以上；按分卷/阶段推进；单章建议 1800-2600 字，关键节点可适当上浮。"
+        }
+    }
+
+    private static func defaultContinuityNotes(for length: NovelLength) -> String {
+        switch length {
+        case .short:
+            return "优先维持单一视角、情绪线和结尾闭环，避免引入过多未来才回收的信息。"
+        case .medium:
+            return "优先维持主线推进、主要关系线变化和阶段回收节奏，不要让中段散掉。"
+        case .long:
+            return "先把主角动机、长期冲突来源、章节语气和世界规则稳定下来，再逐步扩展分卷目标与长期伏笔。"
+        }
+    }
+
+    private static func defaultSpecialRequirements(for length: NovelLength) -> String {
+        switch length {
+        case .short:
+            return "优先保证冲突集中、信息有效、结尾回收，不要把故事拖成散文式铺陈。"
+        case .medium:
+            return "控制支线数量，确保每章都服务于主线推进、关系变化或关键伏笔。"
+        case .long:
+            return "不要一次性说透长期线索，保持阶段推进、持续悬念和卷末回收节奏。"
+        }
+    }
+
+    private static func defaultStructureNotes(for length: NovelLength) -> String {
+        switch length {
+        case .short:
+            return """
+            1. 开场快速建立主角处境与核心冲突
+            2. 中段持续加压，逼出选择或代价
+            3. 结尾完成事件或情绪闭环
+            """
+        case .medium:
+            return """
+            1. 前段建立主角目标、阻力和主要关系
+            2. 中段升级冲突并制造一次明显反转
+            3. 尾段完成阶段回收，并为最终落点蓄力
+            """
+        case .long:
+            return """
+            1. 第一卷负责开篇钩子、主角目标与世界规则落地
+            2. 中期分卷持续升级敌我关系、代价与伏笔
+            3. 大后期集中回收长期伏笔并推动终局决战
+            """
+        }
+    }
+
+    private static func defaultSceneProgressNotes(for length: NovelLength) -> String {
+        switch length {
+        case .short:
+            return """
+            1. 第一场直接落冲突或异常
+            2. 第二场把问题逼到不可回避
+            3. 最后一场完成揭示、决定或代价
+            """
+        case .medium:
+            return """
+            1. 开场先交代本阶段目标和当下阻力
+            2. 中段安排一次推进失败或关系变形
+            3. 结尾留下能驱动下一章的结果或新问题
+            """
+        case .long:
+            return """
+            1. 开场先落当前章目标、风险和人物态度
+            2. 中段推进线索、关系或局势，并制造信息增量
+            3. 结尾抛出下一章必须追的缺口，不提前透支真相
+            """
+        }
+    }
+
+    private static func defaultCharacterArcNotes(for length: NovelLength) -> String {
+        switch length {
+        case .short:
+            return """
+            主角：在一次关键选择中完成情绪或认知转变
+            对手/陪衬人物：负责施压、映照或引发主角变化
+            """
+        case .medium:
+            return """
+            主角：从当前缺口出发，完成一轮明显的阶段成长
+            核心配角：推动关系变化或揭示主角盲点
+            对抗方：持续施压，但不要抢走主线焦点
+            """
+        case .long:
+            return """
+            主角：拆成阶段成长，不要一卷走完整条弧线
+            核心配角：分别承担关系线、功能线和价值观碰撞
+            长期对抗方：持续制造压力和误导，逐步显露真面目
+            """
+        }
+    }
+
+    private static func defaultForeshadowNotes(for length: NovelLength) -> String {
+        switch length {
+        case .short:
+            return """
+            1. 只保留必须在文末回收的关键伏笔
+            2. 伏笔最好与主角决定或结尾反转直接相关
+            """
+        case .medium:
+            return """
+            1. 保留主线伏笔和 1-2 条关系线伏笔
+            2. 明确哪些要在中段回收，哪些留到结尾
+            """
+        case .long:
+            return """
+            1. 区分本卷伏笔、跨卷伏笔和长期误导信息
+            2. 记录每条伏笔第一次出现、下一次推进和最终回收节点
+            """
+        }
+    }
+
+    private static func defaultVolumePlanNotes(for length: NovelLength) -> String {
+        switch length {
+        case .short:
+            return ""
+        case .medium:
+            return """
+            阶段一：建立主线目标、主要阻力和人物关系底色
+            阶段二：加压、反转并逼出新的选择
+            阶段三：回收主线冲突，完成角色变化
+            """
+        case .long:
+            return """
+            第一卷：开篇钩子、主角目标、世界规则、卷末第一次反转
+            第二卷：扩大冲突范围，推进敌我关系和长期伏笔
+            第三卷及以后：按阶段升级代价与真相，逐步回收长期线索
+            """
+        }
+    }
+
+    private static func defaultActiveThreadsNotes(for length: NovelLength) -> String {
+        switch length {
+        case .short:
+            return ""
+        case .medium:
+            return """
+            主线：当前阶段最重要的目标与阻力
+            关系线：本阶段最需要推进或制造变化的关系
+            伏笔线：本阶段必须继续提一次的关键埋点
+            """
+        case .long:
+            return """
+            主线：当前卷最重要的推进目标与阻力
+            支线：此刻仍在进行、且不能失踪的角色线/任务线
+            伏笔线：下一次必须露面的长期埋点与误导信息
+            回收线：最近 3 章内需要兑现、解释或翻面的旧伏笔
+            """
+        }
+    }
+
+    private static func defaultOutlineGenerationProfile(for length: NovelLength) -> OutlineGenerationProfile {
+        switch length {
+        case .short:
+            return OutlineGenerationProfile(
+                storyFlow: "围绕一次核心事件，完成起因、升级、决定和结尾回收。",
+                worldDescription: "只保留支撑本次冲突的必要背景和规则。",
+                protagonistTraits: "性格鲜明、动机明确、能在短时间内做出关键决定。",
+                expectedLength: "全文约 0.6 万到 1.5 万字",
+                endingPreference: "收束明确、情绪或事件完成闭环",
+                sellingPoints: "冲突集中、结尾有效回收",
+                keyEvents: "",
+                storyPacing: "短促、聚焦、尽快进入正题",
+                motivations: "",
+                relationshipMap: "",
+                antagonistPortrait: "",
+                foreshadowingNotes: ""
+            )
+        case .medium:
+            return OutlineGenerationProfile(
+                storyFlow: "按起始、升级、反转、收束四段推进主线，并保留少量副线。",
+                worldDescription: "把主线相关的背景、规则和对抗面说明白，但不要铺得过宽。",
+                protagonistTraits: "主角有明确欲望、阶段成长空间和能推动剧情的主动性。",
+                expectedLength: "全文约 3 万到 12 万字",
+                endingPreference: "主线完成阶段闭环，人物获得清晰变化",
+                sellingPoints: "主线集中、关系推进明显、阶段回收清楚",
+                keyEvents: "",
+                storyPacing: "稳步推进，中段需要明显升级或反转",
+                motivations: "",
+                relationshipMap: "",
+                antagonistPortrait: "",
+                foreshadowingNotes: ""
+            )
+        case .long:
+            return OutlineGenerationProfile(
+                storyFlow: "按分卷/阶段推进主线，每卷都要有独立目标、升级和卷末回收点。",
+                worldDescription: "把长期主线需要用到的背景、规则、势力和限制说明清楚。",
+                protagonistTraits: "主角具备长期成长空间、阶段欲望变化和可持续的行动驱动力。",
+                expectedLength: "全文约 30 万字以上，按分卷连载推进",
+                endingPreference: "终局收束明确，长期伏笔能分阶段回收",
+                sellingPoints: "分卷推进、长期伏笔、角色弧线和世界状态持续演化",
+                keyEvents: "",
+                storyPacing: "长线连载节奏，卷内有高潮，卷末有明显翻面或升级",
+                motivations: "",
+                relationshipMap: "",
+                antagonistPortrait: "",
+                foreshadowingNotes: ""
+            )
+        }
+    }
+
     private static func currentTimestampLabel() -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_Hans_CN")
@@ -1771,6 +2130,7 @@ struct NovelProject: Identifiable, Codable {
     let title: String
     let genre: String
     let summary: String
+    var storyLength: NovelLength
     var updatedAt: String
     var currentChapterTitle: String
     var currentChapterNumber: Int
@@ -1783,6 +2143,8 @@ struct NovelProject: Identifiable, Codable {
     var sceneProgressNotes: String
     var characterArcNotes: String
     var foreshadowNotes: String
+    var volumePlanNotes: String
+    var activeThreadsNotes: String
     var outlineSummary: String
     var outlineSummaryUpdatedAt: String
     var referenceContextText: String
@@ -1799,6 +2161,7 @@ struct NovelProject: Identifiable, Codable {
         case title
         case genre
         case summary
+        case storyLength
         case updatedAt
         case currentChapterTitle
         case currentChapterNumber
@@ -1811,6 +2174,8 @@ struct NovelProject: Identifiable, Codable {
         case sceneProgressNotes
         case characterArcNotes
         case foreshadowNotes
+        case volumePlanNotes
+        case activeThreadsNotes
         case outlineSummary
         case outlineSummaryUpdatedAt
         case referenceContextText
@@ -1829,6 +2194,7 @@ struct NovelProject: Identifiable, Codable {
         title: String,
         genre: String,
         summary: String,
+        storyLength: NovelLength = .long,
         updatedAt: String,
         currentChapterTitle: String,
         currentChapterNumber: Int,
@@ -1841,6 +2207,8 @@ struct NovelProject: Identifiable, Codable {
         sceneProgressNotes: String = "",
         characterArcNotes: String = "",
         foreshadowNotes: String = "",
+        volumePlanNotes: String = "",
+        activeThreadsNotes: String = "",
         outlineSummary: String = "",
         outlineSummaryUpdatedAt: String = "",
         referenceContextText: String,
@@ -1856,6 +2224,7 @@ struct NovelProject: Identifiable, Codable {
         self.title = title
         self.genre = genre
         self.summary = summary
+        self.storyLength = storyLength
         self.updatedAt = updatedAt
         self.currentChapterTitle = currentChapterTitle
         self.currentChapterNumber = currentChapterNumber
@@ -1868,6 +2237,8 @@ struct NovelProject: Identifiable, Codable {
         self.sceneProgressNotes = sceneProgressNotes
         self.characterArcNotes = characterArcNotes
         self.foreshadowNotes = foreshadowNotes
+        self.volumePlanNotes = volumePlanNotes
+        self.activeThreadsNotes = activeThreadsNotes
         self.outlineSummary = outlineSummary
         self.outlineSummaryUpdatedAt = outlineSummaryUpdatedAt
         self.referenceContextText = referenceContextText
@@ -1889,6 +2260,7 @@ struct NovelProject: Identifiable, Codable {
         title = try container.decode(String.self, forKey: .title)
         genre = try container.decode(String.self, forKey: .genre)
         summary = try container.decode(String.self, forKey: .summary)
+        storyLength = try container.decodeIfPresent(NovelLength.self, forKey: .storyLength) ?? .long
         updatedAt = try container.decode(String.self, forKey: .updatedAt)
         currentChapterTitle = try container.decodeIfPresent(String.self, forKey: .currentChapterTitle) ?? "开篇设定"
         currentChapterNumber = try container.decodeIfPresent(Int.self, forKey: .currentChapterNumber) ?? 1
@@ -1904,6 +2276,8 @@ struct NovelProject: Identifiable, Codable {
         sceneProgressNotes = try container.decodeIfPresent(String.self, forKey: .sceneProgressNotes) ?? ""
         characterArcNotes = try container.decodeIfPresent(String.self, forKey: .characterArcNotes) ?? ""
         foreshadowNotes = try container.decodeIfPresent(String.self, forKey: .foreshadowNotes) ?? ""
+        volumePlanNotes = try container.decodeIfPresent(String.self, forKey: .volumePlanNotes) ?? ""
+        activeThreadsNotes = try container.decodeIfPresent(String.self, forKey: .activeThreadsNotes) ?? ""
         outlineSummary = try container.decodeIfPresent(String.self, forKey: .outlineSummary) ?? ""
         outlineSummaryUpdatedAt = try container.decodeIfPresent(String.self, forKey: .outlineSummaryUpdatedAt) ?? ""
         referenceContextText = try container.decodeIfPresent(String.self, forKey: .referenceContextText) ?? ""
@@ -1923,6 +2297,7 @@ struct NovelProject: Identifiable, Codable {
         try container.encode(title, forKey: .title)
         try container.encode(genre, forKey: .genre)
         try container.encode(summary, forKey: .summary)
+        try container.encode(storyLength, forKey: .storyLength)
         try container.encode(updatedAt, forKey: .updatedAt)
         try container.encode(currentChapterTitle, forKey: .currentChapterTitle)
         try container.encode(currentChapterNumber, forKey: .currentChapterNumber)
@@ -1935,6 +2310,8 @@ struct NovelProject: Identifiable, Codable {
         try container.encode(sceneProgressNotes, forKey: .sceneProgressNotes)
         try container.encode(characterArcNotes, forKey: .characterArcNotes)
         try container.encode(foreshadowNotes, forKey: .foreshadowNotes)
+        try container.encode(volumePlanNotes, forKey: .volumePlanNotes)
+        try container.encode(activeThreadsNotes, forKey: .activeThreadsNotes)
         try container.encode(outlineSummary, forKey: .outlineSummary)
         try container.encode(outlineSummaryUpdatedAt, forKey: .outlineSummaryUpdatedAt)
         try container.encode(referenceContextText, forKey: .referenceContextText)
@@ -1953,6 +2330,10 @@ struct NovelProject: Identifiable, Codable {
 
     var currentChapterSummary: String {
         "\(currentChapterLabel) · \(currentChapterTitle)"
+    }
+
+    var storyLengthTitle: String {
+        storyLength.title
     }
 
     var savedChapterCount: Int {
@@ -1997,6 +2378,14 @@ struct NovelProject: Identifiable, Codable {
         !foreshadowNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    var hasVolumePlanNotes: Bool {
+        !volumePlanNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var hasActiveThreadsNotes: Bool {
+        !activeThreadsNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var hasContinuityNotes: Bool {
         !continuityNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -2029,6 +2418,16 @@ struct NovelProject: Identifiable, Codable {
         hasForeshadowNotes ? "\(foreshadowNodeCount) 条" : "待标记"
     }
 
+    var volumePlanStatusLabel: String {
+        guard storyLength.supportsVolumePlanning else { return "非分卷模式" }
+        return hasVolumePlanNotes ? "\(volumePlanNodeCount) 节点" : "待规划"
+    }
+
+    var activeThreadsStatusLabel: String {
+        guard storyLength.supportsThreadTracking else { return "单篇闭环" }
+        return hasActiveThreadsNotes ? "\(activeThreadNodeCount) 条" : "待记录"
+    }
+
     var continuityStatusLabel: String {
         hasGlobalMemory ? "已记录" : "待补充"
     }
@@ -2059,6 +2458,14 @@ struct NovelProject: Identifiable, Codable {
 
     var foreshadowNodeCount: Int {
         Self.outlineNodeCount(in: foreshadowNotes)
+    }
+
+    var volumePlanNodeCount: Int {
+        Self.outlineNodeCount(in: volumePlanNotes)
+    }
+
+    var activeThreadNodeCount: Int {
+        Self.outlineNodeCount(in: activeThreadsNotes)
     }
 
     var draftWordCount: Int {

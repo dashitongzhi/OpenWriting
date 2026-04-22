@@ -12,9 +12,7 @@ struct WritingDeskView: View {
     @State private var isImportingOutline = false
     @State private var isImportingRequirements = false
     @State private var isOutlineGeneratorPresented = false
-    @State private var isPolishRequirementsPresented = false
     @State private var aiSuggestion = ""
-    @State private var polishRequirementsText = ""
     @State private var aiStatusMessage = "准备就绪，可先补大纲、参考文本和特殊要求，再开始当前章节写作。"
     @State private var saveMessage = "自动保存已开启，可按章节收录"
     @State private var isGenerating = false
@@ -23,7 +21,6 @@ struct WritingDeskView: View {
     @State private var autoScrollLocked = false
     @State private var areConfigurationCardsCollapsed = false
     @State private var pendingScrollAnchor: WritingDeskScrollAnchor?
-    @State private var pendingPolishProjectID: NovelProject.ID?
     @State private var timingSnapshot = AIWriterTimingSnapshot.idle
 
     private let contentTopPadding: CGFloat = 18
@@ -38,11 +35,6 @@ struct WritingDeskView: View {
 
     private var activeProject: NovelProject? {
         appState.activeProject
-    }
-
-    private var pendingPolishProject: NovelProject? {
-        guard let pendingPolishProjectID else { return activeProject }
-        return appState.project(for: pendingPolishProjectID)
     }
 
     private var supportedImportTypes: [UTType] {
@@ -86,24 +78,12 @@ struct WritingDeskView: View {
             if let activeProject {
                 WritingDeskOutlineGeneratorSheet(
                     projectTitle: activeProject.title,
+                    storyLength: activeProject.storyLength,
                     profile: outlineGenerationProfileBinding(for: activeProject.id),
                     isGenerating: isGenerating,
                     onGenerate: {
                         generateOutline(for: appState.project(for: activeProject.id) ?? activeProject)
                     }
-                )
-            }
-        }
-        .sheet(
-            isPresented: $isPolishRequirementsPresented,
-            onDismiss: { pendingPolishProjectID = nil }
-        ) {
-            if let pendingPolishProject {
-                WritingDeskPolishRequirementsSheet(
-                    projectTitle: pendingPolishProject.title,
-                    chapterSummary: pendingPolishProject.currentChapterSummary,
-                    instructionText: $polishRequirementsText,
-                    onConfirm: confirmDraftPolish
                 )
             }
         }
@@ -241,6 +221,7 @@ struct WritingDeskView: View {
         ) {
             HStack(alignment: .center, spacing: 10) {
                 PillTag(text: project.title)
+                PillTag(text: project.storyLengthTitle)
                 PillTag(text: project.currentChapterSummary)
             }
 
@@ -306,7 +287,11 @@ struct WritingDeskView: View {
                 )
             }
 
-            Text("这些约束会和全局记忆一起送进 AI，写作和润色都会参考。")
+            Text("这些约束会和全局记忆一起送进 AI，写作时会持续参考。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Text("当前模式：\(project.storyLengthTitle) · \(project.storyLength.summary)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -317,15 +302,6 @@ struct WritingDeskView: View {
             WritingDeskSectionCard(
                 title: "草稿箱",
                 badgeText: "\(project.draftWordCount) 字",
-                actions: [
-                    .init(
-                        symbolName: "wand.and.stars",
-                        accessibilityLabel: "润色当前草稿",
-                        isEnabled: !isGenerating && !isSavingChapter && project.draftWordCount > 0
-                    ) {
-                        presentDraftPolishPrompt(for: project)
-                    }
-                ],
                 fillContentHeight: layout != nil
             ) {
                 HStack(alignment: .center, spacing: 10) {
@@ -806,7 +782,7 @@ struct WritingDeskView: View {
                     project: latestProject,
                     mode: latestProject.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .advanceChapter : .continueScene,
                     additionalInstruction: generationInstruction(rejecting: rejectedSuggestion),
-                    length: preferredLength(for: latestProject.wordTargetText)
+                    length: preferredLength(for: latestProject)
                 )
 
                 let total = Date().timeIntervalSince(startedAt)
@@ -839,82 +815,6 @@ struct WritingDeskView: View {
     private func rewriteSuggestion(for project: NovelProject) {
         let rejectedSuggestion = aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines)
         startWriting(for: project, rejectedSuggestion: rejectedSuggestion.isEmpty ? nil : rejectedSuggestion)
-    }
-
-    private func presentDraftPolishPrompt(for project: NovelProject) {
-        pendingPolishProjectID = project.id
-        isPolishRequirementsPresented = true
-    }
-
-    private func confirmDraftPolish() {
-        let project = pendingPolishProject
-        let additionalInstruction = polishRequirementsText.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        pendingPolishProjectID = nil
-        isPolishRequirementsPresented = false
-
-        guard let project else { return }
-
-        DispatchQueue.main.async {
-            polishDraft(for: project, additionalInstruction: additionalInstruction)
-        }
-    }
-
-    private func polishDraft(for project: NovelProject, additionalInstruction: String) {
-        guard let configuration = appState.aiConfiguration else {
-            aiStatusMessage = "当前模型配置不完整，请先到设置里填写 API Key、Base URL 和模型名称。"
-            return
-        }
-
-        let latestProject = appState.project(for: project.id) ?? project
-        let passage = polishTargetText(for: latestProject)
-        guard !passage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            aiStatusMessage = "草稿箱里还没有可润色的内容。"
-            return
-        }
-
-        isGenerating = true
-        aiStatusMessage = additionalInstruction.isEmpty
-            ? "AI 正在润色当前草稿尾段，尽量保持当前章节气质和叙述连续性…"
-            : "AI 正在按你的要求润色当前草稿尾段，尽量保持当前章节气质和叙述连续性…"
-        timingSnapshot = .queued
-
-        Task {
-            let startedAt = Date()
-
-            do {
-                let polished = try await AIWritingService.polishPassage(
-                    configuration: configuration,
-                    project: latestProject,
-                    passage: passage,
-                    additionalInstruction: additionalInstruction
-                )
-
-                let total = Date().timeIntervalSince(startedAt)
-
-                await MainActor.run {
-                    aiSuggestion = polished
-                    isGenerating = false
-                    timingSnapshot = AIWriterTimingSnapshot(
-                        queue: 0.1,
-                        generate: max(total * 0.76, 0.1),
-                        finish: max(total * 0.24, 0.1),
-                        complete: max(total, 0.2)
-                    )
-                    aiStatusMessage = "润色结果已生成。建议先在右侧检查，满意后再接受进草稿箱。"
-                    revealWritingDeskWindow(for: project.id)
-                    focusAIEditor()
-                    requestAutoScroll(to: .ai)
-                }
-            } catch {
-                await MainActor.run {
-                    isGenerating = false
-                    timingSnapshot = .idle
-                    aiStatusMessage = error.localizedDescription
-                    revealWritingDeskWindow(for: project.id)
-                }
-            }
-        }
     }
 
     private func acceptAISuggestionIntoDraft(for project: NovelProject) {
@@ -1028,8 +928,19 @@ struct WritingDeskView: View {
         return "已导入 \(project.referenceDocuments.count) 份 · 最近：\(latestDocument.title) · 共 \(project.referenceDocuments.reduce(0) { $0 + $1.wordCount }) 字。"
     }
 
-    private func preferredLength(for wordTargetText: String) -> AIWritingLength {
-        let number = inferredTargetWordCount(from: wordTargetText)
+    private func preferredLength(for project: NovelProject) -> AIWritingLength {
+        let number = inferredTargetWordCount(from: project.wordTargetText)
+
+        if number == 0 {
+            switch project.storyLength {
+            case .short:
+                return .short
+            case .medium:
+                return .medium
+            case .long:
+                return .long
+            }
+        }
 
         switch number {
         case 0 ..< 850:
@@ -1252,13 +1163,6 @@ struct WritingDeskView: View {
         }
     }
 
-    private func polishTargetText(for project: NovelProject) -> String {
-        let trimmed = project.draftText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "" }
-        guard trimmed.count > 1_800 else { return trimmed }
-        return String(trimmed.suffix(1_800))
-    }
-
     private func requestAutoScroll(to anchor: WritingDeskScrollAnchor) {
         guard !autoScrollLocked, !areConfigurationCardsCollapsed else { return }
         pendingScrollAnchor = anchor
@@ -1283,8 +1187,6 @@ struct WritingDeskView: View {
 
     private func resetSessionState() {
         aiSuggestion = ""
-        isPolishRequirementsPresented = false
-        pendingPolishProjectID = nil
         isGenerating = false
         isSavingChapter = false
         isCacheCollapsed = false
@@ -1747,76 +1649,12 @@ private struct WritingDeskTimelineNode: View {
     }
 }
 
-private struct WritingDeskPolishRequirementsSheet: View {
-    @Environment(\.dismiss) private var dismiss
-
-    let projectTitle: String
-    let chapterSummary: String
-    @Binding var instructionText: String
-    let onConfirm: () -> Void
-
-    var body: some View {
-        ZStack {
-            PageBackground()
-
-            VStack(alignment: .leading, spacing: 18) {
-                Text("润色草稿")
-                    .font(.system(size: 26, weight: .bold))
-                    .foregroundStyle(.primary)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(projectTitle)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-
-                    Text(chapterSummary)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-
-                Text("输入这次润色想强调的方向。比如节奏更克制、动作更清晰、对白更有张力，或明确要求不要扩写剧情。")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineSpacing(3)
-
-                WritingDeskInlineField(title: "润色要求") {
-                    WritingDeskTextSurface(
-                        text: $instructionText,
-                        placeholder: "例如：保留当前剧情和节奏，重点增强人物情绪暗流、动作细节和对白张力，不要新增剧情，不要扩写篇幅。",
-                        minHeight: 210
-                    )
-                }
-
-                Text("留空也可以确认，此时会按默认方式润色当前草稿尾段。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                HStack {
-                    Spacer()
-
-                    Button("取消") {
-                        dismiss()
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button("确认润色") {
-                        dismiss()
-                        onConfirm()
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-            }
-            .padding(24)
-            .frame(width: 560, alignment: .topLeading)
-        }
-    }
-}
-
 private struct WritingDeskOutlineGeneratorSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
 
     let projectTitle: String
+    let storyLength: NovelLength
     @Binding var profile: OutlineGenerationProfile
     let isGenerating: Bool
     let onGenerate: () -> Void
@@ -1955,6 +1793,10 @@ private struct WritingDeskOutlineGeneratorSheet: View {
 
                 Text(projectTitle)
                     .font(.headline)
+                    .foregroundStyle(.secondary)
+
+                Text("当前模式：\(storyLength.title) · \(storyLength.summary)")
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
 
                 Text("最简可用版至少准备 5 项：故事怎么开头推进到哪里、世界规则、主角底色、想写多长、想要什么结局。")

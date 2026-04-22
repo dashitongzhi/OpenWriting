@@ -16,6 +16,7 @@ struct OutlineWorkspacePanel: View {
             VStack(alignment: .leading, spacing: 24) {
                 chapterListPanel(for: project)
                 globalMemoryPanel(for: project)
+                storyModePanel(for: project)
             }
             .id(project.id)
             .task(id: project.id) {
@@ -183,13 +184,13 @@ struct OutlineWorkspacePanel: View {
                 HStack(spacing: 12) {
                     WorkspaceMetricBadge(label: "最近同步", value: project.globalMemoryStatusLabel)
                     WorkspaceMetricBadge(label: "结构化字段", value: "\(project.globalMemorySnapshot.populatedSectionCount)/9")
-                    WorkspaceMetricBadge(label: "写作参与", value: "正文 / 润色 / 恢复 / 校正")
+                    WorkspaceMetricBadge(label: "写作参与", value: "正文 / 恢复 / 校正 / 记忆")
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
                     WorkspaceMetricBadge(label: "最近同步", value: project.globalMemoryStatusLabel)
                     WorkspaceMetricBadge(label: "结构化字段", value: "\(project.globalMemorySnapshot.populatedSectionCount)/9")
-                    WorkspaceMetricBadge(label: "写作参与", value: "正文 / 润色 / 恢复 / 校正")
+                    WorkspaceMetricBadge(label: "写作参与", value: "正文 / 恢复 / 校正 / 记忆")
                 }
             }
 
@@ -215,6 +216,91 @@ struct OutlineWorkspacePanel: View {
             get: { appState.project(for: projectID)?.continuityNotes ?? "" },
             set: { appState.updateContinuityNotes($0, updatedAt: timestampLabel(), for: projectID) }
         )
+    }
+
+    private func storyModePanel(for project: NovelProject) -> some View {
+        DashboardPanel(
+            title: "\(project.storyLengthTitle)创作支撑",
+            subtitle: storyModeSubtitle(for: project)
+        ) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    WorkspaceMetricBadge(label: "创作模式", value: project.storyLengthTitle)
+                    WorkspaceMetricBadge(label: "目标篇幅", value: project.storyLength.targetRangeSummary)
+                    WorkspaceMetricBadge(
+                        label: "连续性重点",
+                        value: project.storyLength.supportsVolumePlanning ? "分卷 + 在途线索" : (project.storyLength.supportsThreadTracking ? "阶段线索" : "单篇闭环")
+                    )
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    WorkspaceMetricBadge(label: "创作模式", value: project.storyLengthTitle)
+                    HStack(spacing: 12) {
+                        WorkspaceMetricBadge(label: "目标篇幅", value: project.storyLength.targetRangeSummary)
+                        WorkspaceMetricBadge(
+                            label: "连续性重点",
+                            value: project.storyLength.supportsVolumePlanning ? "分卷 + 在途线索" : (project.storyLength.supportsThreadTracking ? "阶段线索" : "单篇闭环")
+                        )
+                    }
+                }
+            }
+
+            if project.storyLength.supportsVolumePlanning {
+                Text("分卷/阶段规划")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+
+                OutlineEditorSurface(
+                    text: volumePlanBinding(for: project.id),
+                    placeholder: "为长篇记录每一卷的目标、卷末回收点、敌我升级和下一卷的接力方向。",
+                    minHeight: 220
+                )
+            }
+
+            if project.storyLength.supportsThreadTracking {
+                Text(project.storyLength.supportsVolumePlanning ? "在途线索" : "阶段线索")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+
+                OutlineEditorSurface(
+                    text: activeThreadsBinding(for: project.id),
+                    placeholder: project.storyLength.supportsVolumePlanning
+                        ? "记录当前卷仍在推进的主线、支线、关系线、伏笔线和最近必须回收的旧埋点。"
+                        : "记录当前阶段最重要的主线、关系线和最近必须推进的一条伏笔线。",
+                    minHeight: project.storyLength.supportsVolumePlanning ? 220 : 180
+                )
+            }
+
+            WorkspaceChecklist(
+                title: "建议优先维护",
+                items: project.storyLength.creationChecklist
+            )
+        }
+    }
+
+    private func volumePlanBinding(for projectID: NovelProject.ID) -> Binding<String> {
+        Binding(
+            get: { appState.project(for: projectID)?.volumePlanNotes ?? "" },
+            set: { appState.updateVolumePlanNotes($0, for: projectID) }
+        )
+    }
+
+    private func activeThreadsBinding(for projectID: NovelProject.ID) -> Binding<String> {
+        Binding(
+            get: { appState.project(for: projectID)?.activeThreadsNotes ?? "" },
+            set: { appState.updateActiveThreadsNotes($0, for: projectID) }
+        )
+    }
+
+    private func storyModeSubtitle(for project: NovelProject) -> String {
+        switch project.storyLength {
+        case .short:
+            return "短篇更重视冲突集中和结尾闭环，这里主要给你一组节奏提醒，避免故事被拉散。"
+        case .medium:
+            return "中篇需要稳住阶段推进和主要关系线，这里可以维护当前阶段最重要的在途线索。"
+        case .long:
+            return "长篇除了全局记忆，还要持续维护分卷目标和在途线索，避免跨章、跨卷写着写着失联。"
+        }
     }
 
     private func selectedSavedChapter(for project: NovelProject) -> ChapterDraft? {
