@@ -128,7 +128,7 @@ struct HomeDashboardView: View {
                 .tracking(3)
                 .foregroundStyle(palette.textSecondary)
 
-            Text("把灵感、设定与长篇结构，整理成真正可写的小说工作台。")
+            Text("把灵感、设定与结构，变成成真正的作品！")
                 .font(.system(size: 48, weight: .bold, design: .serif))
                 .foregroundStyle(palette.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
