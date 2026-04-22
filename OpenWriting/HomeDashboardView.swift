@@ -383,66 +383,24 @@ struct HomeDashboardView: View {
 
     private var recentProjectsSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            ForEach(appState.recentProjects.prefix(2)) { project in
-                Button {
-                    appState.openProjectSpace(for: project.id, scrollToProject: true)
-                } label: {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(alignment: .firstTextBaseline) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(project.title)
-                                    .font(.headline)
-                                    .foregroundStyle(palette.textPrimary)
+            if appState.recentProjects.isEmpty {
+                homeEmptyRecentProjectCard(
+                    title: "还没有项目",
+                    detail: "新建一本书后，这里会固定显示最近推进、当前章节和创作状态。",
+                    actionTitle: "新建项目",
+                    action: presentNewProjectSheet
+                )
 
-                                Text(project.genre)
-                                    .font(.caption.weight(.medium))
-                                    .foregroundStyle(palette.textSecondary)
-                            }
-
-                            Spacer()
-
-                            Text(project.updatedAt)
-                                .font(.caption)
-                                .foregroundStyle(palette.textSecondary)
-                        }
-
-                        Text(project.summary)
-                            .font(.subheadline)
-                            .foregroundStyle(palette.textSecondary)
-                            .lineLimit(2)
-                            .lineSpacing(3)
-
-                        HStack(spacing: 10) {
-                            ProjectChapterPill(
-                                label: "当前创作",
-                                value: project.currentChapterSummary
-                            )
-
-                            ProjectChapterPill(
-                                label: "已创作",
-                                value: "\(project.writtenChapters) 章"
-                            )
-                        }
-                    }
-                    .padding(18)
-                    .background(
-                        GlassPanelBackground(
-                            cornerRadius: 22,
-                            palette: palette,
-                            tint: LinearGradient(
-                                colors: [
-                                    palette.warmAccent.opacity(palette.isDark ? 0.14 : 0.09),
-                                    .clear
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                    )
-                    .overlay(panelStroke(cornerRadius: 22))
+                homeEmptyRecentProjectCard(
+                    title: "准备好继续写作",
+                    detail: "项目创建完成后，这里会优先展示最近更新的作品，方便你直接接着写。",
+                    actionTitle: "打开项目空间",
+                    action: openProjectsWorkspace
+                )
+            } else {
+                ForEach(appState.recentProjects.prefix(2)) { project in
+                    recentProjectCard(for: project)
                 }
-                .buttonStyle(.plain)
-                .help("打开 \(project.title) 并定位到项目空间")
             }
 
             HStack(spacing: 12) {
@@ -476,6 +434,117 @@ struct HomeDashboardView: View {
                 }
             }
         }
+    }
+
+    private func recentProjectCard(for project: NovelProject) -> some View {
+        Button {
+            appState.openProjectSpace(for: project.id, scrollToProject: true)
+        } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(project.title)
+                            .font(.headline)
+                            .foregroundStyle(palette.textPrimary)
+
+                        Text(project.genre)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(palette.textSecondary)
+                    }
+
+                    Spacer()
+
+                    Text(project.updatedAt)
+                        .font(.caption)
+                        .foregroundStyle(palette.textSecondary)
+                }
+
+                Text(project.summary)
+                    .font(.subheadline)
+                    .foregroundStyle(palette.textSecondary)
+                    .lineLimit(2)
+                    .lineSpacing(3)
+
+                HStack(spacing: 10) {
+                    ProjectChapterPill(
+                        label: "当前创作",
+                        value: project.currentChapterSummary
+                    )
+
+                    ProjectChapterPill(
+                        label: "已创作",
+                        value: "\(project.writtenChapters) 章"
+                    )
+                }
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, minHeight: 148, maxHeight: 148, alignment: .topLeading)
+            .background(
+                GlassPanelBackground(
+                    cornerRadius: 22,
+                    palette: palette,
+                    tint: LinearGradient(
+                        colors: [
+                            palette.warmAccent.opacity(palette.isDark ? 0.14 : 0.09),
+                            .clear
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+            )
+            .overlay(panelStroke(cornerRadius: 22))
+        }
+        .buttonStyle(.plain)
+        .help("打开 \(project.title) 并定位到项目空间")
+    }
+
+    private func homeEmptyRecentProjectCard(
+        title: String,
+        detail: String,
+        actionTitle: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(palette.textPrimary)
+
+                Spacer()
+
+                Text("等待创建")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(palette.coolAccent)
+            }
+
+            Text(detail)
+                .font(.subheadline)
+                .foregroundStyle(palette.textSecondary)
+                .lineSpacing(3)
+
+            Spacer(minLength: 0)
+
+            Button(actionTitle, action: action)
+                .buttonStyle(.bordered)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, minHeight: 148, maxHeight: 148, alignment: .topLeading)
+        .background(
+            GlassPanelBackground(
+                cornerRadius: 22,
+                palette: palette,
+                tint: LinearGradient(
+                    colors: [
+                        palette.coolAccent.opacity(palette.isDark ? 0.10 : 0.06),
+                        .clear
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+        )
+        .overlay(panelStroke(cornerRadius: 22))
     }
 
     private var homeRadarFooter: some View {
@@ -1131,12 +1200,6 @@ struct PlaceholderWorkspaceView: View {
                 Label("写作引句", systemImage: "quote.opening")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(palette.textSecondary)
-
-                Spacer()
-
-                Text("\(LiteraryQuoteLibrary.totalCount) 条名言库")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(palette.coolAccent)
             }
 
             ZStack(alignment: .topLeading) {
@@ -2160,6 +2223,7 @@ private struct ProjectsWorkspacePanel: View {
     @Environment(\.colorScheme) private var colorScheme
     @Bindable var appState: AppState
     @State private var pendingDeletionProject: NovelProject?
+    @State private var chapterBrowserProjectID: NovelProject.ID?
 
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
@@ -2185,6 +2249,9 @@ private struct ProjectsWorkspacePanel: View {
                         isSelected: appState.selectedProjectID == project.id,
                         onSelect: {
                             appState.selectProject(project.id)
+                        },
+                        onViewChapters: {
+                            chapterBrowserProjectID = project.id
                         },
                         onDelete: {
                             pendingDeletionProject = project
@@ -2219,6 +2286,23 @@ private struct ProjectsWorkspacePanel: View {
         } message: {
             if let pendingDeletionProject {
                 Text("《\(pendingDeletionProject.title)》会从当前账号下的项目列表中移除，章节草稿、素材库和结构记录也会一起删除。")
+            }
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { chapterBrowserProjectID != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        chapterBrowserProjectID = nil
+                    }
+                }
+            )
+        ) {
+            if let chapterBrowserProjectID {
+                ProjectSavedChaptersSheet(
+                    appState: appState,
+                    projectID: chapterBrowserProjectID
+                )
             }
         }
     }
@@ -2699,11 +2783,255 @@ private struct LibraryDocumentRow: View {
     }
 }
 
+private struct ProjectSavedChaptersSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @Bindable var appState: AppState
+    let projectID: NovelProject.ID
+
+    @State private var selectedChapterID: ChapterDraft.ID?
+
+    private var palette: DashboardPalette {
+        DashboardPalette(colorScheme: colorScheme)
+    }
+
+    private var project: NovelProject? {
+        appState.project(for: projectID)
+    }
+
+    private var selectedChapter: ChapterDraft? {
+        guard let project else { return nil }
+
+        if let selectedChapterID,
+           let matchedChapter = project.sortedChapterDrafts.first(where: { $0.id == selectedChapterID }) {
+            return matchedChapter
+        }
+
+        return project.sortedChapterDrafts.first
+    }
+
+    var body: some View {
+        ZStack {
+            PageBackground()
+
+            if let project {
+                VStack(alignment: .leading, spacing: 20) {
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("已创作章节")
+                                .font(.system(size: 28, weight: .bold))
+                                .foregroundStyle(palette.textPrimary)
+
+                            Text("《\(project.title)》已保存 \(project.savedChapterCount) 章。左侧选章节，右侧直接预览正文。")
+                                .font(.subheadline)
+                                .foregroundStyle(palette.textSecondary)
+                                .lineSpacing(3)
+                        }
+
+                        Spacer()
+
+                        Button("关闭") {
+                            dismiss()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .top, spacing: 24) {
+                            savedChapterDirectory(for: project)
+                                .frame(width: 300, alignment: .topLeading)
+
+                            savedChapterDetail(for: selectedChapter, project: project)
+                                .frame(maxWidth: .infinity, alignment: .topLeading)
+                        }
+
+                        VStack(alignment: .leading, spacing: 20) {
+                            savedChapterDirectory(for: project)
+                            savedChapterDetail(for: selectedChapter, project: project)
+                        }
+                    }
+                }
+                .padding(24)
+                .frame(width: 920, height: 720, alignment: .topLeading)
+                .task(id: project.id) {
+                    selectedChapterID = project.sortedChapterDrafts.first?.id
+                }
+                .onChange(of: project.chapterDrafts) { _, chapterDrafts in
+                    let sortedDrafts = chapterDrafts.sorted(by: ChapterDraft.sortDescending)
+                    if let selectedChapterID,
+                       sortedDrafts.contains(where: { $0.id == selectedChapterID }) {
+                        return
+                    }
+
+                    self.selectedChapterID = sortedDrafts.first?.id
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("项目已经不可用")
+                        .font(.system(size: 26, weight: .bold))
+                        .foregroundStyle(.primary)
+
+                    Text("这个项目可能已被删除或切换了账号范围，所以当前无法读取已保存章节。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineSpacing(3)
+
+                    Button("关闭") {
+                        dismiss()
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .padding(24)
+                .frame(width: 560, alignment: .topLeading)
+            }
+        }
+    }
+
+    private func savedChapterDirectory(for project: NovelProject) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("章节目录")
+                    .font(.headline)
+                    .foregroundStyle(palette.textPrimary)
+
+                Spacer()
+
+                Text("\(project.savedChapterCount) 章")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(palette.textSecondary)
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(project.sortedChapterDrafts) { chapterDraft in
+                        Button {
+                            selectedChapterID = chapterDraft.id
+                        } label: {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 12) {
+                                    Text(String(format: "%02d", chapterDraft.chapterNumber))
+                                        .font(.caption.weight(.bold))
+                                        .foregroundStyle(chapterDraft.id == selectedChapter?.id ? palette.coolAccent : palette.textSecondary)
+                                        .frame(width: 34, height: 34)
+                                        .background(
+                                            Circle()
+                                                .fill(
+                                                    chapterDraft.id == selectedChapter?.id
+                                                        ? palette.coolAccent.opacity(palette.isDark ? 0.18 : 0.12)
+                                                        : palette.panelBase.opacity(palette.isDark ? 0.70 : 0.52)
+                                                )
+                                        )
+
+                                    Text(chapterDraft.chapterTitle)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(palette.textPrimary)
+                                        .lineLimit(1)
+
+                                    Spacer(minLength: 0)
+                                }
+
+                                Text(chapterDraft.previewText)
+                                    .font(.caption)
+                                    .foregroundStyle(palette.textSecondary)
+                                    .lineLimit(2)
+                            }
+                            .padding(14)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                    .fill(
+                                        chapterDraft.id == selectedChapter?.id
+                                            ? palette.selectedPanel
+                                            : palette.panelBase.opacity(palette.isDark ? 0.82 : 0.68)
+                                    )
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                    .strokeBorder(
+                                        chapterDraft.id == selectedChapter?.id
+                                            ? palette.coolAccent.opacity(0.36)
+                                            : palette.stroke,
+                                        lineWidth: 1
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        }
+    }
+
+    private func savedChapterDetail(for chapterDraft: ChapterDraft?, project: NovelProject) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if let chapterDraft {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) {
+                        WorkspaceMetricBadge(label: "当前章节", value: chapterDraft.chapterSummary)
+                        WorkspaceMetricBadge(label: "字数", value: "\(chapterDraft.wordCount)")
+                        WorkspaceMetricBadge(label: "保存时间", value: chapterDraft.savedAt)
+
+                        Spacer(minLength: 0)
+
+                        Button("载入写作台继续编辑") {
+                            appState.loadChapterDraft(chapterDraft.id, for: project.id)
+                            appState.openWritingDesk(for: project.id)
+                            dismiss()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(palette.coolAccent)
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        WorkspaceMetricBadge(label: "当前章节", value: chapterDraft.chapterSummary)
+                        HStack(spacing: 12) {
+                            WorkspaceMetricBadge(label: "字数", value: "\(chapterDraft.wordCount)")
+                            WorkspaceMetricBadge(label: "保存时间", value: chapterDraft.savedAt)
+                        }
+
+                        Button("载入写作台继续编辑") {
+                            appState.loadChapterDraft(chapterDraft.id, for: project.id)
+                            appState.openWritingDesk(for: project.id)
+                            dismiss()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(palette.coolAccent)
+                    }
+                }
+
+                ScrollView {
+                    Text(chapterDraft.content)
+                        .font(.system(size: 15, weight: .regular, design: .serif))
+                        .foregroundStyle(palette.textPrimary)
+                        .lineSpacing(5)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(18)
+                }
+                .frame(minHeight: 420)
+                .background(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .strokeBorder(palette.stroke, lineWidth: 1)
+                )
+            } else {
+                Text("这个项目还没有已保存章节。")
+                    .font(.subheadline)
+                    .foregroundStyle(palette.textSecondary)
+            }
+        }
+    }
+}
+
 private struct ProjectSpaceProjectRow: View {
     @Environment(\.colorScheme) private var colorScheme
     let project: NovelProject
     let isSelected: Bool
     let onSelect: () -> Void
+    let onViewChapters: () -> Void
     let onDelete: () -> Void
 
     private var palette: DashboardPalette {
@@ -2763,6 +3091,12 @@ private struct ProjectSpaceProjectRow: View {
             .buttonStyle(.plain)
 
             HStack {
+                Button(project.savedChapterCount == 0 ? "暂无章节" : "查看章节") {
+                    onViewChapters()
+                }
+                .buttonStyle(.borderless)
+                .disabled(project.savedChapterCount == 0)
+
                 Spacer()
 
                 Button(role: .destructive, action: onDelete) {

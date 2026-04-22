@@ -847,12 +847,12 @@ struct WritingDeskView: View {
             }
 
             guard let configuration = appState.aiConfiguration else {
-                aiStatusMessage = "已按当前标题更新 \(result.chapterDraft.chapterSummary)。未配置模型，暂未刷新全局记忆。"
+                aiStatusMessage = "已按当前标题更新 \(result.chapterDraft.chapterSummary)。未配置模型，暂未刷新全局记忆和章节树。"
                 isSavingChapter = false
                 return
             }
 
-            refreshGlobalMemoryAfterChapterSave(
+            refreshProjectContextAfterChapterSave(
                 for: project,
                 saveResult: result,
                 configuration: configuration,
@@ -865,7 +865,7 @@ struct WritingDeskView: View {
             let fallbackTitle = fallbackChapterTitle(for: latestProject)
             appState.updateCurrentChapterTitle(fallbackTitle, for: project.id)
             if let result = completeChapterDraftSave(for: project, statusPrefix: "模型未配置，已按当前标题保存") {
-                aiStatusMessage = "模型未配置，已按当前标题保存 \(result.chapterDraft.chapterSummary)。暂未刷新全局记忆。"
+                aiStatusMessage = "模型未配置，已按当前标题保存 \(result.chapterDraft.chapterSummary)。暂未刷新全局记忆和章节树。"
             }
             isSavingChapter = false
             return
@@ -884,7 +884,7 @@ struct WritingDeskView: View {
                 await MainActor.run {
                     appState.updateCurrentChapterTitle(title, for: project.id)
                     if let result = completeChapterDraftSave(for: project, statusPrefix: "AI 已拟好标题并保存") {
-                        refreshGlobalMemoryAfterChapterSave(
+                        refreshProjectContextAfterChapterSave(
                             for: project,
                             saveResult: result,
                             configuration: configuration,
@@ -904,7 +904,7 @@ struct WritingDeskView: View {
                         statusPrefix: "AI 拟标题失败，已按当前标题保存",
                         detailMessage: error.localizedDescription
                     ) {
-                        refreshGlobalMemoryAfterChapterSave(
+                        refreshProjectContextAfterChapterSave(
                             for: project,
                             saveResult: result,
                             configuration: configuration,
@@ -1116,7 +1116,7 @@ struct WritingDeskView: View {
         return result
     }
 
-    private func refreshGlobalMemoryAfterChapterSave(
+    private func refreshProjectContextAfterChapterSave(
         for project: NovelProject,
         saveResult: ChapterDraftSaveResult,
         configuration: AIConnectionConfiguration,
@@ -1124,42 +1124,87 @@ struct WritingDeskView: View {
         detailMessage: String? = nil
     ) {
         let chapterDraft = saveResult.chapterDraft
-        aiStatusMessage = "\(statusPrefix) \(chapterDraft.chapterSummary)。正在更新全局记忆…"
+        aiStatusMessage = "\(statusPrefix) \(chapterDraft.chapterSummary)。正在更新全局记忆和章节树…"
 
         Task {
-            do {
-                let latestProject = appState.project(for: project.id) ?? project
-                let globalMemory = try await AIWritingService.refreshGlobalMemory(
-                    configuration: configuration,
-                    project: latestProject,
-                    chapterDraft: chapterDraft
-                )
+            let latestProject = appState.project(for: project.id) ?? project
 
-                await MainActor.run {
+            async let globalMemoryTask: Result<String, Error> = {
+                do {
+                    return .success(try await AIWritingService.refreshGlobalMemory(
+                        configuration: configuration,
+                        project: latestProject,
+                        chapterDraft: chapterDraft
+                    ))
+                } catch {
+                    return .failure(error)
+                }
+            }()
+
+            async let outlineSummaryTask: Result<String, Error> = {
+                do {
+                    return .success(try await AIWritingService.summarizeStoryStructure(
+                        configuration: configuration,
+                        project: latestProject
+                    ))
+                } catch {
+                    return .failure(error)
+                }
+            }()
+
+            let globalMemoryResult = await globalMemoryTask
+            let outlineSummaryResult = await outlineSummaryTask
+
+            await MainActor.run {
+                let updatedAt = timestampLabel()
+
+                if case let .success(globalMemory) = globalMemoryResult {
                     appState.updateContinuityNotes(
                         globalMemory,
-                        updatedAt: timestampLabel(),
+                        updatedAt: updatedAt,
                         for: project.id
                     )
-                    isSavingChapter = false
-                    if let detailMessage {
-                        aiStatusMessage = "\(statusPrefix) \(chapterDraft.chapterSummary)。\(detailMessage) 全局记忆已同步更新。"
-                    } else {
-                        aiStatusMessage = "\(statusPrefix) \(chapterDraft.chapterSummary)。全局记忆已同步更新。"
-                    }
-                    revealWritingDeskWindow(for: project.id)
                 }
-            } catch {
-                await MainActor.run {
-                    isSavingChapter = false
-                    if let detailMessage {
-                        aiStatusMessage = "\(statusPrefix) \(chapterDraft.chapterSummary)。\(detailMessage) 全局记忆更新失败：\(error.localizedDescription)"
-                    } else {
-                        aiStatusMessage = "\(statusPrefix) \(chapterDraft.chapterSummary)。全局记忆更新失败：\(error.localizedDescription)"
-                    }
-                    revealWritingDeskWindow(for: project.id)
+
+                if case let .success(outlineSummary) = outlineSummaryResult {
+                    appState.updateOutlineSummary(
+                        outlineSummary,
+                        updatedAt: updatedAt,
+                        for: project.id
+                    )
                 }
+
+                isSavingChapter = false
+                aiStatusMessage = chapterSaveRefreshMessage(
+                    statusPrefix: statusPrefix,
+                    chapterSummary: chapterDraft.chapterSummary,
+                    detailMessage: detailMessage,
+                    globalMemoryResult: globalMemoryResult,
+                    outlineSummaryResult: outlineSummaryResult
+                )
+                revealWritingDeskWindow(for: project.id)
             }
+        }
+    }
+
+    private func chapterSaveRefreshMessage(
+        statusPrefix: String,
+        chapterSummary: String,
+        detailMessage: String?,
+        globalMemoryResult: Result<String, Error>,
+        outlineSummaryResult: Result<String, Error>
+    ) -> String {
+        let detailPrefix = detailMessage.map { "\($0) " } ?? ""
+
+        switch (globalMemoryResult, outlineSummaryResult) {
+        case (.success, .success):
+            return "\(statusPrefix) \(chapterSummary)。\(detailPrefix)全局记忆与章节树已同步更新。"
+        case let (.failure(globalMemoryError), .failure(outlineSummaryError)):
+            return "\(statusPrefix) \(chapterSummary)。\(detailPrefix)全局记忆更新失败：\(globalMemoryError.localizedDescription)；章节树更新失败：\(outlineSummaryError.localizedDescription)"
+        case let (.failure(globalMemoryError), .success):
+            return "\(statusPrefix) \(chapterSummary)。\(detailPrefix)章节树已更新，但全局记忆更新失败：\(globalMemoryError.localizedDescription)"
+        case let (.success, .failure(outlineSummaryError)):
+            return "\(statusPrefix) \(chapterSummary)。\(detailPrefix)全局记忆已更新，但章节树更新失败：\(outlineSummaryError.localizedDescription)"
         }
     }
 

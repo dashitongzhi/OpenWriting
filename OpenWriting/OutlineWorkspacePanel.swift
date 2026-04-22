@@ -15,6 +15,7 @@ struct OutlineWorkspacePanel: View {
         if let project = activeProject {
             VStack(alignment: .leading, spacing: 24) {
                 chapterListPanel(for: project)
+                chapterTreeWorkspacePanel(for: project)
                 globalMemoryPanel(for: project)
                 storyModePanel(for: project)
             }
@@ -215,6 +216,168 @@ struct OutlineWorkspacePanel: View {
         Binding(
             get: { appState.project(for: projectID)?.continuityNotes ?? "" },
             set: { appState.updateContinuityNotes($0, updatedAt: timestampLabel(), for: projectID) }
+        )
+    }
+
+    private func chapterTreeWorkspacePanel(for project: NovelProject) -> some View {
+        DashboardPanel(
+            title: "章节树工作区",
+            subtitle: "这里集中维护章节树本身的结构记录。保存章节后，AI 会自动刷新章节树总结；你也可以继续手动补齐结构、场景、角色弧线和伏笔。"
+        ) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    WorkspaceMetricBadge(label: "AI 总结", value: project.outlineSummaryStatusLabel)
+                    WorkspaceMetricBadge(label: "结构节点", value: project.structureStatusLabel)
+                    WorkspaceMetricBadge(label: "场景推进", value: project.sceneProgressStatusLabel)
+                    WorkspaceMetricBadge(label: "角色弧线", value: project.characterArcStatusLabel)
+                    WorkspaceMetricBadge(label: "伏笔回收", value: project.foreshadowStatusLabel)
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 12) {
+                        WorkspaceMetricBadge(label: "AI 总结", value: project.outlineSummaryStatusLabel)
+                        WorkspaceMetricBadge(label: "结构节点", value: project.structureStatusLabel)
+                    }
+
+                    HStack(spacing: 12) {
+                        WorkspaceMetricBadge(label: "场景推进", value: project.sceneProgressStatusLabel)
+                        WorkspaceMetricBadge(label: "角色弧线", value: project.characterArcStatusLabel)
+                        WorkspaceMetricBadge(label: "伏笔回收", value: project.foreshadowStatusLabel)
+                    }
+                }
+            }
+
+            Text("AI 章节树总结")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+
+            OutlineEditorSurface(
+                text: outlineSummaryBinding(for: project.id),
+                placeholder: "保存章节后，AI 会在这里汇总当前章节树状态、推进判断和下一步建议。",
+                minHeight: 220
+            )
+
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 18) {
+                        chapterTreeEditorSection(
+                            title: "章节骨架拆解",
+                            placeholder: "记录卷章骨架、章节目标和前后承接关系。",
+                            text: structureNotesBinding(for: project.id),
+                            minHeight: 220
+                        )
+
+                        chapterTreeEditorSection(
+                            title: "角色弧线记录",
+                            placeholder: "记录人物欲望变化、关系扭转、立场摇摆和关键情绪节点。",
+                            text: characterArcNotesBinding(for: project.id),
+                            minHeight: 220
+                        )
+                    }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                    VStack(alignment: .leading, spacing: 18) {
+                        chapterTreeEditorSection(
+                            title: "场景推进记录",
+                            placeholder: "把当前章节拆成若干场景，写清每个场景推进了什么。",
+                            text: sceneProgressNotesBinding(for: project.id),
+                            minHeight: 220
+                        )
+
+                        chapterTreeEditorSection(
+                            title: "伏笔与回收记录",
+                            placeholder: "记录已埋下、已推进、待回收的伏笔和它们的最近状态。",
+                            text: foreshadowNotesBinding(for: project.id),
+                            minHeight: 220
+                        )
+                    }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+
+                VStack(alignment: .leading, spacing: 18) {
+                    chapterTreeEditorSection(
+                        title: "章节骨架拆解",
+                        placeholder: "记录卷章骨架、章节目标和前后承接关系。",
+                        text: structureNotesBinding(for: project.id),
+                        minHeight: 220
+                    )
+
+                    chapterTreeEditorSection(
+                        title: "场景推进记录",
+                        placeholder: "把当前章节拆成若干场景，写清每个场景推进了什么。",
+                        text: sceneProgressNotesBinding(for: project.id),
+                        minHeight: 220
+                    )
+
+                    chapterTreeEditorSection(
+                        title: "角色弧线记录",
+                        placeholder: "记录人物欲望变化、关系扭转、立场摇摆和关键情绪节点。",
+                        text: characterArcNotesBinding(for: project.id),
+                        minHeight: 220
+                    )
+
+                    chapterTreeEditorSection(
+                        title: "伏笔与回收记录",
+                        placeholder: "记录已埋下、已推进、待回收的伏笔和它们的最近状态。",
+                        text: foreshadowNotesBinding(for: project.id),
+                        minHeight: 220
+                    )
+                }
+            }
+        }
+    }
+
+    private func chapterTreeEditorSection(
+        title: String,
+        placeholder: String,
+        text: Binding<String>,
+        minHeight: CGFloat
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+
+            OutlineEditorSurface(
+                text: text,
+                placeholder: placeholder,
+                minHeight: minHeight
+            )
+        }
+    }
+
+    private func outlineSummaryBinding(for projectID: NovelProject.ID) -> Binding<String> {
+        Binding(
+            get: { appState.project(for: projectID)?.outlineSummary ?? "" },
+            set: { appState.updateOutlineSummary($0, updatedAt: timestampLabel(), for: projectID) }
+        )
+    }
+
+    private func structureNotesBinding(for projectID: NovelProject.ID) -> Binding<String> {
+        Binding(
+            get: { appState.project(for: projectID)?.structureNotes ?? "" },
+            set: { appState.updateStructureNotes($0, for: projectID) }
+        )
+    }
+
+    private func sceneProgressNotesBinding(for projectID: NovelProject.ID) -> Binding<String> {
+        Binding(
+            get: { appState.project(for: projectID)?.sceneProgressNotes ?? "" },
+            set: { appState.updateSceneProgressNotes($0, for: projectID) }
+        )
+    }
+
+    private func characterArcNotesBinding(for projectID: NovelProject.ID) -> Binding<String> {
+        Binding(
+            get: { appState.project(for: projectID)?.characterArcNotes ?? "" },
+            set: { appState.updateCharacterArcNotes($0, for: projectID) }
+        )
+    }
+
+    private func foreshadowNotesBinding(for projectID: NovelProject.ID) -> Binding<String> {
+        Binding(
+            get: { appState.project(for: projectID)?.foreshadowNotes ?? "" },
+            set: { appState.updateForeshadowNotes($0, for: projectID) }
         )
     }
 
