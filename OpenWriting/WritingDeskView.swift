@@ -1,4 +1,3 @@
-import AppKit
 import Observation
 import SwiftUI
 import UniformTypeIdentifiers
@@ -17,6 +16,11 @@ struct WritingDeskView: View {
     @State private var saveMessage = "自动保存已开启，可按章节收录"
     @State private var isGenerating = false
     @State private var isSavingChapter = false
+    @State private var outlineGenerationTask: Task<Void, Never>?
+    @State private var writingGenerationTask: Task<Void, Never>?
+    @State private var outlineGenerationToken: UUID?
+    @State private var writingGenerationToken: UUID?
+    @State private var projectContextRefreshTokens: [NovelProject.ID: UUID] = [:]
     @State private var isCacheCollapsed = false
     @State private var autoScrollLocked = false
     @State private var areConfigurationCardsCollapsed = false
@@ -709,6 +713,7 @@ struct WritingDeskView: View {
     private func generateOutline(for project: NovelProject) {
         let latestProject = appState.project(for: project.id) ?? project
         let profile = latestProject.outlineGenerationProfile
+        let requestContext = outlineGenerationContext(for: latestProject, profile: profile)
 
         guard profile.hasMinimumRequirements else {
             aiStatusMessage = "生成大纲前还差：\(profile.missingRequiredFieldLabels.joined(separator: "、"))。"
@@ -721,11 +726,14 @@ struct WritingDeskView: View {
             return
         }
 
+        outlineGenerationTask?.cancel()
+        let requestToken = UUID()
+        outlineGenerationToken = requestToken
         isGenerating = true
         aiStatusMessage = "AI 正在根据总体流程、世界观、主角底色、预期字数和结局偏好生成大纲…"
         timingSnapshot = .queued
 
-        Task {
+        outlineGenerationTask = Task {
             let startedAt = Date()
 
             do {
@@ -738,7 +746,24 @@ struct WritingDeskView: View {
                 let total = Date().timeIntervalSince(startedAt)
 
                 await MainActor.run {
+                    guard outlineGenerationToken == requestToken else {
+                        return
+                    }
+
+                    let currentContext = appState.project(for: project.id).map {
+                        outlineGenerationContext(for: $0, profile: $0.outlineGenerationProfile)
+                    }
+                    guard currentContext == requestContext else {
+                        clearOutlineGenerationRequest(token: requestToken)
+                        isGenerating = false
+                        timingSnapshot = .idle
+                        aiStatusMessage = "生成期间你已经改过大纲参数或本地大纲，旧结果已丢弃，当前内容保持不变。"
+                        revealWritingDeskWindow(for: project.id)
+                        return
+                    }
+
                     appState.updateOutlineText(outline, for: project.id)
+                    clearOutlineGenerationRequest(token: requestToken)
                     isGenerating = false
                     timingSnapshot = AIWriterTimingSnapshot(
                         queue: 0.1,
@@ -749,8 +774,23 @@ struct WritingDeskView: View {
                     aiStatusMessage = "大纲已生成并回填到大纲设定，可以继续微调后直接开始写作。"
                     revealWritingDeskWindow(for: project.id)
                 }
+            } catch is CancellationError {
+                await MainActor.run {
+                    guard outlineGenerationToken == requestToken else {
+                        return
+                    }
+
+                    clearOutlineGenerationRequest(token: requestToken)
+                    isGenerating = false
+                    timingSnapshot = .idle
+                }
             } catch {
                 await MainActor.run {
+                    guard outlineGenerationToken == requestToken else {
+                        return
+                    }
+
+                    clearOutlineGenerationRequest(token: requestToken)
                     isGenerating = false
                     timingSnapshot = .idle
                     aiStatusMessage = error.localizedDescription
@@ -767,13 +807,18 @@ struct WritingDeskView: View {
         }
 
         let latestProject = appState.project(for: project.id) ?? project
+        let requestContext = draftGenerationContext(for: latestProject, rejectedSuggestion: rejectedSuggestion)
         isGenerating = true
         aiStatusMessage = rejectedSuggestion == nil
             ? "AI 正在根据大纲、参考文本、特殊要求和字数要求创作候选稿…"
             : "AI 正在重写这一版候选稿，会保留当前约束，但换一种写法重新生成…"
         timingSnapshot = .queued
 
-        Task {
+        writingGenerationTask?.cancel()
+        let requestToken = UUID()
+        writingGenerationToken = requestToken
+
+        writingGenerationTask = Task {
             let startedAt = Date()
 
             do {
@@ -788,7 +833,24 @@ struct WritingDeskView: View {
                 let total = Date().timeIntervalSince(startedAt)
 
                 await MainActor.run {
+                    guard writingGenerationToken == requestToken else {
+                        return
+                    }
+
+                    let currentContext = appState.project(for: project.id).map {
+                        draftGenerationContext(for: $0, rejectedSuggestion: rejectedSuggestion)
+                    }
+                    guard currentContext == requestContext else {
+                        clearWritingGenerationRequest(token: requestToken)
+                        isGenerating = false
+                        timingSnapshot = .idle
+                        aiStatusMessage = "生成期间写作上下文已经变化，旧候选稿已丢弃，请按当前内容重新生成。"
+                        revealWritingDeskWindow(for: project.id)
+                        return
+                    }
+
                     aiSuggestion = suggestion
+                    clearWritingGenerationRequest(token: requestToken)
                     isGenerating = false
                     timingSnapshot = AIWriterTimingSnapshot(
                         queue: 0.1,
@@ -801,8 +863,23 @@ struct WritingDeskView: View {
                     focusAIEditor()
                     requestAutoScroll(to: .ai)
                 }
+            } catch is CancellationError {
+                await MainActor.run {
+                    guard writingGenerationToken == requestToken else {
+                        return
+                    }
+
+                    clearWritingGenerationRequest(token: requestToken)
+                    isGenerating = false
+                    timingSnapshot = .idle
+                }
             } catch {
                 await MainActor.run {
+                    guard writingGenerationToken == requestToken else {
+                        return
+                    }
+
+                    clearWritingGenerationRequest(token: requestToken)
                     isGenerating = false
                     timingSnapshot = .idle
                     aiStatusMessage = error.localizedDescription
@@ -1125,9 +1202,13 @@ struct WritingDeskView: View {
     ) {
         let chapterDraft = saveResult.chapterDraft
         aiStatusMessage = "\(statusPrefix) \(chapterDraft.chapterSummary)。正在更新全局记忆和章节树…"
+        let baselineProject = appState.project(for: project.id) ?? project
+        let baseline = ChapterTreeRefreshBaseline(project: baselineProject)
+        let refreshToken = UUID()
+        projectContextRefreshTokens[project.id] = refreshToken
 
         Task {
-            let latestProject = appState.project(for: project.id) ?? project
+            let latestProject = appState.project(for: project.id) ?? baselineProject
 
             async let globalMemoryTask: Result<String, Error> = {
                 do {
@@ -1141,11 +1222,12 @@ struct WritingDeskView: View {
                 }
             }()
 
-            async let outlineSummaryTask: Result<String, Error> = {
+            async let chapterTreeTask: Result<ChapterTreeRefresh, Error> = {
                 do {
-                    return .success(try await AIWritingService.summarizeStoryStructure(
+                    return .success(try await AIWritingService.refreshChapterTree(
                         configuration: configuration,
-                        project: latestProject
+                        project: latestProject,
+                        chapterDraft: chapterDraft
                     ))
                 } catch {
                     return .failure(error)
@@ -1153,12 +1235,24 @@ struct WritingDeskView: View {
             }()
 
             let globalMemoryResult = await globalMemoryTask
-            let outlineSummaryResult = await outlineSummaryTask
+            let chapterTreeResult = await chapterTreeTask
 
             await MainActor.run {
-                let updatedAt = timestampLabel()
+                guard projectContextRefreshTokens[project.id] == refreshToken else {
+                    return
+                }
 
-                if case let .success(globalMemory) = globalMemoryResult {
+                let updatedAt = timestampLabel()
+                let currentProject = appState.project(for: project.id)
+                let normalizedContinuity = currentProject?.continuityNotes
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let shouldApplyGlobalMemory = normalizedContinuity == baseline.continuityNotes
+                let preservedLocalGlobalMemory = !shouldApplyGlobalMemory
+                    && (currentProject?.hasGlobalMemory ?? false)
+
+                var chapterTreeApplyOutcome = ChapterTreeRefreshApplyOutcome()
+
+                if case let .success(globalMemory) = globalMemoryResult, shouldApplyGlobalMemory {
                     appState.updateContinuityNotes(
                         globalMemory,
                         updatedAt: updatedAt,
@@ -1166,21 +1260,25 @@ struct WritingDeskView: View {
                     )
                 }
 
-                if case let .success(outlineSummary) = outlineSummaryResult {
-                    appState.updateOutlineSummary(
-                        outlineSummary,
+                if case let .success(chapterTreeRefresh) = chapterTreeResult {
+                    chapterTreeApplyOutcome = appState.applyChapterTreeRefresh(
+                        chapterTreeRefresh,
+                        baseline: baseline,
                         updatedAt: updatedAt,
                         for: project.id
                     )
                 }
 
+                projectContextRefreshTokens.removeValue(forKey: project.id)
                 isSavingChapter = false
                 aiStatusMessage = chapterSaveRefreshMessage(
                     statusPrefix: statusPrefix,
                     chapterSummary: chapterDraft.chapterSummary,
                     detailMessage: detailMessage,
                     globalMemoryResult: globalMemoryResult,
-                    outlineSummaryResult: outlineSummaryResult
+                    preservedLocalGlobalMemory: preservedLocalGlobalMemory,
+                    chapterTreeResult: chapterTreeResult,
+                    chapterTreeApplyOutcome: chapterTreeApplyOutcome
                 )
                 revealWritingDeskWindow(for: project.id)
             }
@@ -1192,20 +1290,40 @@ struct WritingDeskView: View {
         chapterSummary: String,
         detailMessage: String?,
         globalMemoryResult: Result<String, Error>,
-        outlineSummaryResult: Result<String, Error>
+        preservedLocalGlobalMemory: Bool,
+        chapterTreeResult: Result<ChapterTreeRefresh, Error>,
+        chapterTreeApplyOutcome: ChapterTreeRefreshApplyOutcome
     ) -> String {
         let detailPrefix = detailMessage.map { "\($0) " } ?? ""
+        var refreshNotes: [String] = []
 
-        switch (globalMemoryResult, outlineSummaryResult) {
-        case (.success, .success):
-            return "\(statusPrefix) \(chapterSummary)。\(detailPrefix)全局记忆与章节树已同步更新。"
-        case let (.failure(globalMemoryError), .failure(outlineSummaryError)):
-            return "\(statusPrefix) \(chapterSummary)。\(detailPrefix)全局记忆更新失败：\(globalMemoryError.localizedDescription)；章节树更新失败：\(outlineSummaryError.localizedDescription)"
-        case let (.failure(globalMemoryError), .success):
-            return "\(statusPrefix) \(chapterSummary)。\(detailPrefix)章节树已更新，但全局记忆更新失败：\(globalMemoryError.localizedDescription)"
-        case let (.success, .failure(outlineSummaryError)):
-            return "\(statusPrefix) \(chapterSummary)。\(detailPrefix)全局记忆已更新，但章节树更新失败：\(outlineSummaryError.localizedDescription)"
+        switch globalMemoryResult {
+        case let .success(globalMemory) where globalMemory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
+            refreshNotes.append("全局记忆返回为空，已保留当前版本")
+        case .success:
+            if preservedLocalGlobalMemory {
+                refreshNotes.append("检测到你刚手动修改了全局记忆，已保留本地版本")
+            } else {
+                refreshNotes.append("全局记忆已更新")
+            }
+        case let .failure(error):
+            refreshNotes.append("全局记忆更新失败：\(error.localizedDescription)")
         }
+
+        switch chapterTreeResult {
+        case let .success(refresh) where !refresh.hasStructuredContent:
+            refreshNotes.append("章节树返回为空，已保留当前版本")
+        case .success:
+            if chapterTreeApplyOutcome.preservedLocalChanges {
+                refreshNotes.append("章节树已刷新，并保留了你刚修改过的 \(chapterTreeApplyOutcome.protectedSections) 个区块")
+            } else {
+                refreshNotes.append("章节树已同步更新")
+            }
+        case let .failure(error):
+            refreshNotes.append("章节树更新失败：\(error.localizedDescription)")
+        }
+
+        return "\(statusPrefix) \(chapterSummary)。\(detailPrefix)\(refreshNotes.joined(separator: "；"))。"
     }
 
     private func requestAutoScroll(to anchor: WritingDeskScrollAnchor) {
@@ -1231,15 +1349,74 @@ struct WritingDeskView: View {
     }
 
     private func resetSessionState() {
+        cancelActiveGenerationTasks()
         aiSuggestion = ""
         isGenerating = false
         isSavingChapter = false
+        projectContextRefreshTokens.removeAll()
         isCacheCollapsed = false
         autoScrollLocked = false
         timingSnapshot = .idle
         saveMessage = "自动保存已开启，可按章节收录"
         aiStatusMessage = "准备就绪，可先补大纲、参考文本和特殊要求，再开始当前章节写作。"
         focusDraftEditor()
+    }
+
+    private func outlineGenerationContext(
+        for project: NovelProject,
+        profile: OutlineGenerationProfile
+    ) -> OutlineGenerationRequestContext {
+        OutlineGenerationRequestContext(
+            projectID: project.id,
+            storyLength: project.storyLength,
+            outlineText: project.outlineText,
+            profile: profile
+        )
+    }
+
+    private func draftGenerationContext(
+        for project: NovelProject,
+        rejectedSuggestion: String?
+    ) -> DraftGenerationRequestContext {
+        DraftGenerationRequestContext(
+            projectID: project.id,
+            storyLength: project.storyLength,
+            currentChapterTitle: project.currentChapterTitle,
+            currentChapterNumber: project.currentChapterNumber,
+            chapterFocus: project.chapterFocus,
+            draftText: project.draftText,
+            outlineText: project.outlineText,
+            referenceContextText: project.referenceContextText,
+            specialRequirements: project.specialRequirements,
+            wordTargetText: project.wordTargetText,
+            continuityNotes: project.continuityNotes,
+            referenceDocuments: project.referenceDocuments,
+            chapterDrafts: project.chapterDrafts,
+            mode: project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .advanceChapter : .continueScene,
+            length: preferredLength(for: project),
+            rejectedSuggestion: rejectedSuggestion?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        )
+    }
+
+    private func clearOutlineGenerationRequest(token: UUID) {
+        guard outlineGenerationToken == token else { return }
+        outlineGenerationToken = nil
+        outlineGenerationTask = nil
+    }
+
+    private func clearWritingGenerationRequest(token: UUID) {
+        guard writingGenerationToken == token else { return }
+        writingGenerationToken = nil
+        writingGenerationTask = nil
+    }
+
+    private func cancelActiveGenerationTasks() {
+        outlineGenerationToken = nil
+        writingGenerationToken = nil
+        outlineGenerationTask?.cancel()
+        writingGenerationTask?.cancel()
+        outlineGenerationTask = nil
+        writingGenerationTask = nil
     }
 
     private func configurationActions(
@@ -1323,14 +1500,7 @@ struct WritingDeskView: View {
     }
 
     private func loadText(from url: URL) throws -> String {
-        let accessed = url.startAccessingSecurityScopedResource()
-        defer {
-            if accessed {
-                url.stopAccessingSecurityScopedResource()
-            }
-        }
-
-        return try String(contentsOf: url, encoding: .utf8)
+        try TextFileDecoding.loadText(from: url, usingSecurityScopedAccess: true)
     }
 
     private func timestampLabel() -> String {
@@ -1347,7 +1517,33 @@ private enum WritingDeskScrollAnchor: String {
     case cache
 }
 
-private struct AIWriterTimingSnapshot {
+private struct OutlineGenerationRequestContext: Equatable {
+    let projectID: NovelProject.ID
+    let storyLength: NovelLength
+    let outlineText: String
+    let profile: OutlineGenerationProfile
+}
+
+private struct DraftGenerationRequestContext: Equatable {
+    let projectID: NovelProject.ID
+    let storyLength: NovelLength
+    let currentChapterTitle: String
+    let currentChapterNumber: Int
+    let chapterFocus: String
+    let draftText: String
+    let outlineText: String
+    let referenceContextText: String
+    let specialRequirements: String
+    let wordTargetText: String
+    let continuityNotes: String
+    let referenceDocuments: [ReferenceDocument]
+    let chapterDrafts: [ChapterDraft]
+    let mode: AIWritingMode
+    let length: AIWritingLength
+    let rejectedSuggestion: String
+}
+
+struct AIWriterTimingSnapshot {
     var queue: Double
     var generate: Double
     var finish: Double
@@ -1508,581 +1704,5 @@ private struct WritingDeskSectionCard<Content: View>: View {
 
     private var borderColor: Color {
         colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.18)
-    }
-}
-
-private struct WritingDeskCollapsedLayout {
-    static let configurationCardHeight: CGFloat = 74
-
-    let creationRowHeight: CGFloat
-    let draftPrimaryCardHeight: CGFloat
-    let cacheCardHeight: CGFloat?
-    let draftEditorHeight: CGFloat
-    let cacheEditorHeight: CGFloat
-    let aiCardHeight: CGFloat
-    let aiEditorHeight: CGFloat
-
-    init(
-        containerSize: CGSize,
-        topPadding: CGFloat,
-        bottomPadding: CGFloat,
-        spacing: CGFloat,
-        showCachePanel: Bool,
-        showTimeline: Bool
-    ) {
-        let availableHeight = max(280, containerSize.height - topPadding - bottomPadding - Self.configurationCardHeight - spacing)
-        creationRowHeight = availableHeight
-        aiCardHeight = availableHeight
-
-        if showCachePanel {
-            let proposedCacheHeight = min(max(128, availableHeight * 0.22), 196)
-            cacheCardHeight = proposedCacheHeight
-            draftPrimaryCardHeight = max(200, availableHeight - spacing - proposedCacheHeight)
-        } else {
-            cacheCardHeight = nil
-            draftPrimaryCardHeight = availableHeight
-        }
-
-        draftEditorHeight = max(132, draftPrimaryCardHeight - 340)
-        cacheEditorHeight = max(72, (cacheCardHeight ?? 0) - 124)
-        aiEditorHeight = max(148, aiCardHeight - (showTimeline ? 272 : 214))
-    }
-}
-
-private struct WritingDeskInlineField<Content: View>: View {
-    let title: String
-    @ViewBuilder let content: Content
-
-    init(title: String, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.content = content()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            content
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-private struct WritingDeskTextSurface: View {
-    @Environment(\.colorScheme) private var colorScheme
-    @Binding var text: String
-    let placeholder: String
-    let minHeight: CGFloat
-
-    var body: some View {
-        TextEditor(text: $text)
-            .font(.system(size: 14, weight: .regular))
-            .scrollContentBackground(.hidden)
-            .padding(14)
-            .frame(minHeight: minHeight, alignment: .topLeading)
-            .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(.ultraThinMaterial)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .strokeBorder(borderColor, lineWidth: 1)
-            )
-            .overlay(alignment: .topLeading) {
-                if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(placeholder)
-                        .font(.subheadline)
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 18)
-                        .allowsHitTesting(false)
-                }
-            }
-    }
-
-    private var borderColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.16)
-    }
-}
-
-private struct WritingDeskCacheSurface: View {
-    @Environment(\.colorScheme) private var colorScheme
-    let text: String
-    let placeholder: String
-    let minHeight: CGFloat
-
-    var body: some View {
-        ScrollView {
-            Text(text)
-                .font(.system(size: 15, weight: .regular, design: .serif))
-                .lineSpacing(4)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
-                .padding(14)
-        }
-        .frame(minHeight: minHeight, alignment: .topLeading)
-        .scrollIndicators(.visible)
-            .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(.ultraThinMaterial)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .strokeBorder(borderColor, lineWidth: 1)
-            )
-            .overlay(alignment: .topLeading) {
-                if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(placeholder)
-                        .font(.subheadline)
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 18)
-                        .allowsHitTesting(false)
-                }
-            }
-    }
-
-    private var borderColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.16)
-    }
-}
-
-private struct WritingDeskTimelineRow: View {
-    let snapshot: AIWriterTimingSnapshot
-
-    var body: some View {
-        HStack(spacing: 10) {
-            WritingDeskTimelineNode(title: "排队", value: snapshot.queue)
-            WritingDeskTimelineNode(title: "生成", value: snapshot.generate)
-            WritingDeskTimelineNode(title: "收尾", value: snapshot.finish)
-            WritingDeskTimelineNode(title: "完成", value: snapshot.complete)
-        }
-    }
-}
-
-private struct WritingDeskTimelineNode: View {
-    @Environment(\.colorScheme) private var colorScheme
-    let title: String
-    let value: Double
-
-    var body: some View {
-        VStack(spacing: 6) {
-            Text(title)
-                .font(.headline)
-                .foregroundStyle(.secondary)
-
-            Text(String(format: "%.1fs", value))
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 14)
-        .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(borderColor, lineWidth: 1)
-        )
-    }
-
-    private var borderColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.16)
-    }
-}
-
-private struct WritingDeskOutlineGeneratorSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var colorScheme
-
-    let projectTitle: String
-    let storyLength: NovelLength
-    @Binding var profile: OutlineGenerationProfile
-    let isGenerating: Bool
-    let onGenerate: () -> Void
-
-    var body: some View {
-        ZStack {
-            PageBackground()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    header
-                    minimumChecklist
-
-                    WritingDeskOutlinePromptGroupCard(
-                        title: "小说框架",
-                        description: "先把故事怎么开头、怎么推进、最后想走到哪里写清楚。"
-                    ) {
-                        WritingDeskOutlineField(
-                            title: "总体流程",
-                            placeholder: "起始、大致经过、预期结果",
-                            isRequired: true,
-                            minHeight: 138,
-                            text: $profile.storyFlow
-                        )
-
-                        WritingDeskOutlineField(
-                            title: "主要卖点",
-                            placeholder: "金手指、设定亮点、爽点",
-                            minHeight: 96,
-                            text: $profile.sellingPoints
-                        )
-
-                        WritingDeskOutlineField(
-                            title: "关键事件",
-                            placeholder: "激励事件、低谷、高潮等",
-                            minHeight: 108,
-                            text: $profile.keyEvents
-                        )
-
-                        WritingDeskOutlineField(
-                            title: "故事节奏",
-                            placeholder: "慢热、快节奏、持续高压等",
-                            isCompact: true,
-                            text: $profile.storyPacing
-                        )
-
-                        WritingDeskOutlineField(
-                            title: "重要伏笔",
-                            placeholder: "需要提前埋下、后续必须回收的点",
-                            minHeight: 96,
-                            text: $profile.foreshadowingNotes
-                        )
-                    }
-
-                    WritingDeskOutlinePromptGroupCard(
-                        title: "主要世界观",
-                        description: "把背景、势力、规则和境界体系这类基础约束说明白。"
-                    ) {
-                        WritingDeskOutlineField(
-                            title: "世界观描述",
-                            placeholder: "背景、势力、规则、境界体系",
-                            isRequired: true,
-                            minHeight: 168,
-                            text: $profile.worldDescription
-                        )
-                    }
-
-                    WritingDeskOutlinePromptGroupCard(
-                        title: "核心人物设定",
-                        description: "这里决定主角底色、人物动力、关键关系和主要对抗。"
-                    ) {
-                        WritingDeskOutlineField(
-                            title: "主角性格标签",
-                            placeholder: "主角的核心性格和人物底色",
-                            isRequired: true,
-                            isCompact: true,
-                            text: $profile.protagonistTraits
-                        )
-
-                        WritingDeskOutlineField(
-                            title: "角色动机与欲望",
-                            placeholder: "主角和重要人物各自想要什么、害怕什么",
-                            minHeight: 96,
-                            text: $profile.motivations
-                        )
-
-                        WritingDeskOutlineField(
-                            title: "人物关系图谱",
-                            placeholder: "盟友、师徒、家族、情感线、敌对链条",
-                            minHeight: 96,
-                            text: $profile.relationshipMap
-                        )
-
-                        WritingDeskOutlineField(
-                            title: "反派的描绘",
-                            placeholder: "反派目标、手段、威压感、与主角的矛盾",
-                            minHeight: 96,
-                            text: $profile.antagonistPortrait
-                        )
-                    }
-
-                    WritingDeskOutlinePromptGroupCard(
-                        title: "输出控制参数",
-                        description: "决定这本书要写多长，以及最后收束到什么类型的结局。"
-                    ) {
-                        WritingDeskOutlineField(
-                            title: "预期字数",
-                            placeholder: "例如：50万 / 100万 / 200万",
-                            isRequired: true,
-                            isCompact: true,
-                            text: $profile.expectedLength
-                        )
-
-                        WritingDeskOutlineField(
-                            title: "结局偏好",
-                            placeholder: "例如：好结局 / 坏结局 / 开放式",
-                            isRequired: true,
-                            isCompact: true,
-                            text: $profile.endingPreference
-                        )
-                    }
-                }
-                .padding(28)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
-        }
-        .frame(minWidth: 860, minHeight: 820)
-    }
-
-    private var header: some View {
-        HStack(alignment: .top, spacing: 16) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("生成大纲")
-                    .font(.system(size: 26, weight: .bold))
-                    .foregroundStyle(.primary)
-
-                Text(projectTitle)
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-
-                Text("当前模式：\(storyLength.title) · \(storyLength.summary)")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-
-                Text("最简可用版至少准备 5 项：故事怎么开头推进到哪里、世界规则、主角底色、想写多长、想要什么结局。")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer()
-
-            VStack(alignment: .trailing, spacing: 10) {
-                Text("必填 \(profile.completedRequiredFieldCount)/5")
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-
-                HStack(spacing: 10) {
-                    Button("关闭") {
-                        dismiss()
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button(isGenerating ? "正在生成…" : "生成大纲") {
-                        dismiss()
-                        onGenerate()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isGenerating || !profile.hasMinimumRequirements)
-                }
-            }
-        }
-    }
-
-    private var minimumChecklist: some View {
-        HStack(spacing: 10) {
-            Text(profile.minimumRequirementSummary)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(profile.hasMinimumRequirements ? .primary : Color.orange)
-
-            Spacer()
-
-            Text("扩展项 \(profile.filledOptionalFieldCount)/7")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.62))
-                )
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.18), lineWidth: 1)
-        )
-    }
-}
-
-private struct WritingDeskOutlinePromptGroupCard<Content: View>: View {
-    @Environment(\.colorScheme) private var colorScheme
-    let title: String
-    let description: String
-    @ViewBuilder let content: Content
-
-    init(
-        title: String,
-        description: String,
-        @ViewBuilder content: () -> Content
-    ) {
-        self.title = title
-        self.description = description
-        self.content = content()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title)
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(.primary)
-
-                Text(description)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            VStack(alignment: .leading, spacing: 14) {
-                content
-            }
-        }
-        .padding(22)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .strokeBorder(colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.18), lineWidth: 1)
-        )
-    }
-}
-
-private struct WritingDeskOutlineField: View {
-    let title: String
-    let placeholder: String
-    var isRequired = false
-    var isCompact = false
-    var minHeight: CGFloat = 96
-    @Binding var text: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
-
-                if isRequired {
-                    Text("必填")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.orange)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(Color.orange.opacity(0.14))
-                        )
-                }
-            }
-
-            if isCompact {
-                TextField(placeholder, text: $text)
-                    .textFieldStyle(.roundedBorder)
-            } else {
-                WritingDeskTextSurface(
-                    text: $text,
-                    placeholder: placeholder,
-                    minHeight: minHeight
-                )
-            }
-        }
-    }
-}
-
-#Preview {
-    WritingDeskView(appState: AppState())
-}
-
-private struct WritingDeskBounceLockView: NSViewRepresentable {
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView(frame: .zero)
-        view.isHidden = true
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async {
-            context.coordinator.attachIfNeeded(from: nsView)
-        }
-    }
-
-    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
-        coordinator.detach()
-    }
-
-    @MainActor
-    final class Coordinator {
-        private weak var scrollView: NSScrollView?
-        private var liveScrollEndObserver: NSObjectProtocol?
-
-        func attachIfNeeded(from view: NSView) {
-            guard let discoveredScrollView = view.enclosingScrollView else { return }
-            guard scrollView !== discoveredScrollView else { return }
-
-            detach()
-            scrollView = discoveredScrollView
-
-            liveScrollEndObserver = NotificationCenter.default.addObserver(
-                forName: NSScrollView.didEndLiveScrollNotification,
-                object: discoveredScrollView,
-                queue: .main
-            ) { [weak self] _ in
-                guard let self else { return }
-                MainActor.assumeIsolated {
-                    self.snapBackToTopIfNeeded()
-                }
-            }
-        }
-
-        func detach() {
-            if let liveScrollEndObserver {
-                NotificationCenter.default.removeObserver(liveScrollEndObserver)
-            }
-
-            liveScrollEndObserver = nil
-            scrollView = nil
-        }
-
-        private func snapBackToTopIfNeeded() {
-            guard let scrollView, let documentView = scrollView.documentView else { return }
-
-            let clipView = scrollView.contentView
-            let targetTopY = topOriginY(for: scrollView, documentView: documentView)
-            let currentY = clipView.bounds.origin.y
-
-            let needsSnapBack: Bool
-            if documentView.isFlipped {
-                needsSnapBack = currentY < targetTopY - 0.5
-            } else {
-                needsSnapBack = currentY > targetTopY + 0.5
-            }
-
-            guard needsSnapBack else { return }
-
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.22
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                clipView.animator().setBoundsOrigin(NSPoint(x: clipView.bounds.origin.x, y: targetTopY))
-            }
-
-            scrollView.reflectScrolledClipView(clipView)
-        }
-
-        private func topOriginY(for scrollView: NSScrollView, documentView: NSView) -> CGFloat {
-            if documentView.isFlipped {
-                return 0
-            }
-
-            let visibleHeight = scrollView.contentView.bounds.height
-            let documentHeight = documentView.bounds.height
-            return max(0, documentHeight - visibleHeight)
-        }
     }
 }

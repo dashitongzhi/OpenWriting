@@ -1019,14 +1019,7 @@ struct HomeDashboardView: View {
     }
 
     private func loadText(from url: URL) throws -> String {
-        let accessed = url.startAccessingSecurityScopedResource()
-        defer {
-            if accessed {
-                url.stopAccessingSecurityScopedResource()
-            }
-        }
-
-        return try String(contentsOf: url, encoding: .utf8)
+        try TextFileDecoding.loadText(from: url, usingSecurityScopedAccess: true)
     }
 
     private func timestampLabel() -> String {
@@ -2646,14 +2639,7 @@ private struct LibraryWorkspacePanel: View {
     }
 
     private func loadText(from url: URL) throws -> String {
-        let accessed = url.startAccessingSecurityScopedResource()
-        defer {
-            if accessed {
-                url.stopAccessingSecurityScopedResource()
-            }
-        }
-
-        return try String(contentsOf: url, encoding: .utf8)
+        try TextFileDecoding.loadText(from: url, usingSecurityScopedAccess: true)
     }
 
     private func timestampLabel() -> String {
@@ -2780,249 +2766,6 @@ private struct LibraryDocumentRow: View {
                     lineWidth: 1
                 )
         )
-    }
-}
-
-private struct ProjectSavedChaptersSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var colorScheme
-    @Bindable var appState: AppState
-    let projectID: NovelProject.ID
-
-    @State private var selectedChapterID: ChapterDraft.ID?
-
-    private var palette: DashboardPalette {
-        DashboardPalette(colorScheme: colorScheme)
-    }
-
-    private var project: NovelProject? {
-        appState.project(for: projectID)
-    }
-
-    private var selectedChapter: ChapterDraft? {
-        guard let project else { return nil }
-
-        if let selectedChapterID,
-           let matchedChapter = project.sortedChapterDrafts.first(where: { $0.id == selectedChapterID }) {
-            return matchedChapter
-        }
-
-        return project.sortedChapterDrafts.first
-    }
-
-    var body: some View {
-        ZStack {
-            PageBackground()
-
-            if let project {
-                VStack(alignment: .leading, spacing: 20) {
-                    HStack(alignment: .top, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("已创作章节")
-                                .font(.system(size: 28, weight: .bold))
-                                .foregroundStyle(palette.textPrimary)
-
-                            Text("《\(project.title)》已保存 \(project.savedChapterCount) 章。左侧选章节，右侧直接预览正文。")
-                                .font(.subheadline)
-                                .foregroundStyle(palette.textSecondary)
-                                .lineSpacing(3)
-                        }
-
-                        Spacer()
-
-                        Button("关闭") {
-                            dismiss()
-                        }
-                        .buttonStyle(.bordered)
-                    }
-
-                    ViewThatFits(in: .horizontal) {
-                        HStack(alignment: .top, spacing: 24) {
-                            savedChapterDirectory(for: project)
-                                .frame(width: 300, alignment: .topLeading)
-
-                            savedChapterDetail(for: selectedChapter, project: project)
-                                .frame(maxWidth: .infinity, alignment: .topLeading)
-                        }
-
-                        VStack(alignment: .leading, spacing: 20) {
-                            savedChapterDirectory(for: project)
-                            savedChapterDetail(for: selectedChapter, project: project)
-                        }
-                    }
-                }
-                .padding(24)
-                .frame(width: 920, height: 720, alignment: .topLeading)
-                .task(id: project.id) {
-                    selectedChapterID = project.sortedChapterDrafts.first?.id
-                }
-                .onChange(of: project.chapterDrafts) { _, chapterDrafts in
-                    let sortedDrafts = chapterDrafts.sorted(by: ChapterDraft.sortDescending)
-                    if let selectedChapterID,
-                       sortedDrafts.contains(where: { $0.id == selectedChapterID }) {
-                        return
-                    }
-
-                    self.selectedChapterID = sortedDrafts.first?.id
-                }
-            } else {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("项目已经不可用")
-                        .font(.system(size: 26, weight: .bold))
-                        .foregroundStyle(.primary)
-
-                    Text("这个项目可能已被删除或切换了账号范围，所以当前无法读取已保存章节。")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineSpacing(3)
-
-                    Button("关闭") {
-                        dismiss()
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-                .padding(24)
-                .frame(width: 560, alignment: .topLeading)
-            }
-        }
-    }
-
-    private func savedChapterDirectory(for project: NovelProject) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("章节目录")
-                    .font(.headline)
-                    .foregroundStyle(palette.textPrimary)
-
-                Spacer()
-
-                Text("\(project.savedChapterCount) 章")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(palette.textSecondary)
-            }
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(project.sortedChapterDrafts) { chapterDraft in
-                        Button {
-                            selectedChapterID = chapterDraft.id
-                        } label: {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack(spacing: 12) {
-                                    Text(String(format: "%02d", chapterDraft.chapterNumber))
-                                        .font(.caption.weight(.bold))
-                                        .foregroundStyle(chapterDraft.id == selectedChapter?.id ? palette.coolAccent : palette.textSecondary)
-                                        .frame(width: 34, height: 34)
-                                        .background(
-                                            Circle()
-                                                .fill(
-                                                    chapterDraft.id == selectedChapter?.id
-                                                        ? palette.coolAccent.opacity(palette.isDark ? 0.18 : 0.12)
-                                                        : palette.panelBase.opacity(palette.isDark ? 0.70 : 0.52)
-                                                )
-                                        )
-
-                                    Text(chapterDraft.chapterTitle)
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(palette.textPrimary)
-                                        .lineLimit(1)
-
-                                    Spacer(minLength: 0)
-                                }
-
-                                Text(chapterDraft.previewText)
-                                    .font(.caption)
-                                    .foregroundStyle(palette.textSecondary)
-                                    .lineLimit(2)
-                            }
-                            .padding(14)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(
-                                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                    .fill(
-                                        chapterDraft.id == selectedChapter?.id
-                                            ? palette.selectedPanel
-                                            : palette.panelBase.opacity(palette.isDark ? 0.82 : 0.68)
-                                    )
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                    .strokeBorder(
-                                        chapterDraft.id == selectedChapter?.id
-                                            ? palette.coolAccent.opacity(0.36)
-                                            : palette.stroke,
-                                        lineWidth: 1
-                                    )
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.vertical, 2)
-            }
-        }
-    }
-
-    private func savedChapterDetail(for chapterDraft: ChapterDraft?, project: NovelProject) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            if let chapterDraft {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 12) {
-                        WorkspaceMetricBadge(label: "当前章节", value: chapterDraft.chapterSummary)
-                        WorkspaceMetricBadge(label: "字数", value: "\(chapterDraft.wordCount)")
-                        WorkspaceMetricBadge(label: "保存时间", value: chapterDraft.savedAt)
-
-                        Spacer(minLength: 0)
-
-                        Button("载入写作台继续编辑") {
-                            appState.loadChapterDraft(chapterDraft.id, for: project.id)
-                            appState.openWritingDesk(for: project.id)
-                            dismiss()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(palette.coolAccent)
-                    }
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        WorkspaceMetricBadge(label: "当前章节", value: chapterDraft.chapterSummary)
-                        HStack(spacing: 12) {
-                            WorkspaceMetricBadge(label: "字数", value: "\(chapterDraft.wordCount)")
-                            WorkspaceMetricBadge(label: "保存时间", value: chapterDraft.savedAt)
-                        }
-
-                        Button("载入写作台继续编辑") {
-                            appState.loadChapterDraft(chapterDraft.id, for: project.id)
-                            appState.openWritingDesk(for: project.id)
-                            dismiss()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(palette.coolAccent)
-                    }
-                }
-
-                ScrollView {
-                    Text(chapterDraft.content)
-                        .font(.system(size: 15, weight: .regular, design: .serif))
-                        .foregroundStyle(palette.textPrimary)
-                        .lineSpacing(5)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                        .padding(18)
-                }
-                .frame(minHeight: 420)
-                .background(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .strokeBorder(palette.stroke, lineWidth: 1)
-                )
-            } else {
-                Text("这个项目还没有已保存章节。")
-                    .font(.subheadline)
-                    .foregroundStyle(palette.textSecondary)
-            }
-        }
     }
 }
 
@@ -3556,7 +3299,7 @@ private struct DashboardInsetPanelBackground: View {
     }
 }
 
-private struct DashboardPalette {
+struct DashboardPalette {
     let isDark: Bool
     let backgroundTop: Color
     let backgroundBottom: Color
@@ -3622,9 +3365,6 @@ private struct DashboardPalette {
     }
 }
 
-#Preview {
-    AppRootView(appState: AppState())
-}
 
 private struct HeroMinYPreferenceKey: PreferenceKey {
     static let defaultValue: CGFloat = 0

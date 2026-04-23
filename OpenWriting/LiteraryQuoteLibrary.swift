@@ -26,7 +26,7 @@ enum LiteraryQuoteLibrary {
 
     private nonisolated static func loadQuotes() -> [LiteraryQuote] {
         guard let url = quotesResourceURL(),
-              let content = try? String(contentsOf: url, encoding: .utf8) else {
+              let content = try? TextFileDecoding.loadText(from: url) else {
             return []
         }
 

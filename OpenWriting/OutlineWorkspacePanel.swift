@@ -46,7 +46,7 @@ struct OutlineWorkspacePanel: View {
     }
 
     private func chapterListPanel(for project: NovelProject) -> some View {
-        let selectedChapter = selectedSavedChapter(for: project)
+        let selectedChapter = resolvedSavedChapter(in: project, selectedChapterID: selectedSavedChapterID)
 
         return DashboardPanel(
             title: "章节目录",
@@ -59,119 +59,56 @@ struct OutlineWorkspacePanel: View {
             } else {
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .top, spacing: 20) {
-                        chapterDirectoryList(for: project)
+                        SavedChapterDirectoryList(
+                            title: "章节目录",
+                            countLabel: "\(project.savedChapterCount) 章",
+                            chapterDrafts: project.sortedChapterDrafts,
+                            selectedChapterID: selectedSavedChapterID,
+                            style: outlineDirectoryStyle,
+                            onSelect: { chapterDraft in
+                                selectedSavedChapterID = chapterDraft.id
+                            }
+                        )
                             .frame(width: 320, alignment: .topLeading)
 
-                        chapterPreviewPanel(for: selectedChapter, project: project)
+                        SavedChapterPreviewPanel(
+                            chapterDraft: selectedChapter,
+                            previewLabel: "当前预览",
+                            emptyStateText: "点击左侧目录项后，这里会显示当前章节预览。",
+                            loadButtonStyle: .bordered,
+                            previewStyle: SavedChapterPreviewStyle(previewMinHeight: 260),
+                            onLoadChapter: { chapterDraft in
+                                appState.loadChapterDraft(chapterDraft.id, for: project.id)
+                                appState.openWritingDesk(for: project.id)
+                            }
+                        )
                             .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
 
                     VStack(alignment: .leading, spacing: 18) {
-                        chapterDirectoryList(for: project)
-                        chapterPreviewPanel(for: selectedChapter, project: project)
-                    }
-                }
-            }
-        }
-    }
-
-    private func chapterDirectoryList(for project: NovelProject) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(project.sortedChapterDrafts) { chapterDraft in
-                    Button {
-                        selectedSavedChapterID = chapterDraft.id
-                    } label: {
-                        HStack(spacing: 14) {
-                            Text(String(format: "%02d", chapterDraft.chapterNumber))
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(chapterDraft.id == selectedSavedChapterID ? Color.blue : chapterNumberColor)
-                                .frame(width: 34, height: 34)
-                                .background(
-                                    Circle()
-                                        .fill(
-                                            chapterDraft.id == selectedSavedChapterID
-                                                ? Color.blue.opacity(0.14)
-                                                : chapterNumberBackgroundColor
-                                        )
-                                )
-
-                            Text(chapterDraft.chapterTitle)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-
-                            Spacer(minLength: 0)
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .fill(chapterDraft.id == selectedSavedChapterID ? selectedRowBackgroundColor : rowBackgroundColor)
+                        SavedChapterDirectoryList(
+                            title: "章节目录",
+                            countLabel: "\(project.savedChapterCount) 章",
+                            chapterDrafts: project.sortedChapterDrafts,
+                            selectedChapterID: selectedSavedChapterID,
+                            style: outlineDirectoryStyle,
+                            onSelect: { chapterDraft in
+                                selectedSavedChapterID = chapterDraft.id
+                            }
                         )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .strokeBorder(
-                                    chapterDraft.id == selectedSavedChapterID
-                                        ? Color.blue.opacity(0.32)
-                                        : rowBorderColor,
-                                    lineWidth: 1
-                                )
+                        SavedChapterPreviewPanel(
+                            chapterDraft: selectedChapter,
+                            previewLabel: "当前预览",
+                            emptyStateText: "点击左侧目录项后，这里会显示当前章节预览。",
+                            loadButtonStyle: .bordered,
+                            previewStyle: SavedChapterPreviewStyle(previewMinHeight: 260),
+                            onLoadChapter: { chapterDraft in
+                                appState.loadChapterDraft(chapterDraft.id, for: project.id)
+                                appState.openWritingDesk(for: project.id)
+                            }
                         )
                     }
-                    .buttonStyle(.plain)
                 }
-            }
-            .padding(.vertical, 2)
-        }
-        .frame(minHeight: 260, maxHeight: 420, alignment: .topLeading)
-    }
-
-    private func chapterPreviewPanel(
-        for chapterDraft: ChapterDraft?,
-        project: NovelProject
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if let chapterDraft {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .center, spacing: 12) {
-                        WorkspaceMetricBadge(label: "当前预览", value: chapterDraft.chapterSummary)
-                        WorkspaceMetricBadge(label: "字数", value: "\(chapterDraft.wordCount)")
-                        WorkspaceMetricBadge(label: "保存时间", value: chapterDraft.savedAt)
-                        Spacer(minLength: 0)
-
-                        Button("载入写作台继续编辑") {
-                            appState.loadChapterDraft(chapterDraft.id, for: project.id)
-                            appState.openWritingDesk(for: project.id)
-                        }
-                        .buttonStyle(.bordered)
-                    }
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        WorkspaceMetricBadge(label: "当前预览", value: chapterDraft.chapterSummary)
-                        HStack(spacing: 12) {
-                            WorkspaceMetricBadge(label: "字数", value: "\(chapterDraft.wordCount)")
-                            WorkspaceMetricBadge(label: "保存时间", value: chapterDraft.savedAt)
-                        }
-
-                        Button("载入写作台继续编辑") {
-                            appState.loadChapterDraft(chapterDraft.id, for: project.id)
-                            appState.openWritingDesk(for: project.id)
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                }
-
-                SavedChapterPreviewSurface(
-                    text: chapterDraft.content,
-                    placeholder: "当前章节正文会显示在这里。"
-                )
-                .frame(minHeight: 260)
-            } else {
-                Text("点击左侧目录项后，这里会显示当前章节预览。")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -466,15 +403,6 @@ struct OutlineWorkspacePanel: View {
         }
     }
 
-    private func selectedSavedChapter(for project: NovelProject) -> ChapterDraft? {
-        if let selectedSavedChapterID,
-           let chapterDraft = project.sortedChapterDrafts.first(where: { $0.id == selectedSavedChapterID }) {
-            return chapterDraft
-        }
-
-        return project.sortedChapterDrafts.first
-    }
-
     private func timestampLabel() -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_Hans_CN")
@@ -482,24 +410,24 @@ struct OutlineWorkspacePanel: View {
         return formatter.string(from: Date())
     }
 
-    private var chapterNumberColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.72) : .secondary
-    }
-
-    private var chapterNumberBackgroundColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.58)
-    }
-
-    private var rowBackgroundColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.52)
-    }
-
-    private var selectedRowBackgroundColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.14) : Color.white.opacity(0.82)
-    }
-
-    private var rowBorderColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.16)
+    private var outlineDirectoryStyle: SavedChapterDirectoryStyle {
+        SavedChapterDirectoryStyle(
+            accentColor: .blue,
+            textPrimary: .primary,
+            textSecondary: colorScheme == .dark ? Color.white.opacity(0.72) : .secondary,
+            selectedNumberColor: .blue,
+            numberColor: colorScheme == .dark ? Color.white.opacity(0.72) : .secondary,
+            selectedNumberBackground: Color.blue.opacity(0.14),
+            numberBackground: colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.58),
+            selectedRowBackground: colorScheme == .dark ? Color.white.opacity(0.14) : Color.white.opacity(0.82),
+            rowBackground: colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.52),
+            selectedRowBorder: Color.blue.opacity(0.32),
+            rowBorder: colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.16),
+            rowCornerRadius: 18,
+            showsPreviewText: false,
+            minHeight: 260,
+            maxHeight: 420
+        )
     }
 }
 
@@ -533,35 +461,6 @@ private struct OutlineEditorSurface: View {
                         .allowsHitTesting(false)
                 }
             }
-    }
-
-    private var borderColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.16)
-    }
-}
-
-private struct SavedChapterPreviewSurface: View {
-    @Environment(\.colorScheme) private var colorScheme
-    let text: String
-    let placeholder: String
-
-    var body: some View {
-        ScrollView {
-            Text(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? placeholder : text)
-                .font(.system(size: 15, weight: .regular, design: .serif))
-                .foregroundStyle(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .tertiary : .primary)
-                .lineSpacing(5)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                .padding(18)
-        }
-        .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(borderColor, lineWidth: 1)
-        )
     }
 
     private var borderColor: Color {

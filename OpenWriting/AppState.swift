@@ -145,8 +145,10 @@ final class AppState {
     private static let emptyConfigurationMessage = "填入 API Key 与 Base URL 后即可验证。"
 
     private let userDefaults: UserDefaults
+    private let projectStore: ProjectFileStore
     @ObservationIgnored private let cloudStore = ICloudProjectStore()
     @ObservationIgnored private var cloudSaveTask: Task<Void, Never>?
+    @ObservationIgnored private var recentProjectsPersistTasks: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var isHydratingAccountScopedData = false
 
     var selectedProvider: ModelProvider {
@@ -213,7 +215,7 @@ final class AppState {
 
     var recentProjects: [NovelProject] {
         didSet {
-            persistRecentProjects()
+            scheduleRecentProjectsPersistence(snapshot: recentProjects, for: currentStorageScope)
             guard !isHydratingAccountScopedData else { return }
             noteLocalProjectMutation()
             scheduleCloudSnapshotSave()
@@ -247,9 +249,11 @@ final class AppState {
     ]
 
     init(userDefaults: UserDefaults = .standard) {
+        let projectStore = ProjectFileStore()
+        Self.migrateLegacyUserDefaultsIfNeeded(userDefaults, projectStore: projectStore)
+        Self.migrateLegacyEmailScopeIfNeeded(userDefaults, projectStore: projectStore)
         self.userDefaults = userDefaults
-        Self.migrateLegacyUserDefaultsIfNeeded(userDefaults)
-        Self.migrateLegacyEmailScopeIfNeeded(userDefaults)
+        self.projectStore = projectStore
         let resolvedActiveAccount = Self.loadActiveAppleAccount(from: userDefaults)
         let resolvedStorageScope = resolvedActiveAccount?.userID
         self.activeAccount = resolvedActiveAccount
@@ -287,7 +291,11 @@ final class AppState {
             forKey: Self.projectSnapshotTimestampStorageKey(for: resolvedStorageScope),
             userDefaults: userDefaults
         ) ?? 0
-        self.recentProjects = Self.loadRecentProjects(for: resolvedStorageScope, from: userDefaults) ?? Self.defaultRecentProjects
+        self.recentProjects = Self.loadRecentProjects(
+            for: resolvedStorageScope,
+            from: userDefaults,
+            projectStore: projectStore
+        ) ?? Self.defaultRecentProjects
         self.connectionStatus = .idle
         self.validationMessage = Self.emptyConfigurationMessage
         self.activeProjectID = Self.stringValue(
@@ -525,8 +533,13 @@ final class AppState {
         let normalizedProfile = Self.normalizedAppleAccount(profile)
         let targetScope = normalizedProfile.userID
 
-        if Self.loadRecentProjects(for: targetScope, from: userDefaults) == nil {
-            Self.copyAccountScopedProjectData(from: currentStorageScope, to: targetScope, userDefaults: userDefaults)
+        if Self.loadRecentProjects(for: targetScope, from: userDefaults, projectStore: projectStore) == nil {
+            Self.copyAccountScopedProjectData(
+                from: currentStorageScope,
+                to: targetScope,
+                userDefaults: userDefaults,
+                projectStore: projectStore
+            )
         }
 
         activeAccount = normalizedProfile
@@ -716,6 +729,82 @@ final class AppState {
             }
             project.updatedAt = Self.currentTimestampLabel()
         }
+    }
+
+    @discardableResult
+    func applyChapterTreeRefresh(
+        _ refresh: ChapterTreeRefresh,
+        baseline: ChapterTreeRefreshBaseline? = nil,
+        updatedAt: String? = nil,
+        for projectID: NovelProject.ID
+    ) -> ChapterTreeRefreshApplyOutcome {
+        var outcome = ChapterTreeRefreshApplyOutcome()
+
+        updateProject(projectID) { project in
+            let timestamp = updatedAt ?? Self.currentTimestampLabel()
+
+            let outlineDecision = mergeChapterTreeSection(
+                current: &project.outlineSummary,
+                replacement: refresh.outlineSummary,
+                baseline: baseline?.outlineSummary
+            )
+            if outlineDecision.accepted {
+                project.outlineSummaryUpdatedAt = timestamp
+                outcome.acceptedSections += 1
+            } else if outlineDecision.protectedLocalChange {
+                outcome.protectedSections += 1
+            }
+
+            let structureDecision = mergeChapterTreeSection(
+                current: &project.structureNotes,
+                replacement: refresh.structureNotes,
+                baseline: baseline?.structureNotes
+            )
+            if structureDecision.accepted {
+                outcome.acceptedSections += 1
+            } else if structureDecision.protectedLocalChange {
+                outcome.protectedSections += 1
+            }
+
+            let sceneDecision = mergeChapterTreeSection(
+                current: &project.sceneProgressNotes,
+                replacement: refresh.sceneProgressNotes,
+                baseline: baseline?.sceneProgressNotes
+            )
+            if sceneDecision.accepted {
+                outcome.acceptedSections += 1
+            } else if sceneDecision.protectedLocalChange {
+                outcome.protectedSections += 1
+            }
+
+            let characterDecision = mergeChapterTreeSection(
+                current: &project.characterArcNotes,
+                replacement: refresh.characterArcNotes,
+                baseline: baseline?.characterArcNotes
+            )
+            if characterDecision.accepted {
+                outcome.acceptedSections += 1
+            } else if characterDecision.protectedLocalChange {
+                outcome.protectedSections += 1
+            }
+
+            let foreshadowDecision = mergeChapterTreeSection(
+                current: &project.foreshadowNotes,
+                replacement: refresh.foreshadowNotes,
+                baseline: baseline?.foreshadowNotes
+            )
+            if foreshadowDecision.accepted {
+                outcome.acceptedSections += 1
+            } else if foreshadowDecision.protectedLocalChange {
+                outcome.protectedSections += 1
+            }
+
+            if outcome.acceptedSections > 0 {
+                project.updatedAt = Self.currentTimestampLabel()
+            }
+        }
+
+        return outcome
     }
 
     func updateGlobalMemorySnapshot(
@@ -972,10 +1061,24 @@ final class AppState {
         }
     }
 
-    private func persistRecentProjects() {
-        let encoder = JSONEncoder()
-        guard let data = try? encoder.encode(recentProjects) else { return }
-        userDefaults.set(data, forKey: Self.recentProjectsStorageKey(for: currentStorageScope))
+    private func persistRecentProjects(_ projects: [NovelProject], for scope: String?) {
+        do {
+            try projectStore.saveProjects(projects, for: scope)
+            Self.clearLegacyRecentProjectsFromUserDefaults(for: scope, userDefaults: userDefaults)
+        } catch {
+            return
+        }
+    }
+
+    private func scheduleRecentProjectsPersistence(snapshot: [NovelProject], for scope: String?) {
+        let storageKey = Self.recentProjectsStorageKey(for: scope)
+        recentProjectsPersistTasks[storageKey]?.cancel()
+        recentProjectsPersistTasks[storageKey] = Task {
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            self.persistRecentProjects(snapshot, for: scope)
+            recentProjectsPersistTasks.removeValue(forKey: storageKey)
+        }
     }
 
     private func updateProject(_ projectID: NovelProject.ID, mutate: (inout NovelProject) -> Void) {
@@ -1030,7 +1133,11 @@ final class AppState {
 
     private func reloadAccountScopedProjects() {
         isHydratingAccountScopedData = true
-        recentProjects = Self.loadRecentProjects(for: currentStorageScope, from: userDefaults) ?? Self.defaultRecentProjects
+        recentProjects = Self.loadRecentProjects(
+            for: currentStorageScope,
+            from: userDefaults,
+            projectStore: projectStore
+        ) ?? Self.defaultRecentProjects
         activeProjectID = Self.stringValue(
             forKey: Self.activeProjectIDStorageKey(for: currentStorageScope),
             userDefaults: userDefaults
@@ -1040,7 +1147,30 @@ final class AppState {
         isHydratingAccountScopedData = false
     }
 
-    private static func loadRecentProjects(for scope: String?, from userDefaults: UserDefaults) -> [NovelProject]? {
+    private static func loadRecentProjects(
+        for scope: String?,
+        from userDefaults: UserDefaults,
+        projectStore: ProjectFileStore
+    ) -> [NovelProject]? {
+        if let storedProjects = projectStore.loadProjects(for: scope) {
+            return storedProjects
+        }
+
+        guard let decodedProjects = loadLegacyRecentProjectsFromUserDefaults(for: scope, userDefaults: userDefaults) else {
+            return nil
+        }
+
+        if (try? projectStore.saveProjects(decodedProjects, for: scope)) != nil {
+            clearLegacyRecentProjectsFromUserDefaults(for: scope, userDefaults: userDefaults)
+        }
+
+        return decodedProjects
+    }
+
+    private static func loadLegacyRecentProjectsFromUserDefaults(
+        for scope: String?,
+        userDefaults: UserDefaults
+    ) -> [NovelProject]? {
         guard let data = dataValue(
             forKey: recentProjectsStorageKey(for: scope),
             userDefaults: userDefaults
@@ -1048,11 +1178,15 @@ final class AppState {
             return nil
         }
 
-        guard let decodedProjects = try? JSONDecoder().decode([NovelProject].self, from: data) else {
-            return nil
-        }
+        return decodeProjects(from: data)
+    }
 
-        return decodedProjects.filter { !builtInProjectIDs.contains($0.id) }
+    private static func decodeProjects(from data: Data) -> [NovelProject]? {
+        try? JSONDecoder().decode([NovelProject].self, from: data)
+    }
+
+    private static func clearLegacyRecentProjectsFromUserDefaults(for scope: String?, userDefaults: UserDefaults) {
+        userDefaults.removeObject(forKey: recentProjectsStorageKey(for: scope))
     }
 
     private static func stringValue(forKey key: String, userDefaults: UserDefaults) -> String? {
@@ -1089,6 +1223,23 @@ final class AppState {
 
     private func noteLocalProjectMutation() {
         currentProjectSnapshotTimestamp = Date().timeIntervalSince1970
+    }
+
+    private func mergeChapterTreeSection(
+        current: inout String,
+        replacement: String,
+        baseline: String?
+    ) -> ChapterTreeSectionMergeDecision {
+        let trimmedReplacement = replacement.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedReplacement.isEmpty else { return .ignored }
+
+        let normalizedCurrent = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let baseline, normalizedCurrent != baseline {
+            return .protected
+        }
+
+        current = trimmedReplacement
+        return .accepted
     }
 
     private func scheduleCloudSnapshotSave() {
@@ -1349,7 +1500,10 @@ final class AppState {
         .joined()
     }
 
-    private static func migrateLegacyUserDefaultsIfNeeded(_ userDefaults: UserDefaults) {
+    private static func migrateLegacyUserDefaultsIfNeeded(
+        _ userDefaults: UserDefaults,
+        projectStore: ProjectFileStore
+    ) {
         guard !userDefaults.bool(forKey: StorageKey.didMigrateLegacyDefaults) else { return }
 
         copyStringValue(from: LegacyStorageKey.selectedProvider, to: StorageKey.selectedProvider, userDefaults: userDefaults)
@@ -1359,14 +1513,23 @@ final class AppState {
         copyBoolValue(from: LegacyStorageKey.showWritingDeskCachePanel, to: StorageKey.showWritingDeskCachePanel, userDefaults: userDefaults)
         copyBoolValue(from: LegacyStorageKey.showWritingDeskTimeline, to: StorageKey.showWritingDeskTimeline, userDefaults: userDefaults)
         copyStringValue(from: LegacyStorageKey.activeProjectID, to: StorageKey.activeProjectID, userDefaults: userDefaults)
-        copyDataValue(from: LegacyStorageKey.recentProjects, to: StorageKey.recentProjects, userDefaults: userDefaults)
+
+        if !projectStore.hasProjects(for: nil),
+           let legacyProjectsData = userDefaults.data(forKey: LegacyStorageKey.recentProjects),
+           let legacyProjects = decodeProjects(from: legacyProjectsData),
+           (try? projectStore.saveProjects(legacyProjects, for: nil)) != nil {
+            userDefaults.removeObject(forKey: LegacyStorageKey.recentProjects)
+        }
 
         // API Key intentionally stays out of automatic legacy migration so app launch never
         // touches old keychain entries or triggers repeated password prompts.
         userDefaults.set(true, forKey: StorageKey.didMigrateLegacyDefaults)
     }
 
-    private static func migrateLegacyEmailScopeIfNeeded(_ userDefaults: UserDefaults) {
+    private static func migrateLegacyEmailScopeIfNeeded(
+        _ userDefaults: UserDefaults,
+        projectStore: ProjectFileStore
+    ) {
         guard !userDefaults.bool(forKey: StorageKey.didMigrateLegacyEmailScope) else { return }
         defer { userDefaults.set(true, forKey: StorageKey.didMigrateLegacyEmailScope) }
 
@@ -1378,16 +1541,28 @@ final class AppState {
             return
         }
 
-        copyAccountScopedProjectData(from: legacyEmail, to: nil, userDefaults: userDefaults)
+        copyAccountScopedProjectData(
+            from: legacyEmail,
+            to: nil,
+            userDefaults: userDefaults,
+            projectStore: projectStore
+        )
         userDefaults.removeObject(forKey: StorageKey.legacyActiveAccountEmail)
     }
 
-    private static func copyAccountScopedProjectData(from sourceScope: String?, to targetScope: String?, userDefaults: UserDefaults) {
-        let sourceRecentProjectsKey = recentProjectsStorageKey(for: sourceScope)
-        let targetRecentProjectsKey = recentProjectsStorageKey(for: targetScope)
-        if userDefaults.data(forKey: targetRecentProjectsKey) == nil,
-           let recentProjectsData = userDefaults.data(forKey: sourceRecentProjectsKey) {
-            userDefaults.set(recentProjectsData, forKey: targetRecentProjectsKey)
+    private static func copyAccountScopedProjectData(
+        from sourceScope: String?,
+        to targetScope: String?,
+        userDefaults: UserDefaults,
+        projectStore: ProjectFileStore
+    ) {
+        if !projectStore.hasProjects(for: targetScope),
+           let recentProjects = loadRecentProjects(
+                for: sourceScope,
+                from: userDefaults,
+                projectStore: projectStore
+           ) {
+            try? projectStore.saveProjects(recentProjects, for: targetScope)
         }
 
         let sourceActiveProjectKey = activeProjectIDStorageKey(for: sourceScope)
@@ -1415,14 +1590,6 @@ final class AppState {
 
     private static func copyBoolValue(from legacyKey: String, to currentKey: String, userDefaults: UserDefaults) {
         guard userDefaults.object(forKey: currentKey) == nil, let value = userDefaults.object(forKey: legacyKey) as? Bool else {
-            return
-        }
-
-        userDefaults.set(value, forKey: currentKey)
-    }
-
-    private static func copyDataValue(from legacyKey: String, to currentKey: String, userDefaults: UserDefaults) {
-        guard userDefaults.data(forKey: currentKey) == nil, let value = userDefaults.data(forKey: legacyKey) else {
             return
         }
 
@@ -1662,10 +1829,7 @@ final class AppState {
     }
 
     private static func currentTimestampLabel() -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_Hans_CN")
-        formatter.dateFormat = "今天 HH:mm"
-        return formatter.string(from: Date())
+        PersistedTimestampCodec.displayLabel(for: Date(), style: .project)
     }
 
     private static func normalizedChapterTitle(_ title: String) -> String {
@@ -1704,13 +1868,180 @@ final class AppState {
         return candidate
     }
 
-    private static let builtInProjectIDs: Set<String> = [
-        "fog-harbor-chronicle",
-        "glass-mountain-letters",
-        "zero-sunset"
-    ]
-
     private static let defaultRecentProjects: [NovelProject] = []
+}
+
+private enum PersistedTimestampDisplayStyle {
+    case project
+    case compact
+}
+
+// Persist machine-readable timestamps and derive localized labels when we render them.
+private enum PersistedTimestampCodec {
+    static func now() -> Date {
+        Date()
+    }
+
+    static func parse(_ rawValue: String) -> Date? {
+        let trimmedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedValue.isEmpty else { return nil }
+
+        if let seconds = Double(trimmedValue) {
+            return Date(timeIntervalSince1970: seconds)
+        }
+
+        if let date = iso8601Formatter(withFractionalSeconds: true).date(from: trimmedValue)
+            ?? iso8601Formatter(withFractionalSeconds: false).date(from: trimmedValue) {
+            return date
+        }
+
+        if let todayTime = parseClockTime(from: trimmedValue, prefix: "今天 ") {
+            return date(bySetting: todayTime, on: Date())
+        }
+
+        if let yesterdayTime = parseClockTime(from: trimmedValue, prefix: "昨天 "),
+           let yesterday = calendar.date(byAdding: .day, value: -1, to: Date()) {
+            return date(bySetting: yesterdayTime, on: yesterday)
+        }
+
+        if let sameDayTime = parseClockTime(from: trimmedValue, prefix: nil) {
+            return date(bySetting: sameDayTime, on: Date())
+        }
+
+        return nil
+    }
+
+    static func parseOptional(_ rawValue: String) -> Date? {
+        parse(rawValue)
+    }
+
+    static func decodeRequired<Key: CodingKey>(
+        _ container: KeyedDecodingContainer<Key>,
+        forKey key: Key
+    ) throws -> Date {
+        if let date = decodeOptional(container, forKey: key) {
+            return date
+        }
+
+        throw DecodingError.dataCorruptedError(
+            forKey: key,
+            in: container,
+            debugDescription: "Expected a persisted timestamp."
+        )
+    }
+
+    static func decodeOptional<Key: CodingKey>(
+        _ container: KeyedDecodingContainer<Key>,
+        forKey key: Key
+    ) -> Date? {
+        if let doubleValue = try? container.decodeIfPresent(Double.self, forKey: key) {
+            return Date(timeIntervalSince1970: doubleValue)
+        }
+
+        if let intValue = try? container.decodeIfPresent(Int.self, forKey: key) {
+            return Date(timeIntervalSince1970: Double(intValue))
+        }
+
+        if let stringValue = try? container.decodeIfPresent(String.self, forKey: key) {
+            return parse(stringValue)
+        }
+
+        return nil
+    }
+
+    static func encode<Key: CodingKey>(
+        _ date: Date,
+        to container: inout KeyedEncodingContainer<Key>,
+        forKey key: Key
+    ) throws {
+        try container.encode(date.timeIntervalSince1970, forKey: key)
+    }
+
+    static func encodeIfPresent<Key: CodingKey>(
+        _ date: Date?,
+        to container: inout KeyedEncodingContainer<Key>,
+        forKey key: Key
+    ) throws {
+        guard let date else { return }
+        try encode(date, to: &container, forKey: key)
+    }
+
+    static func displayLabel(for date: Date?, style: PersistedTimestampDisplayStyle) -> String {
+        guard let date else { return "" }
+
+        if calendar.isDateInToday(date) {
+            switch style {
+            case .project:
+                return formatter("今天 HH:mm").string(from: date)
+            case .compact:
+                return formatter("HH:mm").string(from: date)
+            }
+        }
+
+        if calendar.isDateInYesterday(date) {
+            return formatter("昨天 HH:mm").string(from: date)
+        }
+
+        let currentYear = calendar.component(.year, from: Date())
+        let targetYear = calendar.component(.year, from: date)
+
+        switch style {
+        case .project:
+            return formatter(targetYear == currentYear ? "M月d日 HH:mm" : "yyyy年M月d日 HH:mm").string(from: date)
+        case .compact:
+            return formatter(targetYear == currentYear ? "M/d HH:mm" : "yy/M/d HH:mm").string(from: date)
+        }
+    }
+
+    private static var calendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "zh_Hans_CN")
+        return calendar
+    }
+
+    private static func iso8601Formatter(withFractionalSeconds: Bool) -> ISO8601DateFormatter {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = withFractionalSeconds
+            ? [.withInternetDateTime, .withFractionalSeconds]
+            : [.withInternetDateTime]
+        return formatter
+    }
+
+    private static func formatter(_ format: String) -> DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_Hans_CN")
+        formatter.dateFormat = format
+        return formatter
+    }
+
+    private static func parseClockTime(from value: String, prefix: String?) -> DateComponents? {
+        let timeString: String
+        if let prefix {
+            guard value.hasPrefix(prefix) else { return nil }
+            timeString = String(value.dropFirst(prefix.count))
+        } else {
+            timeString = value
+        }
+
+        let parts = timeString.split(separator: ":")
+        guard parts.count == 2,
+              let hour = Int(parts[0]),
+              let minute = Int(parts[1]),
+              (0..<24).contains(hour),
+              (0..<60).contains(minute) else {
+            return nil
+        }
+
+        return DateComponents(hour: hour, minute: minute)
+    }
+
+    private static func date(bySetting time: DateComponents, on baseDate: Date) -> Date? {
+        var components = calendar.dateComponents([.year, .month, .day], from: baseDate)
+        components.hour = time.hour
+        components.minute = time.minute
+        components.second = 0
+        return calendar.date(from: components)
+    }
 }
 
 enum ModelProvider: String, CaseIterable, Identifiable {
@@ -1796,7 +2127,25 @@ struct ChapterDraft: Identifiable, Codable, Hashable {
     var chapterNumber: Int
     var chapterTitle: String
     var content: String
-    var savedAt: String
+    private var savedAtTimestamp: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case chapterNumber
+        case chapterTitle
+        case content
+        case savedAt
+    }
+
+    var savedAt: String {
+        get { PersistedTimestampCodec.displayLabel(for: savedAtTimestamp, style: .project) }
+        set { savedAtTimestamp = PersistedTimestampCodec.parse(newValue) ?? PersistedTimestampCodec.now() }
+    }
+
+    var savedAtDate: Date {
+        get { savedAtTimestamp }
+        set { savedAtTimestamp = newValue }
+    }
 
     init(
         id: String = UUID().uuidString,
@@ -1809,7 +2158,25 @@ struct ChapterDraft: Identifiable, Codable, Hashable {
         self.chapterNumber = chapterNumber
         self.chapterTitle = chapterTitle
         self.content = content
-        self.savedAt = savedAt
+        self.savedAtTimestamp = PersistedTimestampCodec.parse(savedAt) ?? PersistedTimestampCodec.now()
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        chapterNumber = try container.decode(Int.self, forKey: .chapterNumber)
+        chapterTitle = try container.decode(String.self, forKey: .chapterTitle)
+        content = try container.decode(String.self, forKey: .content)
+        savedAtTimestamp = try PersistedTimestampCodec.decodeRequired(container, forKey: .savedAt)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(chapterNumber, forKey: .chapterNumber)
+        try container.encode(chapterTitle, forKey: .chapterTitle)
+        try container.encode(content, forKey: .content)
+        try PersistedTimestampCodec.encode(savedAtTimestamp, to: &container, forKey: .savedAt)
     }
 
     var chapterLabel: String {
@@ -1835,7 +2202,7 @@ struct ChapterDraft: Identifiable, Codable, Hashable {
 
     nonisolated static func sortDescending(_ lhs: ChapterDraft, _ rhs: ChapterDraft) -> Bool {
         if lhs.chapterNumber == rhs.chapterNumber {
-            return lhs.savedAt > rhs.savedAt
+            return lhs.savedAtTimestamp > rhs.savedAtTimestamp
         }
 
         return lhs.chapterNumber > rhs.chapterNumber
@@ -2131,7 +2498,7 @@ struct NovelProject: Identifiable, Codable {
     let genre: String
     let summary: String
     var storyLength: NovelLength
-    var updatedAt: String
+    private var updatedAtTimestamp: Date
     var currentChapterTitle: String
     var currentChapterNumber: Int
     var writtenChapters: Int
@@ -2146,13 +2513,13 @@ struct NovelProject: Identifiable, Codable {
     var volumePlanNotes: String
     var activeThreadsNotes: String
     var outlineSummary: String
-    var outlineSummaryUpdatedAt: String
+    private var outlineSummaryUpdatedAtTimestamp: Date?
     var referenceContextText: String
     var specialRequirements: String
     var wordTargetText: String
     var continuityNotes: String
     var globalMemorySnapshot: GlobalMemorySnapshot
-    var globalMemoryUpdatedAt: String
+    private var globalMemoryUpdatedAtTimestamp: Date?
     var referenceDocuments: [ReferenceDocument]
     var chapterDrafts: [ChapterDraft]
 
@@ -2225,7 +2592,7 @@ struct NovelProject: Identifiable, Codable {
         self.genre = genre
         self.summary = summary
         self.storyLength = storyLength
-        self.updatedAt = updatedAt
+        self.updatedAtTimestamp = PersistedTimestampCodec.parse(updatedAt) ?? PersistedTimestampCodec.now()
         self.currentChapterTitle = currentChapterTitle
         self.currentChapterNumber = currentChapterNumber
         self.writtenChapters = writtenChapters
@@ -2240,7 +2607,7 @@ struct NovelProject: Identifiable, Codable {
         self.volumePlanNotes = volumePlanNotes
         self.activeThreadsNotes = activeThreadsNotes
         self.outlineSummary = outlineSummary
-        self.outlineSummaryUpdatedAt = outlineSummaryUpdatedAt
+        self.outlineSummaryUpdatedAtTimestamp = PersistedTimestampCodec.parseOptional(outlineSummaryUpdatedAt)
         self.referenceContextText = referenceContextText
         self.specialRequirements = specialRequirements
         self.wordTargetText = wordTargetText
@@ -2249,7 +2616,7 @@ struct NovelProject: Identifiable, Codable {
             ? globalMemorySnapshot
             : GlobalMemorySnapshot.parse(from: continuityNotes)
         self.globalMemorySnapshot = normalizedGlobalMemory
-        self.globalMemoryUpdatedAt = globalMemoryUpdatedAt
+        self.globalMemoryUpdatedAtTimestamp = PersistedTimestampCodec.parseOptional(globalMemoryUpdatedAt)
         self.referenceDocuments = referenceDocuments
         self.chapterDrafts = chapterDrafts
     }
@@ -2261,7 +2628,7 @@ struct NovelProject: Identifiable, Codable {
         genre = try container.decode(String.self, forKey: .genre)
         summary = try container.decode(String.self, forKey: .summary)
         storyLength = try container.decodeIfPresent(NovelLength.self, forKey: .storyLength) ?? .long
-        updatedAt = try container.decode(String.self, forKey: .updatedAt)
+        updatedAtTimestamp = try PersistedTimestampCodec.decodeRequired(container, forKey: .updatedAt)
         currentChapterTitle = try container.decodeIfPresent(String.self, forKey: .currentChapterTitle) ?? "开篇设定"
         currentChapterNumber = try container.decodeIfPresent(Int.self, forKey: .currentChapterNumber) ?? 1
         writtenChapters = try container.decodeIfPresent(Int.self, forKey: .writtenChapters)
@@ -2279,14 +2646,14 @@ struct NovelProject: Identifiable, Codable {
         volumePlanNotes = try container.decodeIfPresent(String.self, forKey: .volumePlanNotes) ?? ""
         activeThreadsNotes = try container.decodeIfPresent(String.self, forKey: .activeThreadsNotes) ?? ""
         outlineSummary = try container.decodeIfPresent(String.self, forKey: .outlineSummary) ?? ""
-        outlineSummaryUpdatedAt = try container.decodeIfPresent(String.self, forKey: .outlineSummaryUpdatedAt) ?? ""
+        outlineSummaryUpdatedAtTimestamp = PersistedTimestampCodec.decodeOptional(container, forKey: .outlineSummaryUpdatedAt)
         referenceContextText = try container.decodeIfPresent(String.self, forKey: .referenceContextText) ?? ""
         specialRequirements = try container.decodeIfPresent(String.self, forKey: .specialRequirements) ?? ""
         wordTargetText = try container.decodeIfPresent(String.self, forKey: .wordTargetText) ?? ""
         continuityNotes = try container.decodeIfPresent(String.self, forKey: .continuityNotes) ?? ""
         globalMemorySnapshot = try container.decodeIfPresent(GlobalMemorySnapshot.self, forKey: .globalMemorySnapshot)
             ?? GlobalMemorySnapshot.parse(from: continuityNotes)
-        globalMemoryUpdatedAt = try container.decodeIfPresent(String.self, forKey: .globalMemoryUpdatedAt) ?? ""
+        globalMemoryUpdatedAtTimestamp = PersistedTimestampCodec.decodeOptional(container, forKey: .globalMemoryUpdatedAt)
         referenceDocuments = try container.decodeIfPresent([ReferenceDocument].self, forKey: .referenceDocuments) ?? []
         chapterDrafts = try container.decodeIfPresent([ChapterDraft].self, forKey: .chapterDrafts) ?? []
     }
@@ -2298,7 +2665,7 @@ struct NovelProject: Identifiable, Codable {
         try container.encode(genre, forKey: .genre)
         try container.encode(summary, forKey: .summary)
         try container.encode(storyLength, forKey: .storyLength)
-        try container.encode(updatedAt, forKey: .updatedAt)
+        try PersistedTimestampCodec.encode(updatedAtTimestamp, to: &container, forKey: .updatedAt)
         try container.encode(currentChapterTitle, forKey: .currentChapterTitle)
         try container.encode(currentChapterNumber, forKey: .currentChapterNumber)
         try container.encode(writtenChapters, forKey: .writtenChapters)
@@ -2313,13 +2680,13 @@ struct NovelProject: Identifiable, Codable {
         try container.encode(volumePlanNotes, forKey: .volumePlanNotes)
         try container.encode(activeThreadsNotes, forKey: .activeThreadsNotes)
         try container.encode(outlineSummary, forKey: .outlineSummary)
-        try container.encode(outlineSummaryUpdatedAt, forKey: .outlineSummaryUpdatedAt)
+        try PersistedTimestampCodec.encodeIfPresent(outlineSummaryUpdatedAtTimestamp, to: &container, forKey: .outlineSummaryUpdatedAt)
         try container.encode(referenceContextText, forKey: .referenceContextText)
         try container.encode(specialRequirements, forKey: .specialRequirements)
         try container.encode(wordTargetText, forKey: .wordTargetText)
         try container.encode(continuityNotes, forKey: .continuityNotes)
         try container.encode(globalMemorySnapshot, forKey: .globalMemorySnapshot)
-        try container.encode(globalMemoryUpdatedAt, forKey: .globalMemoryUpdatedAt)
+        try PersistedTimestampCodec.encodeIfPresent(globalMemoryUpdatedAtTimestamp, to: &container, forKey: .globalMemoryUpdatedAt)
         try container.encode(referenceDocuments, forKey: .referenceDocuments)
         try container.encode(chapterDrafts, forKey: .chapterDrafts)
     }
@@ -2334,6 +2701,36 @@ struct NovelProject: Identifiable, Codable {
 
     var storyLengthTitle: String {
         storyLength.title
+    }
+
+    var updatedAt: String {
+        get { PersistedTimestampCodec.displayLabel(for: updatedAtTimestamp, style: .project) }
+        set { updatedAtTimestamp = PersistedTimestampCodec.parse(newValue) ?? PersistedTimestampCodec.now() }
+    }
+
+    var updatedAtDate: Date {
+        get { updatedAtTimestamp }
+        set { updatedAtTimestamp = newValue }
+    }
+
+    var outlineSummaryUpdatedAt: String {
+        get { PersistedTimestampCodec.displayLabel(for: outlineSummaryUpdatedAtTimestamp, style: .project) }
+        set { outlineSummaryUpdatedAtTimestamp = PersistedTimestampCodec.parseOptional(newValue) }
+    }
+
+    var outlineSummaryUpdatedAtDate: Date? {
+        get { outlineSummaryUpdatedAtTimestamp }
+        set { outlineSummaryUpdatedAtTimestamp = newValue }
+    }
+
+    var globalMemoryUpdatedAt: String {
+        get { PersistedTimestampCodec.displayLabel(for: globalMemoryUpdatedAtTimestamp, style: .project) }
+        set { globalMemoryUpdatedAtTimestamp = PersistedTimestampCodec.parseOptional(newValue) }
+    }
+
+    var globalMemoryUpdatedAtDate: Date? {
+        get { globalMemoryUpdatedAtTimestamp }
+        set { globalMemoryUpdatedAtTimestamp = newValue }
     }
 
     var savedChapterCount: Int {
@@ -2527,7 +2924,7 @@ struct ReferenceDocument: Identifiable, Codable, Hashable {
     let id: String
     let title: String
     let content: String
-    let importedAt: String
+    private var importedAtTimestamp: Date
     var category: ReferenceMaterialCategory
 
     enum CodingKeys: String, CodingKey {
@@ -2536,6 +2933,16 @@ struct ReferenceDocument: Identifiable, Codable, Hashable {
         case content
         case importedAt
         case category
+    }
+
+    var importedAt: String {
+        get { PersistedTimestampCodec.displayLabel(for: importedAtTimestamp, style: .compact) }
+        set { importedAtTimestamp = PersistedTimestampCodec.parse(newValue) ?? PersistedTimestampCodec.now() }
+    }
+
+    var importedAtDate: Date {
+        get { importedAtTimestamp }
+        set { importedAtTimestamp = newValue }
     }
 
     init(
@@ -2548,7 +2955,7 @@ struct ReferenceDocument: Identifiable, Codable, Hashable {
         self.id = id
         self.title = title
         self.content = content
-        self.importedAt = importedAt
+        self.importedAtTimestamp = PersistedTimestampCodec.parse(importedAt) ?? PersistedTimestampCodec.now()
         self.category = category ?? ReferenceMaterialCategory.infer(fromTitle: title, content: content)
     }
 
@@ -2557,7 +2964,7 @@ struct ReferenceDocument: Identifiable, Codable, Hashable {
         id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
         title = try container.decode(String.self, forKey: .title)
         content = try container.decode(String.self, forKey: .content)
-        importedAt = try container.decode(String.self, forKey: .importedAt)
+        importedAtTimestamp = try PersistedTimestampCodec.decodeRequired(container, forKey: .importedAt)
         category = try container.decodeIfPresent(ReferenceMaterialCategory.self, forKey: .category)
             ?? ReferenceMaterialCategory.infer(fromTitle: title, content: content)
     }
@@ -2567,7 +2974,7 @@ struct ReferenceDocument: Identifiable, Codable, Hashable {
         try container.encode(id, forKey: .id)
         try container.encode(title, forKey: .title)
         try container.encode(content, forKey: .content)
-        try container.encode(importedAt, forKey: .importedAt)
+        try PersistedTimestampCodec.encode(importedAtTimestamp, to: &container, forKey: .importedAt)
         try container.encode(category, forKey: .category)
     }
 
@@ -2696,6 +3103,22 @@ struct InspirationSignal: Identifiable {
     let description: String
 
     var id: String { title }
+}
+
+private enum ChapterTreeSectionMergeDecision {
+    case accepted
+    case protected
+    case ignored
+
+    var accepted: Bool {
+        if case .accepted = self { return true }
+        return false
+    }
+
+    var protectedLocalChange: Bool {
+        if case .protected = self { return true }
+        return false
+    }
 }
 
 private extension String {

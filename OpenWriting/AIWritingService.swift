@@ -99,17 +99,25 @@ enum AIWritingService {
         )
     }
 
-    static func summarizeStoryStructure(
+    static func refreshChapterTree(
         configuration: AIConnectionConfiguration,
-        project: NovelProject
-    ) async throws -> String {
-        try await completeText(
+        project: NovelProject,
+        chapterDraft: ChapterDraft
+    ) async throws -> ChapterTreeRefresh {
+        let rawResponse = try await completeText(
             configuration: configuration,
-            systemPrompt: outlineSummarySystemPrompt,
-            userPrompt: outlineSummaryUserPrompt(project: project),
+            systemPrompt: chapterTreeRefreshSystemPrompt,
+            userPrompt: chapterTreeRefreshUserPrompt(project: project, chapterDraft: chapterDraft),
             temperature: 0.45,
-            maxTokens: 1800
+            maxTokens: 2_200
         )
+
+        let refresh = ChapterTreeRefresh.parse(from: rawResponse)
+        guard refresh.hasStructuredContent else {
+            throw AIWritingError.emptyResult
+        }
+
+        return refresh
     }
 
     static func suggestChapterTitle(
@@ -221,15 +229,21 @@ enum AIWritingService {
     6. 保持连续性，避免突然跳到未来情节、提前透支长期真相或重复已写内容。
     """
 
-    private static let outlineSummarySystemPrompt = """
-    你是一位擅长中文长篇小说结构规划的章节编辑。
-    你的任务是总结当前项目的章节树状态，只围绕用户给出的这一本书工作。
+    private static let chapterTreeRefreshSystemPrompt = """
+    你是一位擅长中文长篇小说结构维护的章节树编辑。
+    你的任务是根据最新保存章节，刷新当前项目的章节树工作区。
     必须遵守：
-    1. 不添加原文中没有出现的新人物、新设定或新剧情。
-    2. 优先根据作品大纲、场景推进、角色弧线、伏笔记录和正文摘要做结构判断。
-    3. 输出应服务于长篇连续创作，帮助用户继续完善章节树。
-    4. 直接给出中文总结，不要解释你的推理过程。
-    5. 用清晰分段输出以下 5 个小节：当前结构判断、本章推进建议、角色弧线提醒、伏笔与回收、下一步整理动作。
+    1. 只根据用户提供的内容更新，不擅自添加没有依据的新人物、新设定或新剧情。
+    2. 优先做“更新”而不是“重写”，保留仍然有效的既有记录，修正已经过时的判断。
+    3. 输出必须严格使用以下 5 个标题，顺序不能变：
+    章节树总结：
+    章节骨架拆解：
+    场景推进记录：
+    角色弧线记录：
+    伏笔与回收记录：
+    4. 每个小节写 2 到 6 条以“- ”开头的短句，尽量具体，不写空泛议论。
+    5. 结论要服务于连续创作：短篇强调闭环，中篇强调阶段推进，长篇强调分卷延展、长期伏笔和人物长期状态。
+    6. 只输出这 5 个小节，不要解释，不要补充额外标题。
     """
 
     private static let globalMemorySystemPrompt = """
@@ -379,7 +393,10 @@ enum AIWritingService {
         """
     }
 
-    private static func outlineSummaryUserPrompt(project: NovelProject) -> String {
+    private static func chapterTreeRefreshUserPrompt(
+        project: NovelProject,
+        chapterDraft: ChapterDraft
+    ) -> String {
         let references = project.referenceDocuments
             .prefix(3)
             .map { document in
@@ -393,7 +410,7 @@ enum AIWritingService {
         创作规模：\(project.storyLength.title)
         项目摘要：\(project.summary)
         当前进度：已创作 \(project.writtenChapters) 章
-        当前章节：\(project.currentChapterSummary)
+        最新保存章节：\(chapterDraft.chapterSummary)
         本章目标：\(project.chapterFocus)
 
         作品大纲：
@@ -420,16 +437,20 @@ enum AIWritingService {
         全局记忆：
         \(normalized(project.continuityNotes, fallback: "暂无全局记忆。"))
 
-        正文摘要：
-        \(normalized(excerpt(from: project.draftText, limit: 2200), fallback: "正文还较短，请重点根据大纲和本章目标判断结构。"))
+        最新保存章节正文：
+        \(normalized(excerpt(from: chapterDraft.content, limit: 3_600), fallback: "正文还较短，请重点根据大纲和本章目标判断结构。"))
 
         导入参考文本：
         \(normalized(references, fallback: "暂无导入参考文本。"))
 
         输出要求：
-        请针对这一部小说，给出适合继续完善章节树的总结。
+        请根据这次章节保存后最新形成的状态，刷新章节树工作区。
+        章节树总结要概括当前结构位置、推进成效与下一步整理方向。
+        章节骨架拆解要写清卷章承接、当前章节功能和上下文接力关系。
+        场景推进记录要按场景拍点概括“发生了什么、推进了什么”。
+        角色弧线记录要突出人物欲望变化、关系变化、立场变化或心理转折。
+        伏笔与回收记录要区分“新增”“推进”“待回收”。
         结论要符合当前创作规模：\(project.storyLength.outlineDirective)
-        每个小节 2 到 4 句，尽量具体，不要空泛。
         """
     }
 

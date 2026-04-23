@@ -184,9 +184,13 @@ actor ICloudProjectStore {
 
     private enum CloudKitKey {
         static let recordType = "ProjectSnapshot"
+        static let projectRecordType = "ProjectPayload"
         static let payloadAsset = "payloadAsset"
         static let updatedAt = "updatedAt"
         static let scope = "scope"
+        static let activeProjectID = "activeProjectID"
+        static let projectIDs = "projectIDs"
+        static let projectID = "projectID"
     }
 
     private let container: CKContainer?
@@ -245,7 +249,7 @@ actor ICloudProjectStore {
             throw StoreError.notSignedIntoICloud
         }
 
-        let recordID = snapshotRecordID(for: scope)
+        let recordID = Self.snapshotRecordID(for: scope)
         let fetchedRecords = try await database.records(for: [recordID])
         guard let result = fetchedRecords[recordID] else { return nil }
 
@@ -253,10 +257,14 @@ actor ICloudProjectStore {
         switch result {
         case let .success(resolvedRecord):
             record = resolvedRecord
-        case let .failure(error as CKError) where error.code == .unknownItem:
+        case let .failure(error as CKError) where error.code == CKError.Code.unknownItem:
             return nil
         case let .failure(error):
             throw StoreError.readFailed(error.localizedDescription)
+        }
+
+        if let indexSnapshot = try await loadIndexedSnapshot(from: record, scope: scope, database: database) {
+            return indexSnapshot
         }
 
         guard let asset = record[CloudKitKey.payloadAsset] as? CKAsset,
@@ -283,23 +291,61 @@ actor ICloudProjectStore {
         }
 
         do {
-            let encoder = self.encoder
-            let data = try await MainActor.run {
-                try encoder.encode(snapshot)
-            }
-            let payloadURL = try writeTemporaryPayload(data, scope: scope)
-            defer { try? fileManager.removeItem(at: payloadURL) }
+            let snapshotRecordID = Self.snapshotRecordID(for: scope)
+            let projectRecordIDs = snapshot.recentProjects.map { Self.projectRecordID(for: $0.id, scope: scope) }
+            var recordIDsToFetch = projectRecordIDs
+            recordIDsToFetch.append(snapshotRecordID)
+            let existingRecords = try await existingRecords(for: recordIDsToFetch, in: database)
 
-            let recordID = snapshotRecordID(for: scope)
-            let record = try await existingRecord(for: recordID, in: database)
-                ?? CKRecord(recordType: CloudKitKey.recordType, recordID: recordID)
-            record[CloudKitKey.scope] = sanitized(scope) as NSString
-            record[CloudKitKey.updatedAt] = snapshot.updatedAt as NSDate
-            record[CloudKitKey.payloadAsset] = CKAsset(fileURL: payloadURL)
+            let previousProjectIDs = existingProjectIDs(from: existingRecords[snapshotRecordID])
+            let deletedRecordIDs = Set(previousProjectIDs)
+                .subtracting(snapshot.recentProjects.map(\.id))
+                .map { Self.projectRecordID(for: $0, scope: scope) }
+
+            let encoder = self.encoder
+            let sanitizedScope = Self.sanitized(scope)
+            let projectPayloads = try await MainActor.run {
+                try snapshot.recentProjects.map { project in
+                    (
+                        projectID: project.id,
+                        updatedAt: project.updatedAtDate,
+                        data: try encoder.encode(project)
+                    )
+                }
+            }
+
+            let projectRecords = try projectPayloads.map { payload in
+                let payloadURL = try writeTemporaryPayload(
+                    payload.data,
+                    identifier: "project_\(sanitizedScope)_\(Self.sanitized(payload.projectID))"
+                )
+                let recordID = Self.projectRecordID(for: payload.projectID, scope: scope)
+                let record = existingRecords[recordID]
+                    ?? CKRecord(recordType: CloudKitKey.projectRecordType, recordID: recordID)
+                record[CloudKitKey.scope] = sanitizedScope as NSString
+                record[CloudKitKey.projectID] = payload.projectID as NSString
+                record[CloudKitKey.updatedAt] = payload.updatedAt as NSDate
+                record[CloudKitKey.payloadAsset] = CKAsset(fileURL: payloadURL)
+                return (record, payloadURL)
+            }
+
+            defer {
+                for (_, payloadURL) in projectRecords {
+                    try? fileManager.removeItem(at: payloadURL)
+                }
+            }
+
+            let indexRecord = existingRecords[snapshotRecordID]
+                ?? CKRecord(recordType: CloudKitKey.recordType, recordID: snapshotRecordID)
+            indexRecord[CloudKitKey.scope] = sanitizedScope as NSString
+            indexRecord[CloudKitKey.updatedAt] = snapshot.updatedAt as NSDate
+            indexRecord[CloudKitKey.activeProjectID] = snapshot.activeProjectID.map { $0 as NSString }
+            indexRecord[CloudKitKey.projectIDs] = snapshot.recentProjects.map(\.id) as NSArray
+            indexRecord[CloudKitKey.payloadAsset] = nil
 
             _ = try await database.modifyRecords(
-                saving: [record],
-                deleting: [],
+                saving: [indexRecord] + projectRecords.map { $0.0 },
+                deleting: deletedRecordIDs,
                 savePolicy: .changedKeys,
                 atomically: true
             )
@@ -318,18 +364,29 @@ actor ICloudProjectStore {
         return (container, database)
     }
 
-    private func existingRecord(for recordID: CKRecord.ID, in database: CKDatabase) async throws -> CKRecord? {
-        let fetchedRecords = try await database.records(for: [recordID])
-        guard let result = fetchedRecords[recordID] else { return nil }
+    private func existingRecords(
+        for recordIDs: [CKRecord.ID],
+        in database: CKDatabase
+    ) async throws -> [CKRecord.ID: CKRecord] {
+        guard !recordIDs.isEmpty else { return [:] }
 
-        switch result {
-        case let .success(record):
-            return record
-        case let .failure(error as CKError) where error.code == .unknownItem:
-            return nil
-        case let .failure(error):
-            throw StoreError.readFailed(error.localizedDescription)
+        let fetchedRecords = try await database.records(for: recordIDs)
+        var recordsByID: [CKRecord.ID: CKRecord] = [:]
+
+        for recordID in recordIDs {
+            guard let result = fetchedRecords[recordID] else { continue }
+
+            switch result {
+            case let .success(record):
+                recordsByID[recordID] = record
+            case let .failure(error as CKError) where error.code == CKError.Code.unknownItem:
+                continue
+            case let .failure(error):
+                throw StoreError.readFailed(error.localizedDescription)
+            }
         }
+
+        return recordsByID
     }
 
     private func accountStatus(using container: CKContainer) async throws -> CKAccountStatus {
@@ -344,14 +401,95 @@ actor ICloudProjectStore {
         }
     }
 
-    private func snapshotRecordID(for scope: String) -> CKRecord.ID {
+    private nonisolated static func snapshotRecordID(for scope: String) -> CKRecord.ID {
         CKRecord.ID(recordName: "snapshot_\(sanitized(scope))")
     }
 
-    private func writeTemporaryPayload(_ data: Data, scope: String) throws -> URL {
+    private nonisolated static func projectRecordID(for projectID: String, scope: String) -> CKRecord.ID {
+        CKRecord.ID(recordName: "project_\(sanitized(scope))_\(sanitized(projectID))")
+    }
+
+    private func loadIndexedSnapshot(
+        from indexRecord: CKRecord,
+        scope: String,
+        database: CKDatabase
+    ) async throws -> AccountProjectSnapshot? {
+        guard let projectIDs = projectIDs(from: indexRecord) else {
+            return nil
+        }
+
+        guard let updatedAt = indexRecord[CloudKitKey.updatedAt] as? NSDate else {
+            throw StoreError.missingPayload
+        }
+
+        let activeProjectID = (indexRecord[CloudKitKey.activeProjectID] as? NSString) as String?
+        let projectRecordIDs = projectIDs.map { Self.projectRecordID(for: $0, scope: scope) }
+        let fetchedRecords = try await existingRecords(for: projectRecordIDs, in: database)
+        var projectDataByID: [String: Data] = [:]
+
+        for projectID in projectIDs {
+            let recordID = Self.projectRecordID(for: projectID, scope: scope)
+            guard let record = fetchedRecords[recordID] else {
+                throw StoreError.missingPayload
+            }
+
+            guard let asset = record[CloudKitKey.payloadAsset] as? CKAsset,
+                  let assetURL = asset.fileURL
+            else {
+                throw StoreError.missingPayload
+            }
+
+            do {
+                projectDataByID[projectID] = try Data(contentsOf: assetURL)
+            } catch {
+                throw StoreError.decodeFailed(error.localizedDescription)
+            }
+        }
+
+        let decoder = self.decoder
+        let resolvedProjectDataByID = projectDataByID
+        let recentProjects: [NovelProject] = try await MainActor.run {
+            try projectIDs.map { projectID in
+                guard let data = resolvedProjectDataByID[projectID] else {
+                    throw StoreError.missingPayload
+                }
+
+                return try decoder.decode(NovelProject.self, from: data)
+            }
+        }
+
+        return AccountProjectSnapshot(
+            activeProjectID: activeProjectID,
+            recentProjects: recentProjects,
+            updatedAt: updatedAt as Date
+        )
+    }
+
+    private func existingProjectIDs(from indexRecord: CKRecord?) -> [String] {
+        guard let indexRecord else { return [] }
+        return projectIDs(from: indexRecord) ?? []
+    }
+
+    private nonisolated func projectIDs(from indexRecord: CKRecord) -> [String]? {
+        if let direct = indexRecord[CloudKitKey.projectIDs] as? [String] {
+            return direct
+        }
+
+        if let array = indexRecord[CloudKitKey.projectIDs] as? [NSString] {
+            return array.map(String.init)
+        }
+
+        if let array = indexRecord[CloudKitKey.projectIDs] as? NSArray {
+            return array.compactMap { $0 as? String }
+        }
+
+        return nil
+    }
+
+    private func writeTemporaryPayload(_ data: Data, identifier: String) throws -> URL {
         let directory = try temporaryDirectory()
         let url = directory
-            .appendingPathComponent(sanitized(scope), isDirectory: false)
+            .appendingPathComponent(Self.sanitized(identifier), isDirectory: false)
             .appendingPathExtension("json")
         try data.write(to: url, options: .atomic)
         return url
@@ -368,7 +506,7 @@ actor ICloudProjectStore {
         }
     }
 
-    private func sanitized(_ value: String) -> String {
+    private nonisolated static func sanitized(_ value: String) -> String {
         value.map { character in
             if character.isLetter || character.isNumber {
                 return String(character)
