@@ -288,6 +288,8 @@ struct HomeDashboardView: View {
         switch appState.connectionStatus {
         case .idle:
             return palette.panelBase.opacity(palette.isDark ? 0.9 : 0.75)
+        case .checking:
+            return palette.coolAccent.opacity(palette.isDark ? 0.24 : 0.18)
         case .ready:
             return palette.successAccent.opacity(palette.isDark ? 0.24 : 0.18)
         case .needsAttention:
@@ -299,6 +301,8 @@ struct HomeDashboardView: View {
         switch appState.connectionStatus {
         case .idle:
             return palette.textPrimary
+        case .checking:
+            return palette.coolAccent
         case .ready:
             return palette.successAccent
         case .needsAttention:
@@ -1540,6 +1544,8 @@ struct ModelConnectionSummaryCard: View {
         switch appState.connectionStatus {
         case .idle:
             return palette.textSecondary
+        case .checking:
+            return palette.coolAccent
         case .ready:
             return palette.successAccent
         case .needsAttention:

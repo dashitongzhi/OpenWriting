@@ -279,7 +279,6 @@ enum NovelLength: String, CaseIterable, Codable, Identifiable {
 
 enum ModelProvider: String, CaseIterable, Identifiable {
     case openAICompatible
-    case deepSeek
     case custom
 
     var id: Self { self }
@@ -287,9 +286,7 @@ enum ModelProvider: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .openAICompatible:
-            return "OpenAI 兼容"
-        case .deepSeek:
-            return "DeepSeek"
+            return "OpenW"
         case .custom:
             return "自定义"
         }
@@ -298,6 +295,7 @@ enum ModelProvider: String, CaseIterable, Identifiable {
 
 enum ConnectionStatus {
     case idle
+    case checking
     case ready
     case needsAttention
 
@@ -305,6 +303,8 @@ enum ConnectionStatus {
         switch self {
         case .idle:
             return "等待配置"
+        case .checking:
+            return "正在验证"
         case .ready:
             return "配置就绪"
         case .needsAttention:
@@ -316,6 +316,8 @@ enum ConnectionStatus {
         switch self {
         case .idle:
             return "circle.dashed"
+        case .checking:
+            return "arrow.triangle.2.circlepath.circle.fill"
         case .ready:
             return "checkmark.seal.fill"
         case .needsAttention:

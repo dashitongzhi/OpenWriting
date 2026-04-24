@@ -229,7 +229,7 @@ struct ModelConnectionSettingsForm: View {
                 .toggleStyle(.switch)
 
             HStack(alignment: .center, spacing: 12) {
-                Button("验证配置") {
+                Button("测试连接") {
                     appState.validateConfiguration()
                 }
                 .buttonStyle(.borderedProminent)
@@ -244,7 +244,7 @@ struct ModelConnectionSettingsForm: View {
                 }
             }
 
-            Text("模型连接属于全局偏好；当前写作台已经可以直接调用 OpenAI 兼容接口续写当前章节。")
+            Text("OpenW 和自定义会分别保存各自的 Base URL、模型名称与 API Key；API Key 单独存放在系统 Keychain，不写入仓库。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -255,6 +255,8 @@ struct ModelConnectionSettingsForm: View {
         switch appState.connectionStatus {
         case .idle:
             return .secondary
+        case .checking:
+            return .blue
         case .ready:
             return Color(red: 0.18, green: 0.56, blue: 0.42)
         case .needsAttention:

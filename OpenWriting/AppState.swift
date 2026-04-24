@@ -1,6 +1,7 @@
 import AuthenticationServices
 import Foundation
 import Observation
+import Security
 
 @MainActor
 @Observable
@@ -10,6 +11,8 @@ final class AppState {
         static let modelName = "OpenWriting.modelName"
         static let apiKey = "OpenWriting.apiKey"
         static let baseURL = "OpenWriting.baseURL"
+        static let customModelName = "OpenWriting.custom.modelName"
+        static let customBaseURL = "OpenWriting.custom.baseURL"
         static let autoValidateOnLaunch = "OpenWriting.autoValidateOnLaunch"
         static let showWritingDeskCachePanel = "OpenWriting.showWritingDeskCachePanel"
         static let showWritingDeskTimeline = "OpenWriting.showWritingDeskTimeline"
@@ -30,6 +33,7 @@ final class AppState {
         static let selectedProvider = "\(prefix).selectedProvider"
         static let modelName = "\(prefix).modelName"
         static let baseURL = "\(prefix).baseURL"
+        static let apiKey = "\(prefix).apiKey"
         static let autoValidateOnLaunch = "\(prefix).autoValidateOnLaunch"
         static let showWritingDeskCachePanel = "\(prefix).showWritingDeskCachePanel"
         static let showWritingDeskTimeline = "\(prefix).showWritingDeskTimeline"
@@ -37,7 +41,13 @@ final class AppState {
         static let recentProjects = "\(prefix).recentProjects"
     }
 
-    static let emptyConfigurationMessage = "填入 API Key 与 Base URL 后即可验证。"
+    enum KeychainKey {
+        static let service = "CHZ.Kral.OpenWriting.ModelConnection"
+        static let openWAccount = "apiKey.openw"
+        static let customAccount = "apiKey.custom"
+    }
+
+    static let emptyConfigurationMessage = "填入 API Key 与 Base URL 后即可测试连接。"
 
     let userDefaults: UserDefaults
     let projectStore: ProjectFileStore
@@ -45,27 +55,36 @@ final class AppState {
     @ObservationIgnored var cloudSaveTask: Task<Void, Never>?
     @ObservationIgnored var recentProjectsPersistTasks: [String: Task<Void, Never>] = [:]
     @ObservationIgnored var isHydratingAccountScopedData = false
+    @ObservationIgnored var isApplyingProviderConfiguration = false
+    @ObservationIgnored var validationTask: Task<Void, Never>?
 
     var selectedProvider: ModelProvider {
+        willSet {
+            guard !isApplyingProviderConfiguration else { return }
+            persistConnectionSettings(for: selectedProvider)
+        }
         didSet {
             persistSelectedProvider()
-            markConfigurationAsEdited()
+            loadConnectionSettings(for: selectedProvider)
         }
     }
     var modelName: String {
         didSet {
+            guard !isApplyingProviderConfiguration else { return }
             persistModelName()
             markConfigurationAsEdited()
         }
     }
     var apiKey: String {
         didSet {
+            guard !isApplyingProviderConfiguration else { return }
             persistAPIKey()
             markConfigurationAsEdited()
         }
     }
     var baseURL: String {
         didSet {
+            guard !isApplyingProviderConfiguration else { return }
             persistBaseURL()
             markConfigurationAsEdited()
         }
@@ -150,29 +169,22 @@ final class AppState {
         let projectStore = projectStore ?? ProjectFileStore()
         Self.migrateLegacyUserDefaultsIfNeeded(userDefaults, projectStore: projectStore)
         Self.migrateLegacyEmailScopeIfNeeded(userDefaults, projectStore: projectStore)
+        Self.migrateAPIKeysToKeychainIfNeeded(userDefaults)
         self.userDefaults = userDefaults
         self.projectStore = projectStore
         let resolvedActiveAccount = Self.loadActiveAppleAccount(from: userDefaults)
         let resolvedStorageScope = resolvedActiveAccount?.userID
-        self.activeAccount = resolvedActiveAccount
-        self.selectedProvider = ModelProvider(
+        let resolvedProvider = ModelProvider(
             rawValue: Self.stringValue(
                 forKey: StorageKey.selectedProvider,
                 userDefaults: userDefaults
             ) ?? ""
         ) ?? .openAICompatible
-        self.modelName = Self.stringValue(
-            forKey: StorageKey.modelName,
-            userDefaults: userDefaults
-        ) ?? "gpt-4.1-mini"
-        self.apiKey = Self.stringValue(
-            forKey: StorageKey.apiKey,
-            userDefaults: userDefaults
-        ) ?? ""
-        self.baseURL = Self.stringValue(
-            forKey: StorageKey.baseURL,
-            userDefaults: userDefaults
-        ) ?? "https://api.openai.com/v1"
+        self.activeAccount = resolvedActiveAccount
+        self.selectedProvider = resolvedProvider
+        self.modelName = Self.loadModelName(for: resolvedProvider, userDefaults: userDefaults)
+        self.apiKey = Self.loadAPIKeyFromKeychain(for: resolvedProvider) ?? ""
+        self.baseURL = Self.loadBaseURL(for: resolvedProvider, userDefaults: userDefaults)
         self.autoValidateOnLaunch = Self.boolValue(
             forKey: StorageKey.autoValidateOnLaunch,
             userDefaults: userDefaults
@@ -270,50 +282,38 @@ final class AppState {
     }
 
     var isConfigurationReady: Bool {
-        hasValidBaseURL &&
-            !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-            !modelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        resolvedAIConfiguration != nil
     }
 
     func validateConfiguration() {
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        validationTask?.cancel()
 
-        guard hasValidBaseURL else {
-            connectionStatus = .needsAttention
-            validationMessage = "Base URL 需要是完整的 http 或 https 地址。"
+        guard let configuration = resolvedAIConfiguration else {
             return
         }
 
-        guard !trimmedKey.isEmpty else {
-            connectionStatus = .needsAttention
-            validationMessage = "API Key 不能为空。"
-            return
-        }
+        connectionStatus = .checking
+        validationMessage = "正在验证 \(selectedProvider.title) 连接..."
 
-        guard !modelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            connectionStatus = .needsAttention
-            validationMessage = "模型名称不能为空。"
-            return
-        }
+        let providerTitle = selectedProvider.title
+        validationTask = Task { @MainActor in
+            do {
+                let resolvedModel = try await AIWritingService.validateConnection(configuration: configuration)
+                guard !Task.isCancelled else { return }
 
-        connectionStatus = .ready
-        validationMessage = "配置格式已通过，可继续接入真实模型请求。"
+                connectionStatus = .ready
+                validationMessage = "已连接 \(resolvedModel)。\(providerTitle) 的 OpenAI 兼容请求可用。"
+            } catch {
+                guard !Task.isCancelled else { return }
+
+                connectionStatus = .needsAttention
+                validationMessage = Self.validationFailureMessage(for: error)
+            }
+        }
     }
 
     var aiConfiguration: AIConnectionConfiguration? {
-        guard
-            let resolvedBaseURL = URL(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines)),
-            !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            !modelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
-            return nil
-        }
-
-        return AIConnectionConfiguration(
-            baseURL: resolvedBaseURL,
-            apiKey: apiKey.trimmingCharacters(in: .whitespacesAndNewlines),
-            modelName: modelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        )
+        resolvedAIConfiguration
     }
 
     func createProject(named title: String, length: NovelLength) {
@@ -829,7 +829,7 @@ final class AppState {
     }
 
     private var hasValidBaseURL: Bool {
-        guard let components = URLComponents(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+        guard let components = URLComponents(string: normalizedBaseURLString ?? baseURL.trimmingCharacters(in: .whitespacesAndNewlines)) else {
             return false
         }
 
@@ -854,9 +854,10 @@ final class AppState {
     }
 
     private func refreshIdleValidationMessage() {
+        validationTask?.cancel()
         connectionStatus = .idle
         validationMessage = hasEnteredConnectionInfo
-            ? "配置已保存，可点击“验证配置”以重新检查。"
+            ? "配置已保存，可点击“测试连接”以重新检查。"
             : Self.emptyConfigurationMessage
     }
 
@@ -864,16 +865,86 @@ final class AppState {
         refreshIdleValidationMessage()
     }
 
+    private var normalizedBaseURLString: String? {
+        Self.normalizedBaseURLString(from: baseURL)
+    }
+
+    private var resolvedAIConfiguration: AIConnectionConfiguration? {
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedModelName = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard hasValidBaseURL else {
+            connectionStatus = .needsAttention
+            validationMessage = "Base URL 需要是完整的 http 或 https 地址。"
+            return nil
+        }
+
+        guard !trimmedKey.isEmpty else {
+            connectionStatus = .needsAttention
+            validationMessage = "API Key 不能为空。"
+            return nil
+        }
+
+        guard !trimmedModelName.isEmpty else {
+            connectionStatus = .needsAttention
+            validationMessage = "模型名称不能为空。"
+            return nil
+        }
+
+        guard
+            let normalizedBaseURLString,
+            let resolvedBaseURL = URL(string: normalizedBaseURLString)
+        else {
+            connectionStatus = .needsAttention
+            validationMessage = "Base URL 需要是完整的 http 或 https 地址。"
+            return nil
+        }
+
+        if normalizedBaseURLString != baseURL.trimmingCharacters(in: .whitespacesAndNewlines) {
+            isApplyingProviderConfiguration = true
+            baseURL = normalizedBaseURLString
+            isApplyingProviderConfiguration = false
+            persistBaseURL()
+        }
+
+        return AIConnectionConfiguration(
+            baseURL: resolvedBaseURL,
+            apiKey: trimmedKey,
+            modelName: trimmedModelName
+        )
+    }
+
     private func persistSelectedProvider() {
         userDefaults.set(selectedProvider.rawValue, forKey: StorageKey.selectedProvider)
     }
 
     private func persistModelName() {
-        userDefaults.set(modelName, forKey: StorageKey.modelName)
+        userDefaults.set(modelName, forKey: Self.modelNameStorageKey(for: selectedProvider))
     }
 
     private func persistBaseURL() {
-        userDefaults.set(baseURL, forKey: StorageKey.baseURL)
+        userDefaults.set(baseURL, forKey: Self.baseURLStorageKey(for: selectedProvider))
+    }
+
+    private func persistConnectionSettings(for provider: ModelProvider) {
+        userDefaults.set(modelName, forKey: Self.modelNameStorageKey(for: provider))
+        userDefaults.set(baseURL, forKey: Self.baseURLStorageKey(for: provider))
+
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedKey.isEmpty {
+            Self.deleteAPIKeyFromKeychain(for: provider)
+        } else {
+            Self.saveAPIKeyToKeychain(trimmedKey, for: provider)
+        }
+    }
+
+    private func loadConnectionSettings(for provider: ModelProvider) {
+        isApplyingProviderConfiguration = true
+        modelName = Self.loadModelName(for: provider, userDefaults: userDefaults)
+        baseURL = Self.loadBaseURL(for: provider, userDefaults: userDefaults)
+        apiKey = Self.loadAPIKeyFromKeychain(for: provider) ?? ""
+        isApplyingProviderConfiguration = false
+        refreshIdleValidationMessage()
     }
 
     private func persistAutoValidatePreference() {
@@ -925,11 +996,11 @@ final class AppState {
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !trimmedKey.isEmpty else {
-            userDefaults.removeObject(forKey: StorageKey.apiKey)
+            Self.deleteAPIKeyFromKeychain(for: selectedProvider)
             return
         }
 
-        userDefaults.set(trimmedKey, forKey: StorageKey.apiKey)
+        Self.saveAPIKeyToKeychain(trimmedKey, for: selectedProvider)
     }
 
     private func persistActiveAccountProfile() {
@@ -968,6 +1039,59 @@ final class AppState {
         userDefaults.string(forKey: key)
     }
 
+    private static func modelNameStorageKey(for provider: ModelProvider) -> String {
+        switch provider {
+        case .openAICompatible:
+            return StorageKey.modelName
+        case .custom:
+            return StorageKey.customModelName
+        }
+    }
+
+    private static func baseURLStorageKey(for provider: ModelProvider) -> String {
+        switch provider {
+        case .openAICompatible:
+            return StorageKey.baseURL
+        case .custom:
+            return StorageKey.customBaseURL
+        }
+    }
+
+    private static func keychainAccount(for provider: ModelProvider) -> String {
+        switch provider {
+        case .openAICompatible:
+            return KeychainKey.openWAccount
+        case .custom:
+            return KeychainKey.customAccount
+        }
+    }
+
+    private static func defaultModelName(for provider: ModelProvider) -> String {
+        switch provider {
+        case .openAICompatible:
+            return "gpt-4.1-mini"
+        case .custom:
+            return "gpt-5.4-mini"
+        }
+    }
+
+    private static func defaultBaseURL(for provider: ModelProvider) -> String {
+        switch provider {
+        case .openAICompatible:
+            return "https://api.openai.com/v1"
+        case .custom:
+            return "https://api.openai.com/v1"
+        }
+    }
+
+    private static func loadModelName(for provider: ModelProvider, userDefaults: UserDefaults) -> String {
+        stringValue(forKey: modelNameStorageKey(for: provider), userDefaults: userDefaults) ?? defaultModelName(for: provider)
+    }
+
+    private static func loadBaseURL(for provider: ModelProvider, userDefaults: UserDefaults) -> String {
+        stringValue(forKey: baseURLStorageKey(for: provider), userDefaults: userDefaults) ?? defaultBaseURL(for: provider)
+    }
+
     private static func boolValue(forKey key: String, userDefaults: UserDefaults) -> Bool? {
         if let value = userDefaults.object(forKey: key) as? Bool {
             return value
@@ -990,6 +1114,90 @@ final class AppState {
 
     static func dataValue(forKey key: String, userDefaults: UserDefaults) -> Data? {
         userDefaults.data(forKey: key)
+    }
+
+    private static func normalizedBaseURLString(from rawValue: String) -> String? {
+        let trimmedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedValue.isEmpty,
+              var components = URLComponents(string: trimmedValue)
+        else {
+            return nil
+        }
+
+        let trimmedPath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if trimmedPath.isEmpty {
+            components.path = "/v1"
+        } else {
+            components.path = "/" + trimmedPath
+        }
+
+        return components.url?.absoluteString
+    }
+
+    private static func validationFailureMessage(for error: Error) -> String {
+        let resolvedMessage = (error as NSError).localizedDescription
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if resolvedMessage.isEmpty {
+            return "连接校验失败，请检查 Base URL、模型名称和 API Key。"
+        }
+
+        return "连接校验失败：\(resolvedMessage)"
+    }
+
+    private static func loadAPIKeyFromKeychain(for provider: ModelProvider) -> String? {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: KeychainKey.service,
+            kSecAttrAccount: keychainAccount(for: provider),
+            kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne
+        ]
+
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess,
+              let data = item as? Data,
+              let value = String(data: data, encoding: .utf8)
+        else {
+            return nil
+        }
+
+        return value
+    }
+
+    @discardableResult
+    private static func saveAPIKeyToKeychain(_ apiKey: String, for provider: ModelProvider) -> Bool {
+        let encodedValue = Data(apiKey.utf8)
+        let account = keychainAccount(for: provider)
+        let baseQuery: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: KeychainKey.service,
+            kSecAttrAccount: account
+        ]
+
+        let attributes: [CFString: Any] = [
+            kSecValueData: encodedValue
+        ]
+
+        let updateStatus = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
+        if updateStatus == errSecSuccess {
+            return true
+        }
+
+        var addQuery = baseQuery
+        addQuery[kSecValueData] = encodedValue
+        addQuery[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlock
+        return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
+    }
+
+    private static func deleteAPIKeyFromKeychain(for provider: ModelProvider) {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: KeychainKey.service,
+            kSecAttrAccount: keychainAccount(for: provider)
+        ]
+
+        SecItemDelete(query as CFDictionary)
     }
 
     var currentStorageScope: String? {
@@ -1020,6 +1228,24 @@ final class AppState {
         // API Key intentionally stays out of automatic legacy migration so app launch never
         // touches old keychain entries or triggers repeated password prompts.
         userDefaults.set(true, forKey: StorageKey.didMigrateLegacyDefaults)
+    }
+
+    private static func migrateAPIKeysToKeychainIfNeeded(_ userDefaults: UserDefaults) {
+        if let storedOpenWKey = stringValue(forKey: StorageKey.apiKey, userDefaults: userDefaults)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !storedOpenWKey.isEmpty,
+           loadAPIKeyFromKeychain(for: .openAICompatible) == nil {
+            saveAPIKeyToKeychain(storedOpenWKey, for: .openAICompatible)
+        }
+        userDefaults.removeObject(forKey: StorageKey.apiKey)
+
+        if let legacyAPIKey = stringValue(forKey: LegacyStorageKey.apiKey, userDefaults: userDefaults)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !legacyAPIKey.isEmpty,
+           loadAPIKeyFromKeychain(for: .openAICompatible) == nil {
+            saveAPIKeyToKeychain(legacyAPIKey, for: .openAICompatible)
+        }
+        userDefaults.removeObject(forKey: LegacyStorageKey.apiKey)
     }
 
     private static func migrateLegacyEmailScopeIfNeeded(

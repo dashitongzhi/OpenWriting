@@ -78,6 +78,22 @@ enum AIWritingLength: String, CaseIterable, Identifiable {
 }
 
 enum AIWritingService {
+    static func validateConnection(configuration: AIConnectionConfiguration) async throws -> String {
+        let rawResponse = try await completeText(
+            configuration: configuration,
+            systemPrompt: "You are a concise assistant.",
+            userPrompt: "Reply with exactly OK.",
+            temperature: 0.1,
+            maxTokens: 16
+        )
+
+        guard rawResponse == "OK" else {
+            throw AIWritingError.serverError("模型返回异常内容：\(rawResponse)")
+        }
+
+        return configuration.modelName
+    }
+
     static func continueChapter(
         configuration: AIConnectionConfiguration,
         project: NovelProject,
