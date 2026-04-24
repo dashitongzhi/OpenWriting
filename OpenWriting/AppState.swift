@@ -1069,18 +1069,18 @@ final class AppState {
     private static func defaultModelName(for provider: ModelProvider) -> String {
         switch provider {
         case .openAICompatible:
-            return "gpt-4.1-mini"
-        case .custom:
             return "gpt-5.4-mini"
+        case .custom:
+            return ""
         }
     }
 
     private static func defaultBaseURL(for provider: ModelProvider) -> String {
         switch provider {
         case .openAICompatible:
-            return "https://api.openai.com/v1"
+            return "https://ai.xxread.top/v1"
         case .custom:
-            return "https://api.openai.com/v1"
+            return ""
         }
     }
 
