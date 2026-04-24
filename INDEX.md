@@ -7,6 +7,7 @@
 - `DerivedData/`
 - `.swiftpm/`
 - `.xcodeproj/xcuserdata/`
+- `.claude/settings.json`
 - `Assets.xcassets`
 - `Resources/`
 - 任何编译产物、缓存、签名输出和 Xcode 自动生成内容
@@ -19,14 +20,19 @@
 | `OpenWriting/AppWindowCoordinator.swift` | `AppRuntime`, `AppWindowCoordinator`, `MainWindowController`, `SettingsWindowController` | 根状态注入、主窗口/设置窗口创建、工具栏和窗口外观协调。 |
 | `OpenWriting/AppRootView.swift` | `AppRootView`, `SidebarItem` | 根级导航容器，承接侧边栏、详情区域、账户面板和 Apple ID 登录入口。 |
 | `OpenWriting/AppearanceSettingsView.swift` | `AppAppearance`, `AppearanceSettingsView`, `ModelConnectionSettingsForm` | 设置界面，负责外观和模型连接参数配置。 |
-| `OpenWriting/ContentView.swift` | `ContentView` | Xcode 模板残留文件，当前不参与主应用入口。 |
 
 ## 状态、数据与同步
 
 | File | Key Types | Role |
 | --- | --- | --- |
-| `OpenWriting/AppState.swift` | `AppState`, `NovelProject`, `ChapterDraft`, `ReferenceDocument`, `GlobalMemorySnapshot` 等 | 应用主状态中心，管理项目、创作模式、章节树字段、持久化和同步触发。 |
+| `OpenWriting/AppState.swift` | `AppState` | 应用主状态中心，负责项目编辑、界面导航、持久化触发与状态协同。 |
+| `OpenWriting/AppState+Account.swift` | `AppState` 扩展 | Apple 账户绑定、账号隔离项目加载、旧存储迁移辅助。 |
+| `OpenWriting/AppState+iCloudSync.swift` | `AppState` 扩展 | iCloud 可用性检查、快照推送与拉取、云端状态回写。 |
 | `OpenWriting/AccountSync.swift` | `AppleAccountProfile`, `AccountProjectSnapshot`, `ICloudProjectStore` | Apple ID 状态识别、entitlement 检测、CloudKit 快照读写与 iCloud 可用性判断。 |
+| `OpenWriting/DomainModels.swift` | `NovelLength`, `NovelProject`, `ChapterDraft`, `ReferenceDocument`, `GlobalMemorySnapshot`, `PersistedTimestampCodec` 等 | 领域模型、兼容时间戳编解码与项目核心数据结构。 |
+| `OpenWriting/DateFormatting.swift` | `TimestampLabel` | 首页与工作区复用的时间标签辅助。 |
+| `OpenWriting/ProjectFileStore.swift` | `ProjectFileStore` | 本地项目文件存储、按账号 scope 隔离读写、旧 `UserDefaults` 项目数据承接。 |
+| `OpenWriting/TextFileDecoding.swift` | `TextFileDecoding` | 文本导入编码识别与解码兜底，兼容 UTF 系列与常见中文编码。 |
 | `OpenWriting/ChapterTreeRefresh.swift` | `ChapterTreeRefresh`, `ChapterTreeRefreshBaseline`, `ChapterTreeRefreshApplyOutcome` | 章节树结构化刷新结果、解析和回写保护模型。 |
 | `OpenWriting/AIWritingService.swift` | `AIConnectionConfiguration`, `AIWritingMode`, `AIWritingLength`, `AIWritingService` | AI 请求封装，提供续写、章节命名、大纲生成、全局记忆刷新和章节树结构化刷新。 |
 | `OpenWriting/LiteraryQuoteLibrary.swift` | `LiteraryQuote`, `LiteraryQuoteLibrary` | 文学引言加载与随机抽取工具，供界面展示引用内容。 |
@@ -48,15 +54,20 @@
 1. `OpenWriting/OpenWritingApp.swift`
 2. `OpenWriting/AppWindowCoordinator.swift`
 3. `OpenWriting/AppState.swift`
-4. `OpenWriting/AccountSync.swift`
-5. `OpenWriting/ChapterTreeRefresh.swift`
-6. `OpenWriting/AppRootView.swift`
-7. `OpenWriting/HomeDashboardView.swift`
-8. `OpenWriting/WritingDeskView.swift`
-9. `OpenWriting/WritingDeskSupportViews.swift`
-10. `OpenWriting/WritingDeskOutlineGeneratorSheet.swift`
-11. `OpenWriting/OutlineWorkspacePanel.swift`
-12. `OpenWriting/ProjectSavedChaptersSheet.swift`
-13. `OpenWriting/SavedChapterBrowserComponents.swift`
-14. `OpenWriting/AIWritingService.swift`
-15. `OpenWriting/LiteraryQuoteLibrary.swift`
+4. `OpenWriting/AppState+Account.swift`
+5. `OpenWriting/AppState+iCloudSync.swift`
+6. `OpenWriting/DomainModels.swift`
+7. `OpenWriting/ProjectFileStore.swift`
+8. `OpenWriting/TextFileDecoding.swift`
+9. `OpenWriting/AccountSync.swift`
+10. `OpenWriting/ChapterTreeRefresh.swift`
+11. `OpenWriting/AppRootView.swift`
+12. `OpenWriting/HomeDashboardView.swift`
+13. `OpenWriting/WritingDeskView.swift`
+14. `OpenWriting/WritingDeskSupportViews.swift`
+15. `OpenWriting/WritingDeskOutlineGeneratorSheet.swift`
+16. `OpenWriting/OutlineWorkspacePanel.swift`
+17. `OpenWriting/ProjectSavedChaptersSheet.swift`
+18. `OpenWriting/SavedChapterBrowserComponents.swift`
+19. `OpenWriting/AIWritingService.swift`
+20. `OpenWriting/LiteraryQuoteLibrary.swift`

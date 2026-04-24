@@ -89,6 +89,7 @@ struct HomeDashboardView: View {
             VStack(alignment: .leading, spacing: 22) {
                 heroCopy
                 heroScenePanel
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(30)
@@ -186,7 +187,7 @@ struct HomeDashboardView: View {
             }
         }
         .padding(24)
-        .frame(minHeight: 340)
+        .frame(maxWidth: .infinity, minHeight: 340, alignment: .topLeading)
         .background(
             GlassPanelBackground(
                 cornerRadius: 28,
@@ -505,46 +506,72 @@ struct HomeDashboardView: View {
         actionTitle: String,
         action: @escaping () -> Void
     ) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(palette.textPrimary)
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(title)
+                            .font(.headline)
+                            .foregroundStyle(palette.textPrimary)
 
-                Spacer()
+                        Text("等待创建")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(palette.textSecondary)
+                    }
 
-                Text("等待创建")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(palette.coolAccent)
+                    Spacer()
+
+                    Text("空白项目卡")
+                        .font(.caption)
+                        .foregroundStyle(palette.textSecondary)
+                }
+
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(palette.textSecondary)
+                    .lineLimit(2)
+                    .lineSpacing(3)
+
+                HStack(spacing: 10) {
+                    ProjectChapterPill(
+                        label: "当前创作",
+                        value: "未开始"
+                    )
+
+                    ProjectChapterPill(
+                        label: "已创作",
+                        value: "0 章"
+                    )
+                }
+
+                HStack {
+                    Spacer()
+
+                    Label(actionTitle, systemImage: "arrow.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(palette.coolAccent)
+                }
             }
-
-            Text(detail)
-                .font(.subheadline)
-                .foregroundStyle(palette.textSecondary)
-                .lineSpacing(3)
-
-            Spacer(minLength: 0)
-
-            Button(actionTitle, action: action)
-                .buttonStyle(.bordered)
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, minHeight: 148, maxHeight: 148, alignment: .topLeading)
-        .background(
-            GlassPanelBackground(
-                cornerRadius: 22,
-                palette: palette,
-                tint: LinearGradient(
-                    colors: [
-                        palette.coolAccent.opacity(palette.isDark ? 0.10 : 0.06),
-                        .clear
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
+            .contentShape(Rectangle())
+            .padding(18)
+            .frame(maxWidth: .infinity, minHeight: 148, maxHeight: 148, alignment: .topLeading)
+            .background(
+                GlassPanelBackground(
+                    cornerRadius: 22,
+                    palette: palette,
+                    tint: LinearGradient(
+                        colors: [
+                            palette.coolAccent.opacity(palette.isDark ? 0.12 : 0.08),
+                            .clear
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
                 )
             )
-        )
-        .overlay(panelStroke(cornerRadius: 22))
+            .overlay(panelStroke(cornerRadius: 22))
+        }
+        .buttonStyle(.plain)
     }
 
     private var homeRadarFooter: some View {
