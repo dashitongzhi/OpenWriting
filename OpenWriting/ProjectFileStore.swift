@@ -8,16 +8,19 @@ struct ProjectFileStore {
 
     init(
         fileManager: FileManager = .default,
+        baseDirectoryURL: URL? = nil,
         baseDirectoryName: String = "OpenWriting"
     ) {
         self.fileManager = fileManager
 
-        let baseURL = (try? fileManager.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )) ?? fileManager.temporaryDirectory
+        let baseURL = baseDirectoryURL ?? (
+            (try? fileManager.url(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: true
+            )) ?? fileManager.temporaryDirectory
+        )
 
         self.baseDirectoryURL = baseURL
             .appendingPathComponent(baseDirectoryName, isDirectory: true)
