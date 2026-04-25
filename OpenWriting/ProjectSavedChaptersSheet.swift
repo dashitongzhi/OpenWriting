@@ -65,6 +65,7 @@ struct ProjectSavedChaptersSheet: View {
                             dismiss()
                         }
                         .buttonStyle(.bordered)
+                        .accessibilityHint("关闭已保存章节窗口")
                     }
 
                     ViewThatFits(in: .horizontal) {
@@ -124,7 +125,15 @@ struct ProjectSavedChaptersSheet: View {
                     }
                 }
                 .padding(24)
-                .frame(width: 920, height: 720, alignment: .topLeading)
+                .frame(
+                    minWidth: 720,
+                    idealWidth: 920,
+                    maxWidth: 1120,
+                    minHeight: 540,
+                    idealHeight: 720,
+                    maxHeight: .infinity,
+                    alignment: .topLeading
+                )
                 .task(id: project.id) {
                     selectedChapterID = project.sortedChapterDrafts.first?.id
                 }
@@ -152,10 +161,18 @@ struct ProjectSavedChaptersSheet: View {
                         dismiss()
                     }
                     .buttonStyle(.borderedProminent)
+                    .accessibilityHint("关闭已保存章节窗口")
                 }
                 .padding(24)
-                .frame(width: 560, alignment: .topLeading)
+                .frame(
+                    minWidth: 420,
+                    idealWidth: 560,
+                    maxWidth: 680,
+                    minHeight: 240,
+                    alignment: .topLeading
+                )
             }
         }
+        .frame(minWidth: 720, minHeight: 540, alignment: .topLeading)
     }
 }

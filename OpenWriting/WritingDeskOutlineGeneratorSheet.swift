@@ -10,6 +10,10 @@ struct WritingDeskOutlineGeneratorSheet: View {
     let isGenerating: Bool
     let onGenerate: () -> Void
 
+    private var palette: DashboardPalette {
+        DashboardPalette(colorScheme: colorScheme)
+    }
+
     var body: some View {
         ZStack {
             PageBackground()
@@ -132,7 +136,14 @@ struct WritingDeskOutlineGeneratorSheet: View {
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
-        .frame(minWidth: 860, minHeight: 820)
+        .frame(
+            minWidth: 720,
+            idealWidth: 920,
+            maxWidth: 1120,
+            minHeight: 640,
+            idealHeight: 820,
+            maxHeight: .infinity
+        )
     }
 
     private var header: some View {
@@ -168,6 +179,7 @@ struct WritingDeskOutlineGeneratorSheet: View {
                         dismiss()
                     }
                     .buttonStyle(.bordered)
+                    .accessibilityHint("关闭大纲生成面板")
 
                     Button(isGenerating ? "正在生成…" : "生成大纲") {
                         dismiss()
@@ -175,6 +187,7 @@ struct WritingDeskOutlineGeneratorSheet: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(isGenerating || !profile.hasMinimumRequirements)
+                    .accessibilityHint("按当前参数生成作品大纲")
                 }
             }
         }
@@ -184,7 +197,7 @@ struct WritingDeskOutlineGeneratorSheet: View {
         HStack(spacing: 10) {
             Text(profile.minimumRequirementSummary)
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(profile.hasMinimumRequirements ? .primary : Color.orange)
+                .foregroundStyle(profile.hasMinimumRequirements ? .primary : palette.warningAccent)
 
             Spacer()
 
@@ -195,7 +208,7 @@ struct WritingDeskOutlineGeneratorSheet: View {
                 .padding(.vertical, 6)
                 .background(
                     Capsule(style: .continuous)
-                        .fill(colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.62))
+                        .fill(palette.mutedCapsuleFill)
                 )
         }
         .padding(16)
@@ -205,7 +218,7 @@ struct WritingDeskOutlineGeneratorSheet: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.18), lineWidth: 1)
+                .strokeBorder(palette.panelBorder, lineWidth: 1)
         )
     }
 }
@@ -224,6 +237,10 @@ private struct WritingDeskOutlinePromptGroupCard<Content: View>: View {
         self.title = title
         self.description = description
         self.content = content()
+    }
+
+    private var palette: DashboardPalette {
+        DashboardPalette(colorScheme: colorScheme)
     }
 
     var body: some View {
@@ -251,7 +268,7 @@ private struct WritingDeskOutlinePromptGroupCard<Content: View>: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .strokeBorder(colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.18), lineWidth: 1)
+                .strokeBorder(palette.panelBorder, lineWidth: 1)
         )
     }
 }

@@ -3,6 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct WritingDeskView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Bindable var appState: AppState
     let openSettings: () -> Void
 
@@ -38,6 +39,10 @@ struct WritingDeskView: View {
     @State private var selectionPolishInstruction = ""
     @State private var selectionPolishTarget: WritingDeskDraftSelection?
     @State private var selectionPolishAnchorPoint: CGPoint?
+
+    private var palette: DashboardPalette {
+        DashboardPalette(colorScheme: colorScheme)
+    }
     @State private var thinkingMode = AIWriterThinkingMode.writing
     @State private var thinkingStepIndex = 0
 
@@ -148,7 +153,7 @@ struct WritingDeskView: View {
                         .padding(.bottom, contentBottomPadding)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
-                    .background(WritingDeskBounceLockView())
+                    .background(ScrollTopBounceLockView())
                     .onChange(of: pendingScrollAnchor) { _, target in
                         guard let target else { return }
 
@@ -387,7 +392,7 @@ struct WritingDeskView: View {
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 26, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                            .strokeBorder(palette.editorBorder, lineWidth: 1)
                     )
                     .overlay(alignment: .topLeading) {
                         if project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -536,7 +541,7 @@ struct WritingDeskView: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 26, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                    .strokeBorder(palette.editorBorder, lineWidth: 1)
             )
             .id(WritingDeskScrollAnchor.ai.rawValue)
 
@@ -623,20 +628,20 @@ struct WritingDeskView: View {
 
     private var aiStatusColor: Color {
         if writingRunState == .stopping {
-            return .red
+            return palette.warningAccent
         }
 
         if writingRunState == .requesting {
-            return .blue
+            return palette.activeAccent
         }
 
         if isGenerating || isSavingChapter {
-            return .orange
+            return palette.warningAccent
         }
 
         return appState.aiConfiguration == nil
-            ? Color(red: 0.83, green: 0.45, blue: 0.20)
-            : Color(red: 0.18, green: 0.68, blue: 0.40)
+            ? palette.warningAccent
+            : palette.readyAccent
     }
 
     private var currentThinkingState: AIWriterThinkingState {
@@ -781,7 +786,7 @@ struct WritingDeskView: View {
 
                 Text(profile.minimumRequirementSummary)
                     .font(.caption)
-                    .foregroundStyle(profile.hasMinimumRequirements ? .secondary : Color.orange)
+                    .foregroundStyle(profile.hasMinimumRequirements ? .secondary : palette.warningAccent)
 
                 Text("提示词会按“小说框架 / 主要世界观 / 核心人物设定 / 输出控制参数”4 组拼接。")
                     .font(.caption)
@@ -1546,7 +1551,7 @@ struct WritingDeskView: View {
                     return
                 }
 
-                let updatedAt = timestampLabel()
+                let updatedAt = TimestampLabel.project()
                 let currentProject = appState.project(for: project.id)
                 let normalizedContinuity = currentProject?.continuityNotes
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -1885,7 +1890,7 @@ struct WritingDeskView: View {
 
         do {
             let urls = try result.get()
-            let documents = try urls.map(loadReferenceDocument)
+            let documents = try ReferenceDocumentImporting.documents(from: urls)
             appState.importReferenceDocuments(documents, for: project.id)
             aiStatusMessage = "已导入 \(documents.count) 份参考文本，AI 写作会同时读取这些材料。"
         } catch {
@@ -1898,7 +1903,7 @@ struct WritingDeskView: View {
 
         do {
             guard let url = try result.get().first else { return }
-            let outlineText = try loadText(from: url)
+            let outlineText = try ReferenceDocumentImporting.text(from: url)
             appState.updateOutlineText(outlineText, for: project.id)
             aiStatusMessage = "作品大纲已导入，可以继续补充章节目标和特殊要求。"
         } catch {
@@ -1911,7 +1916,7 @@ struct WritingDeskView: View {
 
         do {
             guard let url = try result.get().first else { return }
-            let requirementsText = try loadText(from: url)
+            let requirementsText = try ReferenceDocumentImporting.text(from: url)
             appState.updateSpecialRequirements(requirementsText, for: project.id)
             aiStatusMessage = "特殊要求已导入，你也可以继续手动补充字数设定。"
         } catch {
@@ -1919,25 +1924,6 @@ struct WritingDeskView: View {
         }
     }
 
-    private func loadReferenceDocument(from url: URL) throws -> ReferenceDocument {
-        let content = try loadText(from: url)
-        return ReferenceDocument(
-            title: url.deletingPathExtension().lastPathComponent,
-            content: content,
-            importedAt: timestampLabel()
-        )
-    }
-
-    private func loadText(from url: URL) throws -> String {
-        try TextFileDecoding.loadText(from: url, usingSecurityScopedAccess: true)
-    }
-
-    private func timestampLabel() -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_Hans_CN")
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: Date())
-    }
 }
 
 private enum WritingDeskScrollAnchor: String {
@@ -2099,11 +2085,16 @@ private struct WritingDeskToolbarAction: Identifiable {
 }
 
 private struct DraftPolishSheet: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dismiss) private var dismiss
     let projectTitle: String
     @Binding var instruction: String
     let isProcessing: Bool
     let onSubmit: () -> Void
-    @Environment(\.dismiss) private var dismiss
+
+    private var palette: DashboardPalette {
+        DashboardPalette(colorScheme: colorScheme)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -2132,7 +2123,7 @@ private struct DraftPolishSheet: View {
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                                .strokeBorder(borderColor, lineWidth: 1)
                         )
                 }
                 .padding(24)
@@ -2145,6 +2136,7 @@ private struct DraftPolishSheet: View {
                     dismiss()
                 }
                 .buttonStyle(.bordered)
+                .accessibilityHint("关闭整篇润色面板")
 
                 Spacer()
 
@@ -2153,20 +2145,38 @@ private struct DraftPolishSheet: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isProcessing)
+                .accessibilityHint("根据当前要求润色整篇草稿")
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 18)
         }
-        .frame(width: 620, height: 520, alignment: .topLeading)
+        .frame(
+            minWidth: 520,
+            idealWidth: 620,
+            maxWidth: 760,
+            minHeight: 420,
+            idealHeight: 520,
+            maxHeight: .infinity,
+            alignment: .topLeading
+        )
+    }
+
+    private var borderColor: Color {
+        palette.editorBorder
     }
 }
 
 private struct DraftSelectionPolishPopover: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dismiss) private var dismiss
     let selectedText: String
     @Binding var instruction: String
     let isProcessing: Bool
     let onSubmit: () -> Void
-    @Environment(\.dismiss) private var dismiss
+
+    private var palette: DashboardPalette {
+        DashboardPalette(colorScheme: colorScheme)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -2200,14 +2210,14 @@ private struct DraftSelectionPolishPopover: View {
                         .textSelection(.enabled)
                         .padding(12)
                 }
-                .frame(width: 320, height: 108)
+                .frame(minHeight: 108)
                 .background(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .fill(.ultraThinMaterial)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                        .strokeBorder(borderColor, lineWidth: 1)
                 )
             }
 
@@ -2215,14 +2225,14 @@ private struct DraftSelectionPolishPopover: View {
                 .font(.system(size: 13))
                 .scrollContentBackground(.hidden)
                 .padding(12)
-                .frame(width: 320, height: 120)
+                .frame(minHeight: 120)
                 .background(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .fill(.ultraThinMaterial)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                        .strokeBorder(borderColor, lineWidth: 1)
                 )
 
             HStack {
@@ -2230,6 +2240,7 @@ private struct DraftSelectionPolishPopover: View {
                     dismiss()
                 }
                 .buttonStyle(.bordered)
+                .accessibilityHint("关闭选区润色面板")
 
                 Spacer()
 
@@ -2238,10 +2249,15 @@ private struct DraftSelectionPolishPopover: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isProcessing || selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityHint("按当前要求替换选中的正文")
             }
         }
         .padding(18)
-        .frame(width: 356, alignment: .topLeading)
+        .frame(minWidth: 320, idealWidth: 356, maxWidth: 420, alignment: .topLeading)
+    }
+
+    private var borderColor: Color {
+        palette.editorBorder
     }
 }
 
@@ -2256,6 +2272,10 @@ private struct WritingDeskSectionCard<Content: View>: View {
     let isCollapsed: Bool
     let fillContentHeight: Bool
     @ViewBuilder let content: Content
+
+    private var palette: DashboardPalette {
+        DashboardPalette(colorScheme: colorScheme)
+    }
 
     init(
         title: String,
@@ -2331,7 +2351,7 @@ private struct WritingDeskSectionCard<Content: View>: View {
                     Button(action: action.action) {
                         Image(systemName: action.symbolName)
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(action.tintColor ?? (action.isPrimary ? Color.blue : .primary))
+                            .foregroundStyle(action.tintColor ?? (action.isPrimary ? palette.activeAccent : .primary))
                             .frame(width: 38, height: 38)
                             .background(
                                 Circle()
@@ -2374,18 +2394,18 @@ private struct WritingDeskSectionCard<Content: View>: View {
     }
 
     private var chipBackgroundColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.52)
+        palette.secondaryChipFill
     }
 
     private var toolbarButtonBackgroundColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.14) : Color.white.opacity(0.72)
+        palette.toolbarButtonFill
     }
 
     private var dividerColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.16)
+        palette.divider
     }
 
     private var borderColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.18)
+        palette.panelBorder
     }
 }

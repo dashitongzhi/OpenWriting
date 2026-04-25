@@ -124,13 +124,22 @@ struct AppearanceSettingsView: View {
                 }
             }
             .formStyle(.grouped)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
             Text("外观和模型供应商都放在同一个原生设置窗口里，和常见 macOS 工具型应用的偏好结构保持一致。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .padding(24)
-        .frame(width: 460, height: 620, alignment: .topLeading)
+        .frame(
+            minWidth: 420,
+            idealWidth: 520,
+            maxWidth: 680,
+            minHeight: 500,
+            idealHeight: 620,
+            maxHeight: .infinity,
+            alignment: .topLeading
+        )
         .appAppearanceBridge()
     }
 

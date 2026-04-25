@@ -152,7 +152,7 @@ struct OutlineWorkspacePanel: View {
     private func globalMemoryBinding(for projectID: NovelProject.ID) -> Binding<String> {
         Binding(
             get: { appState.project(for: projectID)?.continuityNotes ?? "" },
-            set: { appState.updateContinuityNotes($0, updatedAt: timestampLabel(), for: projectID) }
+            set: { appState.updateContinuityNotes($0, updatedAt: TimestampLabel.project(), for: projectID) }
         )
     }
 
@@ -286,7 +286,7 @@ struct OutlineWorkspacePanel: View {
     private func outlineSummaryBinding(for projectID: NovelProject.ID) -> Binding<String> {
         Binding(
             get: { appState.project(for: projectID)?.outlineSummary ?? "" },
-            set: { appState.updateOutlineSummary($0, updatedAt: timestampLabel(), for: projectID) }
+            set: { appState.updateOutlineSummary($0, updatedAt: TimestampLabel.project(), for: projectID) }
         )
     }
 
@@ -403,26 +403,21 @@ struct OutlineWorkspacePanel: View {
         }
     }
 
-    private func timestampLabel() -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_Hans_CN")
-        formatter.dateFormat = "今天 HH:mm"
-        return formatter.string(from: Date())
-    }
-
     private var outlineDirectoryStyle: SavedChapterDirectoryStyle {
-        SavedChapterDirectoryStyle(
-            accentColor: .blue,
-            textPrimary: .primary,
-            textSecondary: colorScheme == .dark ? Color.white.opacity(0.72) : .secondary,
-            selectedNumberColor: .blue,
-            numberColor: colorScheme == .dark ? Color.white.opacity(0.72) : .secondary,
-            selectedNumberBackground: Color.blue.opacity(0.14),
-            numberBackground: colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.58),
-            selectedRowBackground: colorScheme == .dark ? Color.white.opacity(0.14) : Color.white.opacity(0.82),
-            rowBackground: colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.52),
-            selectedRowBorder: Color.blue.opacity(0.32),
-            rowBorder: colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.16),
+        let palette = DashboardPalette(colorScheme: colorScheme)
+
+        return SavedChapterDirectoryStyle(
+            accentColor: palette.activeAccent,
+            textPrimary: palette.textPrimary,
+            textSecondary: palette.textSecondary,
+            selectedNumberColor: palette.activeAccent,
+            numberColor: palette.textSecondary,
+            selectedNumberBackground: palette.activeAccent.opacity(0.14),
+            numberBackground: palette.mutedCapsuleFill,
+            selectedRowBackground: palette.selectedPanel,
+            rowBackground: palette.panelBase.opacity(palette.isDark ? 0.68 : 0.52),
+            selectedRowBorder: palette.activeAccent.opacity(0.32),
+            rowBorder: palette.editorBorder,
             rowCornerRadius: 18,
             showsPreviewText: false,
             minHeight: 260,
@@ -464,6 +459,6 @@ private struct OutlineEditorSurface: View {
     }
 
     private var borderColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.16)
+        DashboardPalette(colorScheme: colorScheme).editorBorder
     }
 }

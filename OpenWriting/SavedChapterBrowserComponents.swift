@@ -118,6 +118,7 @@ struct SavedChapterDirectoryList: View {
                             )
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("查看第 \(chapterDraft.chapterNumber) 章 \(chapterDraft.chapterTitle)")
                     }
                 }
                 .padding(.vertical, 2)
@@ -181,12 +182,14 @@ struct SavedChapterPreviewPanel: View {
                 onLoadChapter(chapterDraft)
             }
             .buttonStyle(.bordered)
+            .accessibilityHint("把这一章载入写作台继续编辑")
         case let .prominent(tint):
             Button("载入写作台继续编辑") {
                 onLoadChapter(chapterDraft)
             }
             .buttonStyle(.borderedProminent)
             .tint(tint)
+            .accessibilityHint("把这一章载入写作台继续编辑")
         }
     }
 }
@@ -216,6 +219,6 @@ struct SavedChapterPreviewSurface: View {
     }
 
     private var borderColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.16)
+        DashboardPalette(colorScheme: colorScheme).editorBorder
     }
 }

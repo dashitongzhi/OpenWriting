@@ -93,7 +93,7 @@ struct WritingDeskTextSurface: View {
     }
 
     private var borderColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.16)
+        DashboardPalette(colorScheme: colorScheme).editorBorder
     }
 }
 
@@ -300,7 +300,7 @@ struct WritingDeskCacheSurface: View {
     }
 
     private var borderColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.16)
+        DashboardPalette(colorScheme: colorScheme).editorBorder
     }
 }
 
@@ -411,16 +411,18 @@ struct WritingDeskTimelineNode: View {
     }
 
     private var statusColor: Color {
+        let palette = DashboardPalette(colorScheme: colorScheme)
+
         if isStopping {
-            return .red
+            return palette.warningAccent
         }
 
         if isActive {
-            return Color.blue
+            return palette.activeAccent
         }
 
         if isCompleted {
-            return Color(red: 0.18, green: 0.68, blue: 0.40)
+            return palette.readyAccent
         }
 
         return .secondary
@@ -435,35 +437,39 @@ struct WritingDeskTimelineNode: View {
     }
 
     private var backgroundColor: some ShapeStyle {
+        let palette = DashboardPalette(colorScheme: colorScheme)
+
         if isStopping {
-            return AnyShapeStyle(Color.red.opacity(colorScheme == .dark ? 0.18 : 0.12))
+            return AnyShapeStyle(palette.warningAccent.opacity(colorScheme == .dark ? 0.18 : 0.12))
         }
 
         if isActive {
-            return AnyShapeStyle(Color.blue.opacity(colorScheme == .dark ? 0.18 : 0.12))
+            return AnyShapeStyle(palette.activeAccent.opacity(colorScheme == .dark ? 0.18 : 0.12))
         }
 
         if isCompleted {
-            return AnyShapeStyle(Color.green.opacity(colorScheme == .dark ? 0.16 : 0.10))
+            return AnyShapeStyle(palette.readyAccent.opacity(colorScheme == .dark ? 0.16 : 0.10))
         }
 
         return AnyShapeStyle(.ultraThinMaterial)
     }
 
     private var borderColor: Color {
+        let palette = DashboardPalette(colorScheme: colorScheme)
+
         if isStopping {
-            return Color.red.opacity(0.5)
+            return palette.warningAccent.opacity(0.5)
         }
 
         if isActive {
-            return Color.blue.opacity(0.5)
+            return palette.activeAccent.opacity(0.5)
         }
 
         if isCompleted {
-            return Color.green.opacity(0.4)
+            return palette.readyAccent.opacity(0.4)
         }
 
-        return colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.16)
+        return palette.editorBorder
     }
 }
 
@@ -542,96 +548,5 @@ struct AIWriterThinkingSurface: View {
         }
 
         return .secondary
-    }
-}
-
-struct WritingDeskBounceLockView: NSViewRepresentable {
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView(frame: .zero)
-        view.isHidden = true
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async {
-            context.coordinator.attachIfNeeded(from: nsView)
-        }
-    }
-
-    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
-        coordinator.detach()
-    }
-
-    @MainActor
-    final class Coordinator {
-        private weak var scrollView: NSScrollView?
-        private var liveScrollEndObserver: NSObjectProtocol?
-
-        func attachIfNeeded(from view: NSView) {
-            guard let discoveredScrollView = view.enclosingScrollView else { return }
-            guard scrollView !== discoveredScrollView else { return }
-
-            detach()
-            scrollView = discoveredScrollView
-
-            liveScrollEndObserver = NotificationCenter.default.addObserver(
-                forName: NSScrollView.didEndLiveScrollNotification,
-                object: discoveredScrollView,
-                queue: .main
-            ) { [weak self] _ in
-                guard let self else { return }
-                MainActor.assumeIsolated {
-                    self.snapBackToTopIfNeeded()
-                }
-            }
-        }
-
-        func detach() {
-            if let liveScrollEndObserver {
-                NotificationCenter.default.removeObserver(liveScrollEndObserver)
-            }
-
-            liveScrollEndObserver = nil
-            scrollView = nil
-        }
-
-        private func snapBackToTopIfNeeded() {
-            guard let scrollView, let documentView = scrollView.documentView else { return }
-
-            let clipView = scrollView.contentView
-            let targetTopY = topOriginY(for: scrollView, documentView: documentView)
-            let currentY = clipView.bounds.origin.y
-
-            let needsSnapBack: Bool
-            if documentView.isFlipped {
-                needsSnapBack = currentY < targetTopY - 0.5
-            } else {
-                needsSnapBack = currentY > targetTopY + 0.5
-            }
-
-            guard needsSnapBack else { return }
-
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.22
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                clipView.animator().setBoundsOrigin(NSPoint(x: clipView.bounds.origin.x, y: targetTopY))
-            }
-
-            scrollView.reflectScrolledClipView(clipView)
-        }
-
-        private func topOriginY(for scrollView: NSScrollView, documentView: NSView) -> CGFloat {
-            if documentView.isFlipped {
-                return 0
-            }
-
-            let visibleHeight = scrollView.contentView.bounds.height
-            let documentHeight = documentView.bounds.height
-            return max(0, documentHeight - visibleHeight)
-        }
     }
 }
