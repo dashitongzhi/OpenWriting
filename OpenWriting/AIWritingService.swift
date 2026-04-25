@@ -115,6 +115,43 @@ enum AIWritingService {
         )
     }
 
+    static func polishFullDraft(
+        configuration: AIConnectionConfiguration,
+        draft: String,
+        instruction: String
+    ) async throws -> String {
+        try await completeText(
+            configuration: configuration,
+            systemPrompt: draftPolishSystemPrompt,
+            userPrompt: fullDraftPolishUserPrompt(draft: draft, instruction: instruction),
+            temperature: 0.45,
+            maxTokens: max(1_600, min(6_000, draft.count + 800))
+        )
+    }
+
+    static func polishSelection(
+        configuration: AIConnectionConfiguration,
+        selectedText: String,
+        instruction: String,
+        fullDraft: String,
+        precedingContext: String,
+        followingContext: String
+    ) async throws -> String {
+        try await completeText(
+            configuration: configuration,
+            systemPrompt: selectionPolishSystemPrompt,
+            userPrompt: selectionPolishUserPrompt(
+                selectedText: selectedText,
+                instruction: instruction,
+                fullDraft: fullDraft,
+                precedingContext: precedingContext,
+                followingContext: followingContext
+            ),
+            temperature: 0.42,
+            maxTokens: max(320, min(1_800, selectedText.count + 400))
+        )
+    }
+
     static func refreshChapterTree(
         configuration: AIConnectionConfiguration,
         project: NovelProject,
@@ -305,6 +342,26 @@ enum AIWritingService {
     6. 请根据预期字数控制规模，字数越长，阶段规划和伏笔层级应越完整。
     """
 
+    private static let draftPolishSystemPrompt = """
+    你是一位擅长中文小说润色的编辑。
+    你的任务是根据用户要求，直接改写整篇草稿。
+    必须遵守：
+    1. 保留原文的人称、时态、剧情事实、设定和人物关系，不擅自改剧情走向。
+    2. 重点优化表达、节奏、动作细节、对白自然度、氛围与段落衔接。
+    3. 如果用户给了具体要求，优先满足这些要求；如果没有要求，就做克制润色，不要过度重写。
+    4. 只输出润色后的完整正文，不要解释，不要分点，不要加标题。
+    """
+
+    private static let selectionPolishSystemPrompt = """
+    你是一位擅长中文小说局部润色的编辑。
+    你的任务是只改写用户选中的那一段文本。
+    必须遵守：
+    1. 只输出润色后的选区文本，不要解释，不要加引号，不要重复上下文。
+    2. 保留原意、人物状态与叙事事实，不擅自改剧情。
+    3. 用词、节奏与语气要能和原稿前后文自然衔接。
+    4. 如果用户给了润色要求，优先满足；如果没有，就做克制优化。
+    """
+
     private static func userPrompt(
         project: NovelProject,
         mode: AIWritingMode,
@@ -406,6 +463,54 @@ enum AIWritingService {
         每次续写至少推进一个新的情节拍点、关系变化或信息增量，不要用改写前文来充字数。
         若需承上启下，请用新的动作、冲突、观察或结果进入当前章节，而不是复述上一章摘要。
         请直接输出续写后的正文。
+        """
+    }
+
+    private static func fullDraftPolishUserPrompt(
+        draft: String,
+        instruction: String
+    ) -> String {
+        let normalizedInstruction = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedInstruction = normalizedInstruction.isEmpty
+            ? "未额外指定要求，请做克制润色，重点提升表达、节奏和句子顺滑度。"
+            : normalizedInstruction
+
+        return """
+        润色要求：
+        \(resolvedInstruction)
+
+        待润色全文：
+        \(draft)
+        """
+    }
+
+    private static func selectionPolishUserPrompt(
+        selectedText: String,
+        instruction: String,
+        fullDraft: String,
+        precedingContext: String,
+        followingContext: String
+    ) -> String {
+        let normalizedInstruction = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedInstruction = normalizedInstruction.isEmpty
+            ? "未额外指定要求，请做克制润色，重点提升自然度、顺滑度和节奏。"
+            : normalizedInstruction
+
+        return """
+        润色要求：
+        \(resolvedInstruction)
+
+        原稿全文（用于对齐语气与上下文，不要整段重写全文）：
+        \(excerpt(from: fullDraft, limit: 3_200))
+
+        选区前文（紧邻选区）：
+        \(normalized(precedingContext, fallback: "选区前面没有更多正文。"))
+
+        需要润色的选区：
+        \(selectedText)
+
+        选区后文（紧邻选区）：
+        \(normalized(followingContext, fallback: "选区后面没有更多正文。"))
         """
     }
 

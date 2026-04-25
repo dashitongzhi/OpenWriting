@@ -11,6 +11,8 @@ struct WritingDeskView: View {
     @State private var isImportingOutline = false
     @State private var isImportingRequirements = false
     @State private var isOutlineGeneratorPresented = false
+    @State private var isDraftPolishSheetPresented = false
+    @State private var isSelectionPolishPopoverPresented = false
     @State private var aiSuggestion = ""
     @State private var aiStatusMessage = "准备就绪，可先补大纲、参考文本和特殊要求，再开始当前章节写作。"
     @State private var saveMessage = "自动保存已开启，可按章节收录"
@@ -26,6 +28,18 @@ struct WritingDeskView: View {
     @State private var areConfigurationCardsCollapsed = false
     @State private var pendingScrollAnchor: WritingDeskScrollAnchor?
     @State private var timingSnapshot = AIWriterTimingSnapshot.idle
+    @State private var writingProgressTask: Task<Void, Never>?
+    @State private var writingStopTask: Task<Void, Never>?
+    @State private var writingRunState = WritingRunState.idle
+    @State private var draftSelection = WritingDeskDraftSelection.empty
+    @State private var draftSelectionActionPoint: CGPoint?
+    @State private var draftEditorFocusToken = UUID()
+    @State private var draftPolishInstruction = ""
+    @State private var selectionPolishInstruction = ""
+    @State private var selectionPolishTarget: WritingDeskDraftSelection?
+    @State private var selectionPolishAnchorPoint: CGPoint?
+    @State private var thinkingMode = AIWriterThinkingMode.writing
+    @State private var thinkingStepIndex = 0
 
     private let contentTopPadding: CGFloat = 18
     private let contentHorizontalPadding: CGFloat = 32
@@ -89,6 +103,30 @@ struct WritingDeskView: View {
                         generateOutline(for: appState.project(for: activeProject.id) ?? activeProject)
                     }
                 )
+            }
+        }
+        .sheet(isPresented: $isDraftPolishSheetPresented) {
+            if let activeProject {
+                DraftPolishSheet(
+                    projectTitle: activeProject.title,
+                    instruction: $draftPolishInstruction,
+                    isProcessing: isGenerating || isSavingChapter,
+                    onSubmit: {
+                        polishEntireDraft(for: activeProject)
+                    }
+                )
+            }
+        }
+        .onChange(of: draftSelection) { _, selection in
+            if !selection.hasSelection && selectionPolishTarget == nil {
+                isSelectionPolishPopoverPresented = false
+            }
+        }
+        .onChange(of: isSelectionPolishPopoverPresented) { _, isPresented in
+            if !isPresented {
+                selectionPolishTarget = nil
+                selectionPolishAnchorPoint = nil
+                selectionPolishInstruction = ""
             }
         }
     }
@@ -306,6 +344,16 @@ struct WritingDeskView: View {
             WritingDeskSectionCard(
                 title: "草稿箱",
                 badgeText: "\(project.draftWordCount) 字",
+                actions: [
+                    WritingDeskToolbarAction(
+                        symbolName: "sparkles",
+                        accessibilityLabel: "润色整篇草稿",
+                        isEnabled: !isGenerating && !isSavingChapter && appState.aiConfiguration != nil && !project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ) {
+                        draftPolishInstruction = ""
+                        isDraftPolishSheetPresented = true
+                    }
+                ],
                 fillContentHeight: layout != nil
             ) {
                 HStack(alignment: .center, spacing: 10) {
@@ -321,11 +369,13 @@ struct WritingDeskView: View {
 
                 writingDeskChapterControls(for: project)
 
-                TextEditor(text: draftBinding(for: project.id))
-                    .font(.system(size: 16, weight: .regular, design: .serif))
-                    .lineSpacing(5)
-                    .scrollContentBackground(.hidden)
-                    .padding(18)
+                ZStack(alignment: .bottomTrailing) {
+                    WritingDeskDraftEditor(
+                        text: draftBinding(for: project.id),
+                        selection: $draftSelection,
+                        selectionActionPoint: $draftSelectionActionPoint,
+                        focusToken: draftEditorFocusToken
+                    )
                     .frame(
                         minHeight: layout?.draftEditorHeight ?? 720,
                         maxHeight: layout?.draftEditorHeight,
@@ -349,8 +399,40 @@ struct WritingDeskView: View {
                                 .allowsHitTesting(false)
                         }
                     }
-                    .focused($focusedArea, equals: .draft)
                     .id(WritingDeskScrollAnchor.draft.rawValue)
+
+                    GeometryReader { proxy in
+                        if activeSelectionPolishSelection.hasSelection,
+                           let actionPoint = activeSelectionPolishActionPoint {
+                            Button {
+                                selectionPolishTarget = activeSelectionPolishSelection
+                                selectionPolishAnchorPoint = actionPoint
+                                selectionPolishInstruction = ""
+                                isSelectionPolishPopoverPresented = true
+                            } label: {
+                                Label("润色选区", systemImage: "wand.and.stars")
+                                    .font(.subheadline.weight(.semibold))
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 10)
+                                    .background(.regularMaterial, in: Capsule())
+                                    .shadow(color: Color.black.opacity(0.12), radius: 10, y: 4)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isGenerating || isSavingChapter || appState.aiConfiguration == nil)
+                            .position(selectionPolishButtonPosition(in: proxy.size, anchor: actionPoint))
+                            .popover(isPresented: $isSelectionPolishPopoverPresented, arrowEdge: .bottom) {
+                                DraftSelectionPolishPopover(
+                                    selectedText: activeSelectionPolishSelection.text,
+                                    instruction: $selectionPolishInstruction,
+                                    isProcessing: isGenerating || isSavingChapter,
+                                    onSubmit: {
+                                        polishDraftSelection(for: project)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
 
                 HStack {
                     Text(saveMessage)
@@ -409,30 +491,7 @@ struct WritingDeskView: View {
             title: "AI 作家",
             statusLabel: aiStatusLabel,
             statusColor: aiStatusColor,
-            actions: [
-                .init(
-                    symbolName: "play.fill",
-                    accessibilityLabel: "开始写作",
-                    isEnabled: !isGenerating && !isSavingChapter && appState.aiConfiguration != nil,
-                    isPrimary: true
-                ) {
-                    startWriting(for: project)
-                },
-                .init(
-                    symbolName: "arrow.clockwise",
-                    accessibilityLabel: "重写当前候选稿",
-                    isEnabled: !isGenerating && !isSavingChapter && appState.aiConfiguration != nil && !aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ) {
-                    rewriteSuggestion(for: project)
-                },
-                .init(
-                    symbolName: autoScrollLocked ? "lock.fill" : "lock.open.fill",
-                    accessibilityLabel: autoScrollLocked ? "解锁自动滑动" : "锁定自动滑动"
-                ) {
-                    autoScrollLocked.toggle()
-                    aiStatusMessage = autoScrollLocked ? "已锁定自动滑动，生成后不会自动跳转模块。" : "已恢复自动滑动，生成后会自动定位到结果区域。"
-                }
-            ],
+            actions: writingDeskAIActions(for: project),
             fillContentHeight: layout != nil
         ) {
             if appState.showWritingDeskTimeline {
@@ -444,36 +503,42 @@ struct WritingDeskView: View {
                 .foregroundStyle(.secondary)
                 .lineSpacing(3)
 
-            TextEditor(text: $aiSuggestion)
-                .font(.system(size: 15, weight: .regular, design: .serif))
-                .lineSpacing(5)
-                .scrollContentBackground(.hidden)
-                .padding(18)
-                .frame(
-                    minHeight: layout?.aiEditorHeight ?? 918,
-                    maxHeight: layout?.aiEditorHeight,
-                    alignment: .topLeading
-                )
-                .background(
-                    RoundedRectangle(cornerRadius: 26, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 26, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
-                )
-                .overlay(alignment: .topLeading) {
-                    if aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text("这里会显示 AI 按当前大纲与要求生成的候选稿。满意就接受进草稿箱，不满意就直接重写。")
-                            .font(.subheadline)
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 24)
-                            .padding(.vertical, 22)
-                            .allowsHitTesting(false)
-                    }
+            Group {
+                if writingRunState == .requesting || writingRunState == .stopping {
+                    AIWriterThinkingSurface(state: currentThinkingState)
+                } else {
+                    TextEditor(text: $aiSuggestion)
+                        .font(.system(size: 15, weight: .regular, design: .serif))
+                        .lineSpacing(5)
+                        .scrollContentBackground(.hidden)
+                        .padding(18)
+                        .overlay(alignment: .topLeading) {
+                            if aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                Text("这里会显示 AI 按当前大纲与要求生成的候选稿。满意就接受进草稿箱，不满意就直接重写。")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.tertiary)
+                                    .padding(.horizontal, 24)
+                                    .padding(.vertical, 22)
+                                    .allowsHitTesting(false)
+                            }
+                        }
+                        .focused($focusedArea, equals: .ai)
                 }
-                .focused($focusedArea, equals: .ai)
-                .id(WritingDeskScrollAnchor.ai.rawValue)
+            }
+            .frame(
+                minHeight: layout?.aiEditorHeight ?? 918,
+                maxHeight: layout?.aiEditorHeight,
+                alignment: .topLeading
+            )
+            .background(
+                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .fill(.ultraThinMaterial)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+            )
+            .id(WritingDeskScrollAnchor.ai.rawValue)
 
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) {
@@ -496,11 +561,6 @@ struct WritingDeskView: View {
                     }
                     .buttonStyle(.bordered)
                     .disabled(aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                    Spacer()
-
-                    Button("设置", action: openSettings)
-                        .buttonStyle(.bordered)
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
@@ -523,9 +583,6 @@ struct WritingDeskView: View {
                     }
                     .buttonStyle(.bordered)
                     .disabled(aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                    Button("设置", action: openSettings)
-                        .buttonStyle(.bordered)
                 }
             }
         }
@@ -545,7 +602,19 @@ struct WritingDeskView: View {
     }
 
     private var aiStatusLabel: String {
-        if isGenerating || isSavingChapter {
+        if writingRunState == .requesting {
+            return "写作中"
+        }
+
+        if writingRunState == .stopping {
+            return "停止中"
+        }
+
+        if isSavingChapter {
+            return "保存中"
+        }
+
+        if isGenerating {
             return "生成中"
         }
 
@@ -553,6 +622,14 @@ struct WritingDeskView: View {
     }
 
     private var aiStatusColor: Color {
+        if writingRunState == .stopping {
+            return .red
+        }
+
+        if writingRunState == .requesting {
+            return .blue
+        }
+
         if isGenerating || isSavingChapter {
             return .orange
         }
@@ -560,6 +637,93 @@ struct WritingDeskView: View {
         return appState.aiConfiguration == nil
             ? Color(red: 0.83, green: 0.45, blue: 0.20)
             : Color(red: 0.18, green: 0.68, blue: 0.40)
+    }
+
+    private var currentThinkingState: AIWriterThinkingState {
+        AIWriterThinkingState(
+            title: writingRunState == .stopping ? "正在停止本次写作" : thinkingMode.title,
+            subtitle: writingRunState == .stopping ? "已经发出停止请求，本次结果不会保留，也不会写入任何记录。" : thinkingMode.subtitle,
+            messages: thinkingMode.messages,
+            activeIndex: min(thinkingStepIndex, max(thinkingMode.messages.count - 1, 0)),
+            isStopping: writingRunState == .stopping
+        )
+    }
+
+    private var activeSelectionPolishSelection: WritingDeskDraftSelection {
+        if let selectionPolishTarget, selectionPolishTarget.hasSelection {
+            return selectionPolishTarget
+        }
+
+        return draftSelection
+    }
+
+    private var activeSelectionPolishActionPoint: CGPoint? {
+        selectionPolishAnchorPoint ?? draftSelectionActionPoint
+    }
+
+    private func writingDeskAIActions(for project: NovelProject) -> [WritingDeskToolbarAction] {
+        var actions: [WritingDeskToolbarAction] = []
+
+        let hasConfiguration = appState.aiConfiguration != nil
+        let hasBusyNonWritingTask = isGenerating && writingRunState == .idle
+
+        switch writingRunState {
+        case .idle:
+            actions.append(
+                WritingDeskToolbarAction(
+                    symbolName: "play.fill",
+                    accessibilityLabel: "开启写作",
+                    isEnabled: !hasBusyNonWritingTask && !isSavingChapter && hasConfiguration,
+                    isPrimary: true
+                ) {
+                    startWriting(for: project)
+                }
+            )
+        case .requesting:
+            actions.append(
+                WritingDeskToolbarAction(
+                    symbolName: "stop.fill",
+                    accessibilityLabel: "停止写作",
+                    isEnabled: true,
+                    isPrimary: true,
+                    tintColor: .red
+                ) {
+                    stopWriting()
+                }
+            )
+        case .stopping:
+            actions.append(
+                WritingDeskToolbarAction(
+                    symbolName: "stop.circle.fill",
+                    accessibilityLabel: "正在停止写作",
+                    isEnabled: false,
+                    isPrimary: true,
+                    tintColor: .red
+                ) {}
+            )
+        }
+
+        actions.append(
+            WritingDeskToolbarAction(
+                symbolName: "arrow.clockwise",
+                accessibilityLabel: "重写当前候选稿",
+                isEnabled: writingRunState == .idle && !isSavingChapter && !hasBusyNonWritingTask && hasConfiguration && !aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ) {
+                rewriteSuggestion(for: project)
+            }
+        )
+
+        actions.append(
+            WritingDeskToolbarAction(
+                symbolName: autoScrollLocked ? "lock.fill" : "lock.open.fill",
+                accessibilityLabel: autoScrollLocked ? "解锁自动滑动" : "锁定自动滑动"
+            ) {
+                autoScrollLocked.toggle()
+                aiStatusMessage = autoScrollLocked ? "已锁定自动滑动，生成后不会自动跳转模块。" : "已恢复自动滑动，生成后会自动定位到结果区域。"
+            }
+        )
+
+        return actions
     }
 
     private func writingDeskChapterControls(for project: NovelProject) -> some View {
@@ -765,12 +929,7 @@ struct WritingDeskView: View {
                     appState.updateOutlineText(outline, for: project.id)
                     clearOutlineGenerationRequest(token: requestToken)
                     isGenerating = false
-                    timingSnapshot = AIWriterTimingSnapshot(
-                        queue: 0.1,
-                        generate: max(total * 0.82, 0.1),
-                        finish: max(total * 0.18, 0.1),
-                        complete: max(total, 0.2)
-                    )
+                    timingSnapshot = AIWriterTimingSnapshot.completed(total: total)
                     aiStatusMessage = "大纲已生成并回填到大纲设定，可以继续微调后直接开始写作。"
                     revealWritingDeskWindow(for: project.id)
                 }
@@ -806,13 +965,26 @@ struct WritingDeskView: View {
             return
         }
 
+        if let activeToken = writingGenerationToken {
+            let task = writingGenerationTask
+            clearWritingGenerationRequest(token: activeToken)
+            task?.cancel()
+        }
+
         let latestProject = appState.project(for: project.id) ?? project
         let requestContext = draftGenerationContext(for: latestProject, rejectedSuggestion: rejectedSuggestion)
+        writingStopTask?.cancel()
+        writingStopTask = nil
         isGenerating = true
+        writingRunState = .requesting
+        thinkingMode = rejectedSuggestion == nil ? .writing : .rewriting
+        thinkingStepIndex = 0
+        aiSuggestion = ""
         aiStatusMessage = rejectedSuggestion == nil
             ? "AI 正在根据大纲、参考文本、特殊要求和字数要求创作候选稿…"
             : "AI 正在重写这一版候选稿，会保留当前约束，但换一种写法重新生成…"
         timingSnapshot = .queued
+        startWritingProgressMonitor()
 
         writingGenerationTask?.cancel()
         let requestToken = UUID()
@@ -852,12 +1024,9 @@ struct WritingDeskView: View {
                     aiSuggestion = suggestion
                     clearWritingGenerationRequest(token: requestToken)
                     isGenerating = false
-                    timingSnapshot = AIWriterTimingSnapshot(
-                        queue: 0.1,
-                        generate: max(total * 0.82, 0.1),
-                        finish: max(total * 0.18, 0.1),
-                        complete: max(total, 0.2)
-                    )
+                    writingRunState = .idle
+                    stopWritingProgressMonitor()
+                    timingSnapshot = AIWriterTimingSnapshot.completed(total: total)
                     aiStatusMessage = "候选稿已生成。满意可接受进草稿箱，不满意可继续重写。"
                     revealWritingDeskWindow(for: project.id)
                     focusAIEditor()
@@ -871,7 +1040,8 @@ struct WritingDeskView: View {
 
                     clearWritingGenerationRequest(token: requestToken)
                     isGenerating = false
-                    timingSnapshot = .idle
+                    writingRunState = .idle
+                    stopWritingProgressMonitor(resetSnapshot: true)
                 }
             } catch {
                 await MainActor.run {
@@ -881,10 +1051,44 @@ struct WritingDeskView: View {
 
                     clearWritingGenerationRequest(token: requestToken)
                     isGenerating = false
-                    timingSnapshot = .idle
+                    writingRunState = .idle
+                    stopWritingProgressMonitor(resetSnapshot: true)
                     aiStatusMessage = error.localizedDescription
                     revealWritingDeskWindow(for: project.id)
                 }
+            }
+        }
+    }
+
+    private func stopWriting() {
+        guard writingRunState == .requesting else { return }
+
+        let activeToken = writingGenerationToken
+        let task = writingGenerationTask
+        if let activeToken {
+            clearWritingGenerationRequest(token: activeToken)
+        }
+
+        isGenerating = false
+        writingRunState = .stopping
+        stopWritingProgressMonitor(markStopping: true)
+        aiStatusMessage = "正在停止本次写作，本次结果不会保留。"
+        writingStopTask?.cancel()
+        writingStopTask = Task {
+            for attempt in 0..<3 {
+                task?.cancel()
+                if attempt < 2 {
+                    try? await Task.sleep(for: .milliseconds(180))
+                }
+            }
+
+            await MainActor.run {
+                writingStopTask = nil
+                guard writingRunState == .stopping else { return }
+                writingGenerationTask = nil
+                writingRunState = .idle
+                timingSnapshot = .idle
+                aiStatusMessage = "已停止本次写作，本次结果不会保留。"
             }
         }
     }
@@ -904,6 +1108,106 @@ struct WritingDeskView: View {
         aiStatusMessage = "候选稿已放入草稿箱，可继续编辑或保存当前章。"
         focusDraftEditor()
         requestAutoScroll(to: .draft)
+    }
+
+    private func polishEntireDraft(for project: NovelProject) {
+        guard let configuration = appState.aiConfiguration else {
+            aiStatusMessage = "当前模型配置不完整，请先到设置里填写 API Key、Base URL 和模型名称。"
+            return
+        }
+
+        let latestProject = appState.project(for: project.id) ?? project
+        let trimmedDraft = latestProject.draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedDraft.isEmpty else {
+            aiStatusMessage = "草稿箱里还没有可润色的正文。"
+            return
+        }
+
+        let instruction = draftPolishInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        isGenerating = true
+        aiStatusMessage = instruction.isEmpty ? "AI 正在润色整篇草稿…" : "AI 正在按你的要求润色整篇草稿…"
+        isDraftPolishSheetPresented = false
+
+        Task {
+            do {
+                let polishedDraft = try await AIWritingService.polishFullDraft(
+                    configuration: configuration,
+                    draft: trimmedDraft,
+                    instruction: instruction
+                )
+
+                await MainActor.run {
+                    appState.updateDraftText(polishedDraft, for: project.id)
+                    saveMessage = "已按要求润色整篇草稿"
+                    aiStatusMessage = "整篇草稿已完成润色，并已回写到草稿箱。"
+                    isGenerating = false
+                    draftSelection = .empty
+                    draftSelectionActionPoint = nil
+                    selectionPolishTarget = nil
+                    selectionPolishAnchorPoint = nil
+                    focusDraftEditor()
+                    requestAutoScroll(to: .draft)
+                }
+            } catch {
+                await MainActor.run {
+                    isGenerating = false
+                    aiStatusMessage = "草稿润色失败：\(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private func polishDraftSelection(for project: NovelProject) {
+        guard let configuration = appState.aiConfiguration else {
+            aiStatusMessage = "当前模型配置不完整，请先到设置里填写 API Key、Base URL 和模型名称。"
+            return
+        }
+
+        let currentSelection = selectionPolishTarget ?? draftSelection
+        guard currentSelection.hasSelection else {
+            aiStatusMessage = "请先在草稿箱里划词或划句子，再执行润色。"
+            return
+        }
+
+        let latestProject = appState.project(for: project.id) ?? project
+        let instruction = selectionPolishInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        let selectionContext = selectionPolishContext(in: latestProject.draftText, selection: currentSelection.range)
+        isGenerating = true
+        aiStatusMessage = instruction.isEmpty ? "AI 正在润色当前选区…" : "AI 正在按你的要求润色当前选区…"
+        isSelectionPolishPopoverPresented = false
+
+        Task {
+            do {
+                let polishedSelection = try await AIWritingService.polishSelection(
+                    configuration: configuration,
+                    selectedText: currentSelection.text,
+                    instruction: instruction,
+                    fullDraft: latestProject.draftText,
+                    precedingContext: selectionContext.leading,
+                    followingContext: selectionContext.trailing
+                )
+
+                await MainActor.run {
+                    applyPolishedSelection(
+                        normalizedSelectionPolishResult(polishedSelection),
+                        selection: currentSelection,
+                        for: project.id
+                    )
+                    saveMessage = "已按要求润色当前选区"
+                    aiStatusMessage = "当前选区已润色并回写到草稿箱。"
+                    isGenerating = false
+                    selectionPolishTarget = nil
+                    selectionPolishAnchorPoint = nil
+                    selectionPolishInstruction = ""
+                    focusDraftEditor()
+                }
+            } catch {
+                await MainActor.run {
+                    isGenerating = false
+                    aiStatusMessage = "选区润色失败：\(error.localizedDescription)"
+                }
+            }
+        }
     }
 
     private func saveCurrentChapterDraft(for project: NovelProject) {
@@ -1338,7 +1642,7 @@ struct WritingDeskView: View {
 
     private func focusDraftEditor() {
         DispatchQueue.main.async {
-            focusedArea = .draft
+            draftEditorFocusToken = UUID()
         }
     }
 
@@ -1353,10 +1657,18 @@ struct WritingDeskView: View {
         aiSuggestion = ""
         isGenerating = false
         isSavingChapter = false
+        writingRunState = .idle
         projectContextRefreshTokens.removeAll()
         isCacheCollapsed = false
         autoScrollLocked = false
         timingSnapshot = .idle
+        draftSelection = .empty
+        draftSelectionActionPoint = nil
+        selectionPolishTarget = nil
+        selectionPolishAnchorPoint = nil
+        draftPolishInstruction = ""
+        selectionPolishInstruction = ""
+        isSelectionPolishPopoverPresented = false
         saveMessage = "自动保存已开启，可按章节收录"
         aiStatusMessage = "准备就绪，可先补大纲、参考文本和特殊要求，再开始当前章节写作。"
         focusDraftEditor()
@@ -1415,8 +1727,125 @@ struct WritingDeskView: View {
         writingGenerationToken = nil
         outlineGenerationTask?.cancel()
         writingGenerationTask?.cancel()
+        writingProgressTask?.cancel()
+        writingStopTask?.cancel()
         outlineGenerationTask = nil
         writingGenerationTask = nil
+        writingProgressTask = nil
+        writingStopTask = nil
+    }
+
+    private func startWritingProgressMonitor() {
+        writingProgressTask?.cancel()
+        let startedAt = Date()
+
+        writingProgressTask = Task {
+            while !Task.isCancelled {
+                let elapsed = Date().timeIntervalSince(startedAt)
+                let snapshot = AIWriterTimingSnapshot.live(elapsed: elapsed)
+                let nextThinkingIndex = min(
+                    Int(elapsed / 1.2),
+                    max(thinkingMode.messages.count - 1, 0)
+                )
+
+                await MainActor.run {
+                    guard writingRunState == .requesting else { return }
+                    timingSnapshot = snapshot
+                    thinkingStepIndex = nextThinkingIndex
+                }
+
+                try? await Task.sleep(for: .milliseconds(180))
+            }
+        }
+    }
+
+    private func stopWritingProgressMonitor(resetSnapshot: Bool = false, markStopping: Bool = false) {
+        writingProgressTask?.cancel()
+        writingProgressTask = nil
+
+        if markStopping {
+            timingSnapshot = timingSnapshot.stopping()
+        } else if resetSnapshot {
+            timingSnapshot = .idle
+        }
+    }
+
+    private func applyPolishedSelection(
+        _ replacement: String,
+        selection: WritingDeskDraftSelection,
+        for projectID: NovelProject.ID
+    ) {
+        guard let currentDraft = appState.project(for: projectID)?.draftText,
+              let range = Range(selection.range, in: currentDraft)
+        else {
+            return
+        }
+
+        var updatedDraft = currentDraft
+        updatedDraft.replaceSubrange(range, with: replacement)
+        appState.updateDraftText(updatedDraft, for: projectID)
+
+        let nsDraft = updatedDraft as NSString
+        let replacementLength = (replacement as NSString).length
+        let clampedLocation = min(selection.range.location, nsDraft.length)
+        draftSelection = WritingDeskDraftSelection(
+            range: NSRange(location: clampedLocation, length: replacementLength),
+            text: replacement
+        )
+    }
+
+    private func normalizedSelectionPolishResult(_ rawText: String) -> String {
+        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return rawText
+        }
+
+        let pairedWrappers = [
+            ("```", "```"),
+            ("“", "”"),
+            ("\"", "\""),
+            ("'", "'")
+        ]
+
+        for (prefix, suffix) in pairedWrappers {
+            if trimmed.hasPrefix(prefix), trimmed.hasSuffix(suffix), trimmed.count > prefix.count + suffix.count {
+                let start = trimmed.index(trimmed.startIndex, offsetBy: prefix.count)
+                let end = trimmed.index(trimmed.endIndex, offsetBy: -suffix.count)
+                return String(trimmed[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+
+        return trimmed
+    }
+
+    private func selectionPolishButtonPosition(in containerSize: CGSize, anchor: CGPoint) -> CGPoint {
+        let horizontalPadding: CGFloat = 90
+        let verticalPadding: CGFloat = 28
+        let preferredX = anchor.x + 82
+        let preferredY = anchor.y - 20
+
+        return CGPoint(
+            x: min(max(preferredX, horizontalPadding), max(horizontalPadding, containerSize.width - horizontalPadding)),
+            y: min(max(preferredY, verticalPadding), max(verticalPadding, containerSize.height - verticalPadding))
+        )
+    }
+
+    private func selectionPolishContext(in draft: String, selection: NSRange) -> (leading: String, trailing: String) {
+        let nsDraft = draft as NSString
+        let safeLocation = min(max(selection.location, 0), nsDraft.length)
+        let safeLength = min(max(selection.length, 0), max(0, nsDraft.length - safeLocation))
+        let safeSelection = NSRange(location: safeLocation, length: safeLength)
+
+        let leadingStart = max(0, safeSelection.location - 220)
+        let leadingRange = NSRange(location: leadingStart, length: safeSelection.location - leadingStart)
+        let trailingStart = NSMaxRange(safeSelection)
+        let trailingLength = min(220, max(0, nsDraft.length - trailingStart))
+        let trailingRange = NSRange(location: trailingStart, length: trailingLength)
+
+        return (
+            leading: leadingRange.length > 0 ? nsDraft.substring(with: leadingRange) : "",
+            trailing: trailingRange.length > 0 ? nsDraft.substring(with: trailingRange) : ""
+        )
     }
 
     private func configurationActions(
@@ -1543,14 +1972,120 @@ private struct DraftGenerationRequestContext: Equatable {
     let rejectedSuggestion: String
 }
 
+private enum WritingRunState {
+    case idle
+    case requesting
+    case stopping
+}
+
+private enum AIWriterThinkingMode {
+    case writing
+    case rewriting
+
+    var title: String {
+        switch self {
+        case .writing:
+            return "AI 作家正在组织这一章"
+        case .rewriting:
+            return "AI 作家正在重写这一版"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .writing:
+            return "会先梳理当前目标、人物状态和场景推进，再落到正文。"
+        case .rewriting:
+            return "会保留当前约束，但重新组织起笔、节奏和措辞。"
+        }
+    }
+
+    var messages: [String] {
+        switch self {
+        case .writing:
+            return [
+                "回看当前章节目标、上一章缓存与正在进行的冲突。",
+                "对齐大纲、参考文本、特殊要求和字数约束。",
+                "先定这一段的切入点、情绪坡度和信息释放顺序。",
+                "把人物动作、对白张力与场景质感压进可直接续写的正文。"
+            ]
+        case .rewriting:
+            return [
+                "回收上一版里不满意的句式和段落组织，避免重复。",
+                "保留章节目标与既有约束，但重排起笔和推进节奏。",
+                "换一组更贴合当前情绪的动作细节、对白与叙述重心。",
+                "整理成另一种可直接进入草稿箱的候选稿。"
+            ]
+        }
+    }
+}
+
 struct AIWriterTimingSnapshot {
     var queue: Double
     var generate: Double
     var finish: Double
     var complete: Double
+    var activeStage: AIWriterTimelineStage?
+    var isStopping: Bool
 
-    static let idle = AIWriterTimingSnapshot(queue: 0, generate: 0, finish: 0, complete: 0)
-    static let queued = AIWriterTimingSnapshot(queue: 0.1, generate: 0, finish: 0, complete: 0.1)
+    static let idle = AIWriterTimingSnapshot(
+        queue: 0,
+        generate: 0,
+        finish: 0,
+        complete: 0,
+        activeStage: nil,
+        isStopping: false
+    )
+
+    static let queued = AIWriterTimingSnapshot(
+        queue: 0.1,
+        generate: 0,
+        finish: 0,
+        complete: 0.1,
+        activeStage: .queue,
+        isStopping: false
+    )
+
+    static func live(elapsed: TimeInterval) -> AIWriterTimingSnapshot {
+        let queueDuration = min(elapsed, 0.6)
+        let generateDuration = elapsed > 0.6 ? min(elapsed - 0.6, 2.4) : 0
+        let finishDuration = elapsed > 3.0 ? elapsed - 3.0 : 0
+        let activeStage: AIWriterTimelineStage =
+            elapsed < 0.6 ? .queue :
+            elapsed < 3.0 ? .generate :
+            .finish
+
+        return AIWriterTimingSnapshot(
+            queue: queueDuration,
+            generate: generateDuration,
+            finish: finishDuration,
+            complete: elapsed,
+            activeStage: activeStage,
+            isStopping: false
+        )
+    }
+
+    static func completed(total: TimeInterval) -> AIWriterTimingSnapshot {
+        AIWriterTimingSnapshot(
+            queue: max(min(total * 0.12, 0.8), 0.1),
+            generate: max(total * 0.70, 0.1),
+            finish: max(total * 0.18, 0.1),
+            complete: max(total, 0.2),
+            activeStage: .complete,
+            isStopping: false
+        )
+    }
+
+    func stopping() -> AIWriterTimingSnapshot {
+        AIWriterTimingSnapshot(
+            queue: queue,
+            generate: generate,
+            finish: finish,
+            complete: complete,
+            activeStage: activeStage,
+            isStopping: true
+        )
+    }
 }
 
 private struct WritingDeskToolbarAction: Identifiable {
@@ -1559,7 +2094,155 @@ private struct WritingDeskToolbarAction: Identifiable {
     let accessibilityLabel: String
     var isEnabled = true
     var isPrimary = false
+    var tintColor: Color? = nil
     let action: () -> Void
+}
+
+private struct DraftPolishSheet: View {
+    let projectTitle: String
+    @Binding var instruction: String
+    let isProcessing: Bool
+    let onSubmit: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text("润色整篇草稿")
+                        .font(.title2.weight(.semibold))
+
+                    Text("当前项目：\(projectTitle)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+
+                    Text("输入你希望这次润色遵守的要求。留空会按“整体提纯表达、修顺节奏、保留剧情与设定”的默认方向处理。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineSpacing(3)
+
+                    TextEditor(text: $instruction)
+                        .font(.system(size: 14))
+                        .scrollContentBackground(.hidden)
+                        .padding(14)
+                        .frame(minHeight: 240)
+                        .background(
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .fill(.ultraThinMaterial)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                        )
+                }
+                .padding(24)
+            }
+
+            Divider()
+
+            HStack {
+                Button("取消") {
+                    dismiss()
+                }
+                .buttonStyle(.bordered)
+
+                Spacer()
+
+                Button("开始润色") {
+                    onSubmit()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isProcessing)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 18)
+        }
+        .frame(width: 620, height: 520, alignment: .topLeading)
+    }
+}
+
+private struct DraftSelectionPolishPopover: View {
+    let selectedText: String
+    @Binding var instruction: String
+    let isProcessing: Bool
+    let onSubmit: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("润色当前选区")
+                .font(.headline)
+
+            Text(selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "当前没有选中文本。" : "可输入这次润色要遵守的要求，结果会直接替换当前选区。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineSpacing(3)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("当前选中内容")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    Text("\(selectedText.count) 字")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+
+                ScrollView {
+                    Text(selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "当前没有可润色的选区。" : selectedText)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.primary)
+                        .lineSpacing(3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .padding(12)
+                }
+                .frame(width: 320, height: 108)
+                .background(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                )
+            }
+
+            TextEditor(text: $instruction)
+                .font(.system(size: 13))
+                .scrollContentBackground(.hidden)
+                .padding(12)
+                .frame(width: 320, height: 120)
+                .background(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                )
+
+            HStack {
+                Button("取消") {
+                    dismiss()
+                }
+                .buttonStyle(.bordered)
+
+                Spacer()
+
+                Button("开始润色") {
+                    onSubmit()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isProcessing || selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(18)
+        .frame(width: 356, alignment: .topLeading)
+    }
 }
 
 private struct WritingDeskSectionCard<Content: View>: View {
@@ -1648,7 +2331,7 @@ private struct WritingDeskSectionCard<Content: View>: View {
                     Button(action: action.action) {
                         Image(systemName: action.symbolName)
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(action.isPrimary ? Color.blue : .primary)
+                            .foregroundStyle(action.tintColor ?? (action.isPrimary ? Color.blue : .primary))
                             .frame(width: 38, height: 38)
                             .background(
                                 Circle()
