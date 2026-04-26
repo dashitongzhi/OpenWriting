@@ -1,4 +1,5 @@
 import Observation
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -39,6 +40,9 @@ struct WritingDeskView: View {
     @State private var selectionPolishInstruction = ""
     @State private var selectionPolishTarget: WritingDeskDraftSelection?
     @State private var selectionPolishAnchorPoint: CGPoint?
+    @State private var activeDraftPolishMode: DraftPolishMode?
+    @State private var pendingDraftPolishReview: DraftPolishReview?
+    @State private var pendingDraftPolishReviewAnchorPoint: CGPoint?
 
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
@@ -374,7 +378,7 @@ struct WritingDeskView: View {
 
                 writingDeskChapterControls(for: project)
 
-                ZStack(alignment: .bottomTrailing) {
+                ZStack(alignment: .topLeading) {
                     WritingDeskDraftEditor(
                         text: draftBinding(for: project.id),
                         selection: $draftSelection,
@@ -392,7 +396,7 @@ struct WritingDeskView: View {
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 26, style: .continuous)
-                            .strokeBorder(palette.editorBorder, lineWidth: 1)
+                            .strokeBorder(draftEditorBorderColor, lineWidth: activeDraftPolishMode == nil ? 1 : 1.5)
                     )
                     .overlay(alignment: .topLeading) {
                         if project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -404,40 +408,89 @@ struct WritingDeskView: View {
                                 .allowsHitTesting(false)
                         }
                     }
-                    .id(WritingDeskScrollAnchor.draft.rawValue)
+                    .zIndex(0)
+
+                    if let activeDraftPolishMode {
+                        DraftPolishProgressBadge(mode: activeDraftPolishMode)
+                            .padding(16)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                            .zIndex(20)
+                    }
 
                     GeometryReader { proxy in
-                        if activeSelectionPolishSelection.hasSelection,
+                        if pendingDraftPolishReview == nil,
+                           activeDraftPolishMode == nil,
+                           !isSelectionPolishPopoverPresented,
+                           activeSelectionPolishSelection.hasSelection,
                            let actionPoint = activeSelectionPolishActionPoint {
-                            Button {
-                                selectionPolishTarget = activeSelectionPolishSelection
-                                selectionPolishAnchorPoint = actionPoint
-                                selectionPolishInstruction = ""
-                                isSelectionPolishPopoverPresented = true
-                            } label: {
-                                Label("润色选区", systemImage: "wand.and.stars")
-                                    .font(.subheadline.weight(.semibold))
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 10)
-                                    .background(.regularMaterial, in: Capsule())
-                                    .shadow(color: Color.black.opacity(0.12), radius: 10, y: 4)
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(isGenerating || isSavingChapter || appState.aiConfiguration == nil)
+                            DraftSelectionPolishToolbar(
+                                isEnabled: !isGenerating && !isSavingChapter && appState.aiConfiguration != nil,
+                                action: {
+                                    selectionPolishTarget = activeSelectionPolishSelection
+                                    selectionPolishAnchorPoint = actionPoint
+                                    selectionPolishInstruction = ""
+                                    isSelectionPolishPopoverPresented = true
+                                }
+                            )
                             .position(selectionPolishButtonPosition(in: proxy.size, anchor: actionPoint))
-                            .popover(isPresented: $isSelectionPolishPopoverPresented, arrowEdge: .bottom) {
-                                DraftSelectionPolishPopover(
-                                    selectedText: activeSelectionPolishSelection.text,
-                                    instruction: $selectionPolishInstruction,
-                                    isProcessing: isGenerating || isSavingChapter,
-                                    onSubmit: {
-                                        polishDraftSelection(for: project)
-                                    }
-                                )
-                            }
+                            .zIndex(40)
                         }
                     }
+                    .zIndex(40)
+
+                    GeometryReader { proxy in
+                        if pendingDraftPolishReview == nil,
+                           activeDraftPolishMode == nil,
+                           isSelectionPolishPopoverPresented,
+                           activeSelectionPolishSelection.hasSelection,
+                           let actionPoint = activeSelectionPolishActionPoint {
+                            DraftSelectionPolishRequestPanel(
+                                selectedText: activeSelectionPolishSelection.text,
+                                instruction: $selectionPolishInstruction,
+                                isEnabled: appState.aiConfiguration != nil,
+                                onCancel: {
+                                    isSelectionPolishPopoverPresented = false
+                                },
+                                onSubmit: {
+                                    polishDraftSelection(for: project)
+                                }
+                            )
+                            .frame(width: min(420, max(320, proxy.size.width - 32)))
+                            .position(selectionPolishRequestPosition(in: proxy.size, anchor: actionPoint))
+                            .zIndex(80)
+                        }
+                    }
+                    .zIndex(80)
+
+                    GeometryReader { proxy in
+                        Color.clear
+                            .frame(width: 1, height: 1)
+                            .position(draftPolishPanelAnchorPosition(in: proxy.size, anchor: pendingDraftPolishReviewAnchorPoint))
+                            .popover(isPresented: draftPolishReviewPopoverBinding(for: project.id), arrowEdge: .top) {
+                                if let review = pendingDraftPolishReview, review.projectID == project.id {
+                                    DraftPolishResultPanel(
+                                        review: review,
+                                        onKeep: {
+                                            keepDraftPolishReview(review)
+                                        },
+                                        onReplace: {
+                                            replaceDraftPolishReview(review)
+                                        },
+                                        onDiscard: {
+                                            discardDraftPolishReview(review)
+                                        },
+                                        onCopy: {
+                                            copyDraftPolishReview(review)
+                                        }
+                                    )
+                                    .frame(width: min(520, max(360, proxy.size.width - 48)))
+                                }
+                            }
+                    }
+                    .zIndex(120)
                 }
+                .id(WritingDeskScrollAnchor.draft.rawValue)
+                .zIndex(1000)
 
                 HStack {
                     Text(saveMessage)
@@ -642,6 +695,12 @@ struct WritingDeskView: View {
         return appState.aiConfiguration == nil
             ? palette.warningAccent
             : palette.readyAccent
+    }
+
+    private var draftEditorBorderColor: Color {
+        activeDraftPolishMode == nil
+            ? palette.editorBorder
+            : palette.activeAccent.opacity(palette.isDark ? 0.72 : 0.58)
     }
 
     private var currentThinkingState: AIWriterThinkingState {
@@ -891,7 +950,7 @@ struct WritingDeskView: View {
         }
 
         guard let configuration = appState.aiConfiguration else {
-            aiStatusMessage = "当前模型配置不完整，请先到设置里填写 API Key、Base URL 和模型名称。"
+            aiStatusMessage = "当前模型配置不可用，请先到设置里检查模型选择。"
             return
         }
 
@@ -966,7 +1025,7 @@ struct WritingDeskView: View {
 
     private func startWriting(for project: NovelProject, rejectedSuggestion: String? = nil) {
         guard let configuration = appState.aiConfiguration else {
-            aiStatusMessage = "当前模型配置不完整，请先到设置里填写 API Key、Base URL 和模型名称。"
+            aiStatusMessage = "当前模型配置不可用，请先到设置里检查模型选择。"
             return
         }
 
@@ -1117,7 +1176,7 @@ struct WritingDeskView: View {
 
     private func polishEntireDraft(for project: NovelProject) {
         guard let configuration = appState.aiConfiguration else {
-            aiStatusMessage = "当前模型配置不完整，请先到设置里填写 API Key、Base URL 和模型名称。"
+            aiStatusMessage = "当前模型配置不可用，请先到设置里检查模型选择。"
             return
         }
 
@@ -1130,6 +1189,8 @@ struct WritingDeskView: View {
 
         let instruction = draftPolishInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
         isGenerating = true
+        activeDraftPolishMode = .full
+        pendingDraftPolishReview = nil
         aiStatusMessage = instruction.isEmpty ? "AI 正在润色整篇草稿…" : "AI 正在按你的要求润色整篇草稿…"
         isDraftPolishSheetPresented = false
 
@@ -1142,10 +1203,29 @@ struct WritingDeskView: View {
                 )
 
                 await MainActor.run {
-                    appState.updateDraftText(polishedDraft, for: project.id)
-                    saveMessage = "已按要求润色整篇草稿"
-                    aiStatusMessage = "整篇草稿已完成润色，并已回写到草稿箱。"
+                    let normalizedDraft = polishedDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !normalizedDraft.isEmpty else {
+                        isGenerating = false
+                        activeDraftPolishMode = nil
+                        aiStatusMessage = "草稿润色失败：模型返回了空内容，原稿已保留。"
+                        return
+                    }
+
+                    let originalSelection = draftSelection
+                    appState.updateDraftText(normalizedDraft, for: project.id)
+                    pendingDraftPolishReview = DraftPolishReview(
+                        projectID: project.id,
+                        mode: .full,
+                        originalDraft: latestProject.draftText,
+                        polishedDraft: normalizedDraft,
+                        polishedText: normalizedDraft,
+                        restoredSelection: originalSelection
+                    )
+                    pendingDraftPolishReviewAnchorPoint = nil
+                    saveMessage = "润色结果待确认"
+                    aiStatusMessage = "整篇草稿已完成润色并写回正文。可选择保留或舍弃。"
                     isGenerating = false
+                    activeDraftPolishMode = nil
                     draftSelection = .empty
                     draftSelectionActionPoint = nil
                     selectionPolishTarget = nil
@@ -1156,6 +1236,7 @@ struct WritingDeskView: View {
             } catch {
                 await MainActor.run {
                     isGenerating = false
+                    activeDraftPolishMode = nil
                     aiStatusMessage = "草稿润色失败：\(error.localizedDescription)"
                 }
             }
@@ -1164,7 +1245,7 @@ struct WritingDeskView: View {
 
     private func polishDraftSelection(for project: NovelProject) {
         guard let configuration = appState.aiConfiguration else {
-            aiStatusMessage = "当前模型配置不完整，请先到设置里填写 API Key、Base URL 和模型名称。"
+            aiStatusMessage = "当前模型配置不可用，请先到设置里检查模型选择。"
             return
         }
 
@@ -1177,7 +1258,10 @@ struct WritingDeskView: View {
         let latestProject = appState.project(for: project.id) ?? project
         let instruction = selectionPolishInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
         let selectionContext = selectionPolishContext(in: latestProject.draftText, selection: currentSelection.range)
+        let reviewAnchorPoint = selectionPolishAnchorPoint ?? draftSelectionActionPoint
         isGenerating = true
+        activeDraftPolishMode = .selection
+        pendingDraftPolishReview = nil
         aiStatusMessage = instruction.isEmpty ? "AI 正在润色当前选区…" : "AI 正在按你的要求润色当前选区…"
         isSelectionPolishPopoverPresented = false
 
@@ -1193,14 +1277,26 @@ struct WritingDeskView: View {
                 )
 
                 await MainActor.run {
-                    applyPolishedSelection(
-                        normalizedSelectionPolishResult(polishedSelection),
+                    let normalizedSelection = normalizedSelectionPolishResult(polishedSelection)
+                    if let updatedDraft = applyPolishedSelection(
+                        normalizedSelection,
                         selection: currentSelection,
                         for: project.id
-                    )
-                    saveMessage = "已按要求润色当前选区"
-                    aiStatusMessage = "当前选区已润色并回写到草稿箱。"
+                    ) {
+                        pendingDraftPolishReview = DraftPolishReview(
+                            projectID: project.id,
+                            mode: .selection,
+                            originalDraft: latestProject.draftText,
+                            polishedDraft: updatedDraft,
+                            polishedText: normalizedSelection,
+                            restoredSelection: currentSelection
+                        )
+                        pendingDraftPolishReviewAnchorPoint = reviewAnchorPoint
+                    }
+                    saveMessage = "润色结果待确认"
+                    aiStatusMessage = "当前选区已润色并写回正文。可选择保留或舍弃。"
                     isGenerating = false
+                    activeDraftPolishMode = nil
                     selectionPolishTarget = nil
                     selectionPolishAnchorPoint = nil
                     selectionPolishInstruction = ""
@@ -1209,6 +1305,7 @@ struct WritingDeskView: View {
             } catch {
                 await MainActor.run {
                     isGenerating = false
+                    activeDraftPolishMode = nil
                     aiStatusMessage = "选区润色失败：\(error.localizedDescription)"
                 }
             }
@@ -1673,6 +1770,9 @@ struct WritingDeskView: View {
         selectionPolishAnchorPoint = nil
         draftPolishInstruction = ""
         selectionPolishInstruction = ""
+        activeDraftPolishMode = nil
+        pendingDraftPolishReview = nil
+        pendingDraftPolishReviewAnchorPoint = nil
         isSelectionPolishPopoverPresented = false
         saveMessage = "自动保存已开启，可按章节收录"
         aiStatusMessage = "准备就绪，可先补大纲、参考文本和特殊要求，再开始当前章节写作。"
@@ -1775,15 +1875,67 @@ struct WritingDeskView: View {
         }
     }
 
+    private func keepDraftPolishReview(_ review: DraftPolishReview) {
+        guard pendingDraftPolishReview?.id == review.id else { return }
+
+        pendingDraftPolishReview = nil
+        pendingDraftPolishReviewAnchorPoint = nil
+        saveMessage = review.mode == .full ? "已保留整篇润色结果" : "已保留选区润色结果"
+        aiStatusMessage = "润色结果已保留，可继续编辑或保存当前章。"
+        focusDraftEditor()
+    }
+
+    private func replaceDraftPolishReview(_ review: DraftPolishReview) {
+        guard pendingDraftPolishReview?.id == review.id else { return }
+
+        appState.updateDraftText(review.polishedDraft, for: review.projectID)
+        pendingDraftPolishReview = nil
+        pendingDraftPolishReviewAnchorPoint = nil
+        saveMessage = review.mode == .full ? "已替换为整篇润色结果" : "已替换为选区润色结果"
+        aiStatusMessage = "已将草稿内容替换为这次润色结果。"
+        focusDraftEditor()
+    }
+
+    private func discardDraftPolishReview(_ review: DraftPolishReview) {
+        guard pendingDraftPolishReview?.id == review.id else { return }
+
+        appState.updateDraftText(review.originalDraft, for: review.projectID)
+        pendingDraftPolishReview = nil
+        pendingDraftPolishReviewAnchorPoint = nil
+        draftSelection = review.restoredSelection
+        saveMessage = "已舍弃本次润色"
+        aiStatusMessage = "已恢复到润色前的草稿。"
+        focusDraftEditor()
+    }
+
+    private func copyDraftPolishReview(_ review: DraftPolishReview) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(review.polishedText, forType: .string)
+        saveMessage = "已复制润色结果"
+        aiStatusMessage = "润色结果已复制到剪贴板。"
+    }
+
+    private func draftPolishReviewPopoverBinding(for projectID: NovelProject.ID) -> Binding<Bool> {
+        Binding(
+            get: {
+                pendingDraftPolishReview?.projectID == projectID
+            },
+            set: { _ in
+                // Keep the review open until the user chooses 保留 / 替换 / 舍弃.
+            }
+        )
+    }
+
+    @discardableResult
     private func applyPolishedSelection(
         _ replacement: String,
         selection: WritingDeskDraftSelection,
         for projectID: NovelProject.ID
-    ) {
+    ) -> String? {
         guard let currentDraft = appState.project(for: projectID)?.draftText,
               let range = Range(selection.range, in: currentDraft)
         else {
-            return
+            return nil
         }
 
         var updatedDraft = currentDraft
@@ -1797,6 +1949,7 @@ struct WritingDeskView: View {
             range: NSRange(location: clampedLocation, length: replacementLength),
             text: replacement
         )
+        return updatedDraft
     }
 
     private func normalizedSelectionPolishResult(_ rawText: String) -> String {
@@ -1824,10 +1977,34 @@ struct WritingDeskView: View {
     }
 
     private func selectionPolishButtonPosition(in containerSize: CGSize, anchor: CGPoint) -> CGPoint {
-        let horizontalPadding: CGFloat = 90
+        let horizontalPadding: CGFloat = 86
         let verticalPadding: CGFloat = 28
-        let preferredX = anchor.x + 82
-        let preferredY = anchor.y - 20
+        let preferredX = anchor.x
+        let preferredY = anchor.y - 38
+
+        return CGPoint(
+            x: min(max(preferredX, horizontalPadding), max(horizontalPadding, containerSize.width - horizontalPadding)),
+            y: min(max(preferredY, verticalPadding), max(verticalPadding, containerSize.height - verticalPadding))
+        )
+    }
+
+    private func selectionPolishRequestPosition(in containerSize: CGSize, anchor: CGPoint) -> CGPoint {
+        let horizontalPadding: CGFloat = 210
+        let verticalPadding: CGFloat = 128
+        let preferredX = anchor.x
+        let preferredY = anchor.y + 132
+
+        return CGPoint(
+            x: min(max(preferredX, horizontalPadding), max(horizontalPadding, containerSize.width - horizontalPadding)),
+            y: min(max(preferredY, verticalPadding), max(verticalPadding, containerSize.height - verticalPadding))
+        )
+    }
+
+    private func draftPolishPanelAnchorPosition(in containerSize: CGSize, anchor: CGPoint?) -> CGPoint {
+        let horizontalPadding: CGFloat = 180
+        let verticalPadding: CGFloat = 28
+        let preferredX = anchor?.x ?? (containerSize.width / 2)
+        let preferredY = (anchor?.y ?? (containerSize.height / 2)) + 36
 
         return CGPoint(
             x: min(max(preferredX, horizontalPadding), max(horizontalPadding, containerSize.width - horizontalPadding)),
@@ -1964,6 +2141,43 @@ private enum WritingRunState {
     case stopping
 }
 
+private enum DraftPolishMode {
+    case full
+    case selection
+
+    var progressTitle: String {
+        switch self {
+        case .full:
+            return "正在润色整篇草稿"
+        case .selection:
+            return "正在润色选区"
+        }
+    }
+
+    var reviewTitle: String {
+        switch self {
+        case .full:
+            return "整篇润色结果已写入正文"
+        case .selection:
+            return "选区润色结果已写入正文"
+        }
+    }
+}
+
+private struct DraftPolishReview: Identifiable {
+    let id = UUID()
+    let projectID: NovelProject.ID
+    let mode: DraftPolishMode
+    let originalDraft: String
+    let polishedDraft: String
+    let polishedText: String
+    let restoredSelection: WritingDeskDraftSelection
+
+    var changedCharacterCount: Int {
+        abs(polishedDraft.count - originalDraft.count)
+    }
+}
+
 private enum AIWriterThinkingMode {
     case writing
     case rewriting
@@ -2082,6 +2296,254 @@ private struct WritingDeskToolbarAction: Identifiable {
     var isPrimary = false
     var tintColor: Color? = nil
     let action: () -> Void
+}
+
+private struct DraftPolishProgressBadge: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let mode: DraftPolishMode
+
+    private var palette: DashboardPalette {
+        DashboardPalette(colorScheme: colorScheme)
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+
+            Text(mode.progressTitle)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.primary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(
+            Capsule()
+                .strokeBorder(palette.activeAccent.opacity(0.28), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(palette.isDark ? 0.22 : 0.10), radius: 12, y: 5)
+        .allowsHitTesting(false)
+    }
+}
+
+private struct DraftSelectionPolishToolbar: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let isEnabled: Bool
+    let action: () -> Void
+
+    private var palette: DashboardPalette {
+        DashboardPalette(colorScheme: colorScheme)
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 15, weight: .semibold))
+
+                Text("润色")
+                    .font(.headline.weight(.semibold))
+            }
+            .foregroundStyle(isEnabled ? .primary : .secondary)
+            .padding(.horizontal, 18)
+            .frame(height: 46)
+            .background(.regularMaterial, in: Capsule())
+            .overlay(
+                Capsule()
+                    .strokeBorder(palette.panelBorder, lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(palette.isDark ? 0.30 : 0.16), radius: 18, y: 6)
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.55)
+        .help(isEnabled ? "润色当前选区" : "先配置模型后可润色选区")
+    }
+}
+
+private struct DraftSelectionPolishRequestPanel: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let selectedText: String
+    @Binding var instruction: String
+    let isEnabled: Bool
+    let onCancel: () -> Void
+    let onSubmit: () -> Void
+
+    private var palette: DashboardPalette {
+        DashboardPalette(colorScheme: colorScheme)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(palette.activeAccent)
+                    .frame(width: 30, height: 30)
+                    .background(Circle().fill(palette.toolbarButtonFill))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("润色选区")
+                        .font(.headline.weight(.semibold))
+
+                    Text("可以补充风格、语气或改写方向")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button(action: onCancel) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .help("取消")
+            }
+
+            Text(selectedText.trimmingCharacters(in: .whitespacesAndNewlines))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(palette.insetPanel.opacity(palette.isDark ? 0.62 : 0.54))
+                )
+
+            TextEditor(text: $instruction)
+                .font(.system(size: 13))
+                .scrollContentBackground(.hidden)
+                .padding(10)
+                .frame(height: 88)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(palette.insetPanel.opacity(palette.isDark ? 0.72 : 0.62))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(palette.editorBorder, lineWidth: 1)
+                )
+
+            HStack {
+                Button("取消", action: onCancel)
+                    .buttonStyle(.bordered)
+
+                Spacer()
+
+                Button {
+                    onSubmit()
+                } label: {
+                    Label("开始润色", systemImage: "sparkles")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(palette.activeAccent)
+                .disabled(!isEnabled)
+                .help(isEnabled ? "按当前要求润色选区" : "先配置模型后可润色选区")
+            }
+        }
+        .padding(16)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(palette.panelBorder, lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(palette.isDark ? 0.36 : 0.18), radius: 22, y: 10)
+    }
+}
+
+private struct DraftPolishResultPanel: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let review: DraftPolishReview
+    let onKeep: () -> Void
+    let onReplace: () -> Void
+    let onDiscard: () -> Void
+    let onCopy: () -> Void
+
+    private var palette: DashboardPalette {
+        DashboardPalette(colorScheme: colorScheme)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(palette.activeAccent)
+                    .frame(width: 32, height: 32)
+                    .background(Circle().fill(palette.toolbarButtonFill))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(review.mode.reviewTitle)
+                        .font(.headline.weight(.semibold))
+
+                    Text(review.changedCharacterCount == 0 ? "请确认如何处理这次润色。" : "字数变化约 \(review.changedCharacterCount) 字")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+            }
+
+            ScrollView {
+                Text(review.polishedText)
+                    .font(.system(size: 14))
+                    .foregroundStyle(.primary)
+                    .lineSpacing(4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                    .padding(12)
+            }
+            .frame(minHeight: 120, maxHeight: 220)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(palette.insetPanel.opacity(palette.isDark ? 0.70 : 0.58))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(palette.editorBorder, lineWidth: 1)
+            )
+
+            HStack(spacing: 10) {
+                Button(action: onKeep) {
+                    Label("保留", systemImage: "checkmark")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(palette.activeAccent)
+                .accessibilityHint("保留当前已写入草稿的润色结果")
+
+                Button(action: onReplace) {
+                    Label("替换", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .buttonStyle(.bordered)
+                .accessibilityHint("重新将正文替换为这次润色结果")
+
+                Button(action: onDiscard) {
+                    Label("舍弃", systemImage: "arrow.uturn.backward")
+                }
+                .buttonStyle(.bordered)
+                .accessibilityHint("恢复润色前的草稿内容")
+
+                Spacer()
+
+                Button(action: onCopy) {
+                    Label("复制", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+                .accessibilityHint("复制润色结果")
+            }
+        }
+        .padding(18)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(palette.panelBorder, lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(palette.isDark ? 0.38 : 0.20), radius: 24, y: 12)
+    }
 }
 
 private struct DraftPolishSheet: View {

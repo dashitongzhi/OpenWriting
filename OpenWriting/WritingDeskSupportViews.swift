@@ -125,6 +125,7 @@ struct WritingDeskDraftEditor: NSViewRepresentable {
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
+        scrollView.contentView.postsBoundsChangedNotifications = true
 
         let textView = NSTextView(frame: .zero)
         textView.delegate = context.coordinator
@@ -151,6 +152,7 @@ struct WritingDeskDraftEditor: NSViewRepresentable {
 
         scrollView.documentView = textView
         context.coordinator.textView = textView
+        context.coordinator.startObservingScrollChanges(in: scrollView)
         context.coordinator.applySelectionUpdate(from: textView)
         return scrollView
     }
@@ -172,7 +174,7 @@ struct WritingDeskDraftEditor: NSViewRepresentable {
             context.coordinator.isApplyingProgrammaticSelection = false
         }
 
-        let resolvedActionPoint = context.coordinator.selectionActionPoint(for: safeRange, in: scrollView)
+        let resolvedActionPoint = context.coordinator.selectionActionPoint(for: safeRange)
         if context.coordinator.parent.selectionActionPoint != resolvedActionPoint {
             context.coordinator.parent.selectionActionPoint = resolvedActionPoint
         }
@@ -193,9 +195,28 @@ struct WritingDeskDraftEditor: NSViewRepresentable {
         var isApplyingProgrammaticChange = false
         var isApplyingProgrammaticSelection = false
         var lastFocusToken: UUID?
+        private var boundsObserver: NSObjectProtocol?
 
         init(parent: WritingDeskDraftEditor) {
             self.parent = parent
+        }
+
+        deinit {
+            if let boundsObserver {
+                NotificationCenter.default.removeObserver(boundsObserver)
+            }
+        }
+
+        func startObservingScrollChanges(in scrollView: NSScrollView) {
+            guard boundsObserver == nil else { return }
+
+            boundsObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.refreshSelectionActionPoint()
+            }
         }
 
         func textDidChange(_ notification: Notification) {
@@ -228,6 +249,8 @@ struct WritingDeskDraftEditor: NSViewRepresentable {
             if parent.selection != resolvedSelection {
                 parent.selection = resolvedSelection
             }
+
+            refreshSelectionActionPoint(for: safeRange)
         }
 
         func safeSelectionRange(_ range: NSRange, in text: NSString) -> NSRange {
@@ -236,17 +259,44 @@ struct WritingDeskDraftEditor: NSViewRepresentable {
             return NSRange(location: safeLocation, length: safeLength)
         }
 
-        func selectionActionPoint(for range: NSRange, in scrollView: NSScrollView) -> CGPoint? {
+        func refreshSelectionActionPoint() {
+            guard let textView else { return }
+            let safeRange = safeSelectionRange(textView.selectedRange(), in: textView.string as NSString)
+            refreshSelectionActionPoint(for: safeRange)
+        }
+
+        private func refreshSelectionActionPoint(for range: NSRange) {
+            let resolvedActionPoint = selectionActionPoint(for: range)
+            if parent.selectionActionPoint != resolvedActionPoint {
+                parent.selectionActionPoint = resolvedActionPoint
+            }
+        }
+
+        func selectionActionPoint(for range: NSRange) -> CGPoint? {
             guard range.length > 0,
                   let textView,
+                  let scrollView = textView.enclosingScrollView,
                   let layoutManager = textView.layoutManager,
                   let textContainer = textView.textContainer
             else { return nil }
 
+            layoutManager.ensureLayout(for: textContainer)
             let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             guard glyphRange.length > 0 else { return nil }
 
-            var selectionRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            var selectionRect = CGRect.null
+            layoutManager.enumerateEnclosingRects(
+                forGlyphRange: glyphRange,
+                withinSelectedGlyphRange: glyphRange,
+                in: textContainer
+            ) { rect, _ in
+                selectionRect = selectionRect.isNull ? rect : selectionRect.union(rect)
+            }
+
+            if selectionRect.isNull || selectionRect.isEmpty {
+                selectionRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            }
+
             let textContainerOrigin = textView.textContainerOrigin
             selectionRect.origin.x += textContainerOrigin.x
             selectionRect.origin.y += textContainerOrigin.y
@@ -257,7 +307,14 @@ struct WritingDeskDraftEditor: NSViewRepresentable {
 
             let clipView = scrollView.contentView
             let rectInClipView = textView.convert(clippedRect, to: clipView)
-            return CGPoint(x: rectInClipView.maxX, y: rectInClipView.minY)
+            let yInClipView = clipView.isFlipped
+                ? rectInClipView.minY
+                : clipView.bounds.height - rectInClipView.maxY
+
+            return CGPoint(
+                x: clipView.frame.minX + rectInClipView.maxX,
+                y: clipView.frame.minY + yInClipView
+            )
         }
     }
 }

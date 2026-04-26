@@ -126,9 +126,6 @@ struct AppearanceSettingsView: View {
             .formStyle(.grouped)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
-            Text("外观和模型供应商都放在同一个原生设置窗口里，和常见 macOS 工具型应用的偏好结构保持一致。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
         .padding(24)
         .frame(
@@ -203,35 +200,37 @@ struct ModelConnectionSettingsForm: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Picker("接口类型", selection: $appState.selectedProvider) {
+            Picker("模型选择", selection: $appState.selectedProvider) {
                 ForEach(ModelProvider.allCases) { provider in
                     Text(provider.title).tag(provider)
                 }
             }
             .pickerStyle(.segmented)
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Base URL")
-                    .font(.subheadline.weight(.semibold))
+            if appState.selectedProvider == .custom {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Base URL")
+                        .font(.subheadline.weight(.semibold))
 
-                TextField("https://api.openai.com/v1", text: $appState.baseURL)
-                    .textFieldStyle(.roundedBorder)
-            }
+                    TextField("https://api.openai.com/v1", text: $appState.baseURL)
+                        .textFieldStyle(.roundedBorder)
+                }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("模型名称")
-                    .font(.subheadline.weight(.semibold))
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("模型 ID")
+                        .font(.subheadline.weight(.semibold))
 
-                TextField("gpt-4.1-mini", text: $appState.modelName)
-                    .textFieldStyle(.roundedBorder)
-            }
+                    TextField("gpt-4.1-mini", text: $appState.modelName)
+                        .textFieldStyle(.roundedBorder)
+                }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("API Key")
-                    .font(.subheadline.weight(.semibold))
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("API Key")
+                        .font(.subheadline.weight(.semibold))
 
-                SecureField("sk-...", text: $appState.apiKey)
-                    .textFieldStyle(.roundedBorder)
+                    SecureField("sk-...", text: $appState.apiKey)
+                        .textFieldStyle(.roundedBorder)
+                }
             }
 
             Toggle("启动时自动检查格式", isOn: $appState.autoValidateOnLaunch)
@@ -253,9 +252,11 @@ struct ModelConnectionSettingsForm: View {
                 }
             }
 
-            Text("OpenW 和自定义会分别保存各自的 Base URL、模型名称与 API Key；API Key 单独存放在系统 Keychain，不写入仓库。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if appState.selectedProvider == .custom {
+                Text("自定义使用 OpenAI 格式：Base URL 通常以 /v1 结尾，填写模型 ID 与 API Key；API Key 单独存放在系统 Keychain，不写入仓库。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.vertical, 6)
     }

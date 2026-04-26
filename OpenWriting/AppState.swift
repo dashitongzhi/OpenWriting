@@ -47,7 +47,7 @@ final class AppState {
         static let customAccount = "apiKey.custom"
     }
 
-    static let emptyConfigurationMessage = "填入 API Key 与 Base URL 后即可测试连接。"
+    static let emptyConfigurationMessage = "自定义模型需填写 Base URL、模型 ID 与 API Key 后再测试连接。"
 
     let userDefaults: UserDefaults
     let projectStore: ProjectFileStore
@@ -302,7 +302,9 @@ final class AppState {
                 guard !Task.isCancelled else { return }
 
                 connectionStatus = .ready
-                validationMessage = "已连接 \(resolvedModel)。\(providerTitle) 的 OpenAI 兼容请求可用。"
+                validationMessage = providerTitle == ModelProvider.openAICompatible.title
+                    ? "已连接 OpenW 模型"
+                    : "已连接 \(resolvedModel)"
             } catch {
                 guard !Task.isCancelled else { return }
 
@@ -838,8 +840,14 @@ final class AppState {
     }
 
     private var hasEnteredConnectionInfo: Bool {
-        !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-            !baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        switch selectedProvider {
+        case .openAICompatible:
+            return !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .custom:
+            return !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                !modelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                !baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
 
     func normalizeProjectSelection() {
@@ -856,9 +864,16 @@ final class AppState {
     private func refreshIdleValidationMessage() {
         validationTask?.cancel()
         connectionStatus = .idle
-        validationMessage = hasEnteredConnectionInfo
-            ? "配置已保存，可点击“测试连接”以重新检查。"
-            : Self.emptyConfigurationMessage
+        switch selectedProvider {
+        case .openAICompatible:
+            validationMessage = hasEnteredConnectionInfo
+                ? "OpenW 配置已保存，可点击“测试连接”以重新检查。"
+                : "OpenW 使用内置模型连接配置；当前安装未检测到本机授权凭据时不可用。"
+        case .custom:
+            validationMessage = hasEnteredConnectionInfo
+                ? "配置已保存，可点击“测试连接”以重新检查。"
+                : Self.emptyConfigurationMessage
+        }
     }
 
     private func markConfigurationAsEdited() {
@@ -881,13 +896,15 @@ final class AppState {
 
         guard !trimmedKey.isEmpty else {
             connectionStatus = .needsAttention
-            validationMessage = "API Key 不能为空。"
+            validationMessage = selectedProvider == .openAICompatible
+                ? "OpenW 模型连接暂不可用：当前安装未检测到本机授权凭据。"
+                : "API Key 不能为空。"
             return nil
         }
 
         guard !trimmedModelName.isEmpty else {
             connectionStatus = .needsAttention
-            validationMessage = "模型名称不能为空。"
+            validationMessage = "模型 ID 不能为空。"
             return nil
         }
 
@@ -1138,7 +1155,7 @@ final class AppState {
         let resolvedMessage = (error as NSError).localizedDescription
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if resolvedMessage.isEmpty {
-            return "连接校验失败，请检查 Base URL、模型名称和 API Key。"
+            return "连接校验失败，请检查 Base URL、模型 ID 和 API Key。"
         }
 
         return "连接校验失败：\(resolvedMessage)"

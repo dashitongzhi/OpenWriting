@@ -168,15 +168,22 @@ struct ModelConnectionSummaryCard: View {
                 .tint(palette.coolAccent)
             }
 
-            summaryRow(label: "接口类型", value: appState.selectedProvider.title)
-            summaryRow(
-                label: "Base URL",
-                value: appState.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未填写" : appState.baseURL
-            )
-            summaryRow(
-                label: "API Key",
-                value: appState.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未填写" : "已填写"
-            )
+            summaryRow(label: "模型选择", value: appState.selectedProvider.title)
+
+            if appState.selectedProvider == .custom {
+                summaryRow(
+                    label: "Base URL",
+                    value: appState.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未填写" : appState.baseURL
+                )
+                summaryRow(
+                    label: "模型 ID",
+                    value: appState.modelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未填写" : appState.modelName
+                )
+                summaryRow(
+                    label: "API Key",
+                    value: appState.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未填写" : "已填写"
+                )
+            }
 
             Text(appState.validationMessage)
                 .font(.subheadline)
