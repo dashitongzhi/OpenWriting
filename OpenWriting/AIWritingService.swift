@@ -57,12 +57,27 @@ enum AIWritingLength: String, CaseIterable, Identifiable {
     var maxTokens: Int {
         switch self {
         case .short:
-            return 1_050
+            return 1_300
         case .medium:
-            return 1_850
+            return 2_300
         case .long:
-            return 3_000
+            return 3_600
         }
+    }
+
+    var targetRange: ClosedRange<Int> {
+        switch self {
+        case .short:
+            return 700 ... 900
+        case .medium:
+            return 1_400 ... 1_700
+        case .long:
+            return 2_200 ... 2_600
+        }
+    }
+
+    var minimumAcceptableCount: Int {
+        Int(Double(targetRange.lowerBound) * 0.80)
     }
 
     var instruction: String {
@@ -101,18 +116,74 @@ enum AIWritingService {
         additionalInstruction: String,
         length: AIWritingLength
     ) async throws -> String {
-        try await completeText(
+        let support = WritingSupportContext(project: project)
+        let plan = try await completeText(
+            configuration: configuration,
+            systemPrompt: writingPlanSystemPrompt,
+            userPrompt: writingPlanUserPrompt(
+                project: project,
+                mode: mode,
+                additionalInstruction: additionalInstruction,
+                length: length,
+                support: support
+            ),
+            temperature: 0.42,
+            maxTokens: 760
+        )
+
+        let draft = try await completeText(
             configuration: configuration,
             systemPrompt: systemPrompt,
             userPrompt: userPrompt(
                 project: project,
                 mode: mode,
                 additionalInstruction: additionalInstruction,
-                length: length
+                length: length,
+                support: support,
+                writingPlan: plan
             ),
-            temperature: 0.85,
+            temperature: 0.82,
             maxTokens: length.maxTokens
         )
+
+        let revisedDraft = try await completeText(
+            configuration: configuration,
+            systemPrompt: writingRevisionSystemPrompt,
+            userPrompt: writingRevisionUserPrompt(
+                project: project,
+                mode: mode,
+                additionalInstruction: additionalInstruction,
+                length: length,
+                support: support,
+                writingPlan: plan,
+                draft: draft
+            ),
+            temperature: 0.34,
+            maxTokens: length.maxTokens + 500
+        )
+
+        guard revisedDraft.count < length.minimumAcceptableCount else {
+            return revisedDraft
+        }
+
+        let supplement = try await completeText(
+            configuration: configuration,
+            systemPrompt: writingSupplementSystemPrompt,
+            userPrompt: writingSupplementUserPrompt(
+                project: project,
+                length: length,
+                support: support,
+                writingPlan: plan,
+                draft: revisedDraft
+            ),
+            temperature: 0.72,
+            maxTokens: max(700, length.maxTokens / 2)
+        )
+
+        return [revisedDraft, supplement]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
     }
 
     static func polishFullDraft(
@@ -270,6 +341,166 @@ enum AIWritingService {
         return text
     }
 
+    private struct WritingSupportContext {
+        let currentDraftExcerpt: String
+        let relevantReferences: String
+        let chapterTreeFocus: String
+        let styleFingerprint: String
+
+        init(project: NovelProject) {
+            currentDraftExcerpt = Self.currentDraftExcerpt(from: project.draftText)
+            relevantReferences = Self.relevantReferenceExcerpts(for: project)
+            chapterTreeFocus = Self.chapterTreeFocus(for: project)
+            styleFingerprint = Self.styleFingerprint(for: project)
+        }
+
+        private static func currentDraftExcerpt(from draft: String) -> String {
+            let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                return "当前草稿箱为空，请按本章目标起笔。"
+            }
+
+            return excerpt(from: trimmed, limit: 2_600)
+        }
+
+        private static func relevantReferenceExcerpts(for project: NovelProject) -> String {
+            let query = [
+                project.title,
+                project.genre,
+                project.summary,
+                project.chapterFocus,
+                project.draftText,
+                project.specialRequirements,
+                project.referenceContextText,
+                project.outlineSummary,
+                project.sceneProgressNotes,
+                project.characterArcNotes,
+                project.foreshadowNotes
+            ]
+            .joined(separator: "\n")
+
+            let keywords = keywordCandidates(from: query)
+            let rankedDocuments = project.referenceDocuments
+                .map { document in
+                    (document, referenceScore(document, keywords: keywords))
+                }
+                .sorted { lhs, rhs in
+                    if lhs.1 == rhs.1 {
+                        return lhs.0.wordCount > rhs.0.wordCount
+                    }
+                    return lhs.1 > rhs.1
+                }
+                .prefix(4)
+
+            let excerpts = rankedDocuments.map { document, _ in
+                "参考《\(document.title)》：\n\(bestReferenceWindow(in: document.content, keywords: keywords, limit: 1_400))"
+            }
+
+            return excerpts.isEmpty ? "暂无导入参考文本。" : excerpts.joined(separator: "\n\n")
+        }
+
+        private static func referenceScore(_ document: ReferenceDocument, keywords: [String]) -> Int {
+            let haystack = "\(document.title)\n\(document.content)"
+            return keywords.reduce(0) { score, keyword in
+                haystack.localizedStandardContains(keyword) ? score + keyword.count : score
+            }
+        }
+
+        private static func bestReferenceWindow(in text: String, keywords: [String], limit: Int) -> String {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.count > limit else { return trimmed }
+
+            let windows = stride(from: 0, to: trimmed.count, by: max(260, limit / 2)).map { offset -> String in
+                let start = trimmed.index(trimmed.startIndex, offsetBy: offset)
+                let endOffset = min(trimmed.count, offset + limit)
+                let end = trimmed.index(trimmed.startIndex, offsetBy: endOffset)
+                return String(trimmed[start..<end])
+            }
+
+            return windows.max { lhs, rhs in
+                referenceWindowScore(lhs, keywords: keywords) < referenceWindowScore(rhs, keywords: keywords)
+            } ?? excerpt(from: trimmed, limit: limit)
+        }
+
+        private static func referenceWindowScore(_ text: String, keywords: [String]) -> Int {
+            keywords.reduce(0) { score, keyword in
+                text.localizedStandardContains(keyword) ? score + keyword.count : score
+            }
+        }
+
+        private static func keywordCandidates(from text: String) -> [String] {
+            let separators = CharacterSet.whitespacesAndNewlines
+                .union(.punctuationCharacters)
+                .union(.symbols)
+
+            var seen = Set<String>()
+            return text
+                .components(separatedBy: separators)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { token in
+                    guard token.count >= 2, token.count <= 12 else { return false }
+                    guard !seen.contains(token) else { return false }
+                    seen.insert(token)
+                    return true
+                }
+                .prefix(80)
+                .map { String($0) }
+        }
+
+        private static func chapterTreeFocus(for project: NovelProject) -> String {
+            let sections = [
+                ("章节树总结", project.outlineSummary),
+                ("场景推进记录", project.sceneProgressNotes),
+                ("角色弧线记录", project.characterArcNotes),
+                ("伏笔与回收记录", project.foreshadowNotes),
+                ("分卷/阶段规划", project.volumePlanNotes),
+                ("在途线索", project.activeThreadsNotes)
+            ]
+
+            let content = sections
+                .map { title, body in
+                    let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { return "" }
+                    return "\(title)：\n\(excerpt(from: trimmed, limit: 900))"
+                }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n\n")
+
+            guard !content.isEmpty else {
+                return "暂无章节树约束，请以项目大纲、全局记忆和本章目标为准。"
+            }
+
+            return content
+        }
+
+        private static func styleFingerprint(for project: NovelProject) -> String {
+            let source = [
+                project.draftText,
+                project.previousChapterDraftForContinuation?.content ?? "",
+                project.sortedChapterDrafts.first?.content ?? ""
+            ]
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard !source.isEmpty else {
+                return "暂无可提取风格样本，请默认使用中文长篇小说正文语感，避免说明腔。"
+            }
+
+            let paragraphs = source
+                .components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            let sample = paragraphs.suffix(8).joined(separator: "\n")
+            let dialogueCount = sample.filter { $0 == "“" || $0 == "\"" }.count
+            let sentenceMarks = sample.filter { "。！？!?；;".contains($0) }.count
+            let averageSentenceLength = sentenceMarks == 0 ? sample.count : max(1, sample.count / sentenceMarks)
+            let dialogueStyle = dialogueCount >= 4 ? "对白占比较高" : "叙述占比较高"
+            let rhythm = averageSentenceLength <= 24 ? "句子偏短，节奏较快" : "句子偏长，描写较充分"
+
+            return "\(dialogueStyle)；\(rhythm)；延续样本文本的叙事视角、段落密度、对白自然度和心理描写比例。"
+        }
+    }
+
     private static let systemPrompt = """
     你是一位擅长中文长篇小说创作的原生写作助手。
     你的任务是续写当前章节，而不是重写设定。
@@ -280,6 +511,35 @@ enum AIWritingService {
     4. 如果参考文本与当前项目冲突，以当前项目摘要、大纲、全局记忆和已有正文为准。
     5. 根据项目规模控制叙事：短篇要集中闭环，中篇要稳住阶段推进，长篇要维护分卷延展、长期伏笔和人物长期状态。
     6. 保持连续性，避免突然跳到未来情节、提前透支长期真相或重复已写内容。
+    """
+
+    private static let writingPlanSystemPrompt = """
+    你是一位中文长篇小说的续写导演。
+    你的任务是在正式写正文前，为本次续写制定极短的执行拍点。
+    必须遵守：
+    1. 只输出 3 到 5 条以“- ”开头的拍点，不写正文。
+    2. 每条都要具体说明：承接哪里、推进什么、人物状态有什么变化或信息增量。
+    3. 不要改写用户草稿，不要跳过当前场景，不要提前揭示长期真相。
+    4. 如果草稿箱已有正文，必须把草稿最后状态作为本次续写的直接起点。
+    """
+
+    private static let writingRevisionSystemPrompt = """
+    你是一位中文长篇小说的终稿编辑。
+    你的任务是检查并微修候选正文，让它更适合直接放进草稿箱。
+    必须遵守：
+    1. 只输出修订后的完整正文，不要解释，不要列检查项。
+    2. 修正重复上一章、复述设定、偏离本章目标、突然跳时间线、口吻不连续和结尾悬空的问题。
+    3. 如果候选正文已经合格，只做极轻微润色，保留原有内容和段落顺序。
+    4. 不要新增与上下文无依据的新人物、新设定或重大反转。
+    """
+
+    private static let writingSupplementSystemPrompt = """
+    你是一位中文长篇小说的续写补稿助手。
+    你的任务是在已有候选正文后继续补足同一场景。
+    必须遵守：
+    1. 只输出可以直接接在候选正文后面的新增正文。
+    2. 不要重写或复述候选正文，不要重新开头，不要加标题。
+    3. 继续推进同一场景的动作、对白、信息增量或情绪变化，避免跳章节。
     """
 
     private static let chapterTreeRefreshSystemPrompt = """
@@ -366,15 +626,10 @@ enum AIWritingService {
         project: NovelProject,
         mode: AIWritingMode,
         additionalInstruction: String,
-        length: AIWritingLength
+        length: AIWritingLength,
+        support: WritingSupportContext,
+        writingPlan: String
     ) -> String {
-        let references = project.referenceDocuments
-            .prefix(4)
-            .map { document in
-                "参考《\(document.title)》：\n\(excerpt(from: document.content, limit: 1400))"
-            }
-            .joined(separator: "\n\n")
-
         let previousChapterSummary = normalized(
             project.previousChapterDraftForContinuation?.chapterSummary ?? "",
             fallback: "暂无上一已保存章节，请直接依据当前章节目标起笔。"
@@ -418,6 +673,12 @@ enum AIWritingService {
         本次写作模式：
         \(mode.title)；\(mode.instruction)
 
+        本次续写拍点：
+        \(normalized(writingPlan, fallback: "请先承接当前草稿，再推进一个明确的新情节拍点。"))
+
+        草稿箱当前正文（用户可能刚刚修改或新增，必须作为下次生成的直接参考与承接对象）：
+        \(support.currentDraftExcerpt)
+
         全局记忆：
         \(normalized(project.continuityNotes, fallback: "暂无，请优先保持当前正文语气、叙事视角和冲突方向。"))
 
@@ -430,11 +691,17 @@ enum AIWritingService {
         在途线索：
         \(activeThreads)
 
+        章节树关键约束（优先提取本章必须推进、不能提前揭示、待回收伏笔）：
+        \(support.chapterTreeFocus)
+
+        风格指纹：
+        \(support.styleFingerprint)
+
         手动参考文本：
         \(normalized(project.referenceContextText, fallback: "暂无手动补充的参考文本。"))
 
-        参考文本：
-        \(normalized(references, fallback: "暂无导入参考文本。"))
+        检索到的相关参考文本：
+        \(support.relevantReferences)
 
         特殊要求：
         \(normalized(project.specialRequirements, fallback: "暂无额外特殊要求。"))
@@ -458,11 +725,128 @@ enum AIWritingService {
         \(length.instruction)
         必须保持与当前章节位置、角色口吻、时间线状态和伏笔进度一致。
         \(project.storyLength.continuityDirective)
+        如果草稿箱已有正文，必须从草稿最后状态继续写，不要绕回上一章结尾重新起笔。
         如果提供了上一章节缓存，请优先承接缓存区里的最后一句、段落节奏和场景状态，但不要重复复述上一章已经写出的动作、对白、心理或信息。
         开场两段避免重复解释既有设定、人物关系和刚刚发生过的事件，默认读者记得上一章。
         每次续写至少推进一个新的情节拍点、关系变化或信息增量，不要用改写前文来充字数。
         若需承上启下，请用新的动作、冲突、观察或结果进入当前章节，而不是复述上一章摘要。
         请直接输出续写后的正文。
+        """
+    }
+
+    private static func writingPlanUserPrompt(
+        project: NovelProject,
+        mode: AIWritingMode,
+        additionalInstruction: String,
+        length: AIWritingLength,
+        support: WritingSupportContext
+    ) -> String {
+        """
+        项目名称：\(project.title)
+        类型：\(project.genre)
+        当前章节：\(project.currentChapterSummary)
+        本章目标：\(project.chapterFocus)
+        本次写作模式：\(mode.title)；\(mode.instruction)
+        字数目标：\(length.instruction)
+
+        当前草稿箱正文（必须承接用户已修改/新增的内容）：
+        \(support.currentDraftExcerpt)
+
+        上一章节末尾 400 字：
+        \(normalized(project.draftContinuationCache, fallback: "暂无上一章节结尾缓存。"))
+
+        全局记忆：
+        \(normalized(project.continuityNotes, fallback: "暂无全局记忆。"))
+
+        章节树关键约束：
+        \(support.chapterTreeFocus)
+
+        作品大纲：
+        \(normalized(project.outlineText, fallback: "暂无完整大纲。"))
+
+        风格指纹：
+        \(support.styleFingerprint)
+
+        相关参考文本：
+        \(support.relevantReferences)
+
+        特殊要求与额外指令：
+        \(normalized(project.specialRequirements, fallback: "暂无特殊要求。"))
+        \(normalized(additionalInstruction, fallback: "延续当前场景，不要跳章节。"))
+
+        输出要求：
+        请给出本次续写的 3 到 5 个执行拍点。
+        """
+    }
+
+    private static func writingRevisionUserPrompt(
+        project: NovelProject,
+        mode: AIWritingMode,
+        additionalInstruction: String,
+        length: AIWritingLength,
+        support: WritingSupportContext,
+        writingPlan: String,
+        draft: String
+    ) -> String {
+        """
+        当前章节：\(project.currentChapterSummary)
+        本章目标：\(project.chapterFocus)
+        写作模式：\(mode.title)
+        字数目标：\(length.instruction)
+
+        草稿箱当前正文（候选正文应接在它后面）：
+        \(support.currentDraftExcerpt)
+
+        上一章节末尾 400 字（只能用于承接，不要复述）：
+        \(normalized(project.draftContinuationCache, fallback: "暂无上一章节结尾缓存。"))
+
+        本次续写拍点：
+        \(normalized(writingPlan, fallback: "暂无拍点，请至少推进一个新的情节增量。"))
+
+        章节树关键约束：
+        \(support.chapterTreeFocus)
+
+        风格指纹：
+        \(support.styleFingerprint)
+
+        额外指令：
+        \(normalized(additionalInstruction, fallback: "暂无额外指令。"))
+
+        待检查候选正文：
+        \(draft)
+
+        修订要求：
+        1. 如果开头在复述上一章或解释既有设定，请改成直接承接草稿最后状态的新动作、新对白或新观察。
+        2. 如果没有推进本章目标，请补足一个明确的信息增量、关系变化或冲突进展。
+        3. 如果和草稿箱内容衔接不顺，请修顺第一段。
+        4. 只输出修订后的完整候选正文。
+        """
+    }
+
+    private static func writingSupplementUserPrompt(
+        project: NovelProject,
+        length: AIWritingLength,
+        support: WritingSupportContext,
+        writingPlan: String,
+        draft: String
+    ) -> String {
+        """
+        当前章节：\(project.currentChapterSummary)
+        本章目标：\(project.chapterFocus)
+        目标长度：\(length.instruction)
+        当前候选正文约 \(draft.count) 字，低于目标下限，请补足同一场景。
+
+        草稿箱当前正文：
+        \(support.currentDraftExcerpt)
+
+        本次续写拍点：
+        \(normalized(writingPlan, fallback: "请继续推进当前场景。"))
+
+        已有候选正文（不要重复）：
+        \(draft)
+
+        输出要求：
+        只输出补写部分，接在已有候选正文之后即可。
         """
     }
 

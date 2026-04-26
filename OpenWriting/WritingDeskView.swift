@@ -49,6 +49,7 @@ struct WritingDeskView: View {
     }
     @State private var thinkingMode = AIWriterThinkingMode.writing
     @State private var thinkingStepIndex = 0
+    @State private var rewriteDirection = AIRewriteDirection.freshTake
 
     private let contentTopPadding: CGFloat = 18
     private let contentHorizontalPadding: CGFloat = 32
@@ -597,6 +598,15 @@ struct WritingDeskView: View {
                     .strokeBorder(palette.editorBorder, lineWidth: 1)
             )
             .id(WritingDeskScrollAnchor.ai.rawValue)
+
+            if !aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Picker("重写方向", selection: $rewriteDirection) {
+                    ForEach(AIRewriteDirection.allCases) { direction in
+                        Text(direction.title).tag(direction)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
 
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) {
@@ -1560,7 +1570,8 @@ struct WritingDeskView: View {
 
         return """
         \(baseInstruction)
-        用户对上一版候选稿不满意，这次请明显更换起笔、节奏和措辞，不要重复下面这版的句子结构或段落组织：
+        用户对上一版候选稿不满意，这次重写方向是：\(rewriteDirection.title)。\(rewriteDirection.instruction)
+        不要重复下面这版的句子结构或段落组织：
         \(excerpt(from: trimmedRejectedSuggestion, limit: 1_200))
         """
     }
@@ -1811,6 +1822,7 @@ struct WritingDeskView: View {
             chapterDrafts: project.chapterDrafts,
             mode: project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .advanceChapter : .continueScene,
             length: preferredLength(for: project),
+            rewriteDirection: rewriteDirection,
             rejectedSuggestion: rejectedSuggestion?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         )
     }
@@ -2132,6 +2144,7 @@ private struct DraftGenerationRequestContext: Equatable {
     let chapterDrafts: [ChapterDraft]
     let mode: AIWritingMode
     let length: AIWritingLength
+    let rewriteDirection: AIRewriteDirection
     let rejectedSuggestion: String
 }
 
@@ -2139,6 +2152,46 @@ private enum WritingRunState {
     case idle
     case requesting
     case stopping
+}
+
+private enum AIRewriteDirection: String, CaseIterable, Identifiable {
+    case freshTake
+    case fasterPace
+    case richerTexture
+    case sharperTension
+    case moreNaturalDialogue
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .freshTake:
+            return "换一种写法"
+        case .fasterPace:
+            return "推进更快"
+        case .richerTexture:
+            return "细节更足"
+        case .sharperTension:
+            return "张力更强"
+        case .moreNaturalDialogue:
+            return "对白更自然"
+        }
+    }
+
+    var instruction: String {
+        switch self {
+        case .freshTake:
+            return "明显更换起笔、节奏和措辞，避免重复上一版的句子结构或段落组织。"
+        case .fasterPace:
+            return "减少铺垫和解释，优先推进动作、选择、冲突结果和信息增量。"
+        case .richerTexture:
+            return "保留推进方向，同时补强动作细节、场景感、心理层次和段落质感。"
+        case .sharperTension:
+            return "提高冲突压迫感和人物选择压力，让场景更紧、更有悬念。"
+        case .moreNaturalDialogue:
+            return "优化对白的口语节奏、潜台词和人物差异，减少说明式台词。"
+        }
+    }
 }
 
 private enum DraftPolishMode {
