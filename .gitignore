@@ -6,4 +6,5 @@ xcuserdata/
 *.xcuserdatad/
 *.xcuserstate
 .claude/settings.json
+dist/
 *.dmg

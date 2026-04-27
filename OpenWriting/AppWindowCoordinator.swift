@@ -20,6 +20,7 @@ final class AppWindowCoordinator {
     private let appState: AppState
     private var mainWindowController: MainWindowController?
     private var settingsWindowController: SettingsWindowController?
+    private var windowPresentationGeneration = 0
 
     init(appState: AppState) {
         self.appState = appState
@@ -70,9 +71,13 @@ final class AppWindowCoordinator {
     }
 
     private func stabilizeWindowPresentation(_ window: NSWindow) {
+        let generation = windowPresentationGeneration + 1
+        windowPresentationGeneration = generation
+
         for delay in [0.18, 0.75] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak window] in
                 guard let self, let window else { return }
+                guard self.windowPresentationGeneration == generation else { return }
                 self.bringWindowToFront(window)
             }
         }

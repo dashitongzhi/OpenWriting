@@ -35,7 +35,12 @@ enum LiteraryQuoteLibrary {
             .compactMap(parseLine)
     }
 
+    private nonisolated(unsafe) static var resolvedQuotesURL: URL?
+
     private nonisolated static func quotesResourceURL() -> URL? {
+        if let cached = resolvedQuotesURL { return cached }
+
+        // 遗留 bundle 名称采用拼接形式，避免在编译产物中被直接字符串搜索到旧品牌名
         let legacyBundleName = ("Open" + "Reading") + "_" + ("Open" + "Reading") + ".bundle"
         let resourcePaths = [
             "LiteraryQuotes.zh-Hans.tsv",
@@ -52,10 +57,13 @@ enum LiteraryQuoteLibrary {
             ]
         }
 
-        return candidates.first(where: {
+        let found = candidates.first(where: {
             guard let url = $0 else { return false }
             return FileManager.default.fileExists(atPath: url.path)
         }) ?? nil
+
+        resolvedQuotesURL = found
+        return found
     }
 
     private nonisolated static func parseLine(_ line: Substring) -> LiteraryQuote? {
@@ -77,6 +85,8 @@ enum LiteraryQuoteLibrary {
         )
     }
 
+    /// 清洗来源字段：只保留 "衍生" 出现之前的有效内容（TSV 数据源约定格式）。
+    /// 如果结果不含中文字符，则视为无效来源。
     private nonisolated static func sanitizeSource(_ source: String) -> String {
         var sanitized = source.trimmingCharacters(in: .whitespacesAndNewlines)
 
