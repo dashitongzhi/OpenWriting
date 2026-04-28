@@ -90,7 +90,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private let openSettings: () -> Void
     private weak var observedSplitView: NSSplitView?
     private var splitViewResizeObserver: NSObjectProtocol?
-    private var pendingToolbarRefreshes: [DispatchWorkItem] = []
+    private var pendingToolbarRefresh: DispatchWorkItem?
 
     init(appState: AppState, openSettings: @escaping () -> Void) {
         self.openSettings = openSettings
@@ -127,7 +127,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: self)
 
         guard let window else { return }
-        scheduleToolbarRefresh(for: window)
+        scheduleToolbarRefresh(for: window, delay: 0.2)
     }
 
     static func applyWindowChrome(to window: NSWindow) {
@@ -262,17 +262,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     private func refreshWindowChrome() {
         guard let window else { return }
-        ensureToolbarConfiguration(for: window)
-        installSplitViewObservation(for: window)
-        Self.applyWindowChrome(to: window)
-        window.toolbar?.validateVisibleItems()
+        refreshToolbarChrome(for: window)
     }
 
     func refreshWindowChromeFromSwiftUI(for window: NSWindow) {
-        ensureToolbarConfiguration(for: window)
-        installSplitViewObservation(for: window)
-        Self.applyWindowChrome(to: window)
-        window.toolbar?.validateVisibleItems()
+        refreshToolbarChrome(for: window)
     }
 
     private func ensureToolbarConfiguration(for window: NSWindow) {
@@ -307,27 +301,29 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         ) { [weak self, weak window] _ in
             guard let self, let window else { return }
             Task { @MainActor in
-                self.scheduleToolbarRefresh(for: window)
+                self.scheduleToolbarRefresh(for: window, delay: 0.16)
             }
         }
     }
 
-    private func scheduleToolbarRefresh(for window: NSWindow) {
-        pendingToolbarRefreshes.forEach { $0.cancel() }
-        pendingToolbarRefreshes.removeAll()
+    private func scheduleToolbarRefresh(for window: NSWindow, delay: TimeInterval) {
+        pendingToolbarRefresh?.cancel()
 
-        for delay in [0.0, 0.12, 0.28] {
-            let workItem = DispatchWorkItem { [weak self, weak window] in
-                guard let self, let window else { return }
-                self.ensureToolbarConfiguration(for: window)
-                self.installSplitViewObservation(for: window)
-                Self.applyWindowChrome(to: window)
-                window.toolbar?.validateVisibleItems()
-            }
-
-            pendingToolbarRefreshes.append(workItem)
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+        let workItem = DispatchWorkItem { [weak self, weak window] in
+            guard let self, let window else { return }
+            self.refreshToolbarChrome(for: window)
+            self.pendingToolbarRefresh = nil
         }
+
+        pendingToolbarRefresh = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func refreshToolbarChrome(for window: NSWindow) {
+        ensureToolbarConfiguration(for: window)
+        installSplitViewObservation(for: window)
+        Self.applyWindowChrome(to: window)
+        window.toolbar?.validateVisibleItems()
     }
 
     private func makeToolbar() -> NSToolbar {
