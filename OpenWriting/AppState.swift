@@ -679,6 +679,29 @@ final class AppState {
         }
     }
 
+    func beginNextChapter(after chapterDraft: ChapterDraft, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            let nextChapterNumber = max(chapterDraft.chapterNumber + 1, 1)
+
+            if let existingDraft = project.chapterDrafts.first(where: { $0.chapterNumber == nextChapterNumber }) {
+                project.currentChapterNumber = nextChapterNumber
+                project.currentChapterTitle = existingDraft.chapterTitle
+                project.draftText = existingDraft.content
+            } else {
+                project.currentChapterNumber = nextChapterNumber
+                project.currentChapterTitle = "待命名章节"
+                project.chapterFocus = Self.defaultNextChapterFocus(
+                    after: chapterDraft,
+                    storyLength: project.storyLength
+                )
+                project.draftText = ""
+            }
+
+            project.writtenChapters = max(project.writtenChapters, chapterDraft.chapterNumber)
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
     @discardableResult
     func updateSavedChapterDraft(
         _ chapterDraftID: ChapterDraft.ID,
@@ -903,6 +926,27 @@ final class AppState {
     private static func normalizedChapterTitle(_ title: String) -> String {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "未命名章节" : trimmed
+    }
+
+    private static func defaultNextChapterFocus(after chapterDraft: ChapterDraft, storyLength: NovelLength) -> String {
+        let trimmedEnding = chapterDraft.content
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let ending = trimmedEnding.count > 180
+            ? String(trimmedEnding.suffix(180))
+            : trimmedEnding
+
+        let baseFocus: String
+        switch storyLength {
+        case .short:
+            baseFocus = "承接上一段的结果，继续压缩场景数量，推动核心冲突向结尾闭环靠拢。"
+        case .medium:
+            baseFocus = "承接上一章的后果，推进主线目标、关系变化或阶段反转，避免支线发散。"
+        case .long:
+            baseFocus = "承接上一章留下的行动后果、人物状态和在途线索，推进当前卷目标，并保留长期伏笔的延展空间。"
+        }
+
+        guard !ending.isEmpty else { return baseFocus }
+        return "\(baseFocus)\n\n上一章结尾参考：\(ending)"
     }
 
     private static func abbreviatedCount(_ value: Int) -> String {

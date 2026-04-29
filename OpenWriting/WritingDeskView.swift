@@ -819,6 +819,12 @@ struct WritingDeskView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isSavingChapter || isGenerating || project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                Button("保存并下一章") {
+                    saveCurrentChapterDraft(for: project, advanceToNextChapter: true)
+                }
+                .buttonStyle(.bordered)
+                .disabled(isSavingChapter || isGenerating || project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
 
             VStack(alignment: .leading, spacing: 10) {
@@ -833,6 +839,12 @@ struct WritingDeskView: View {
                         saveCurrentChapterDraft(for: project)
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(isSavingChapter || isGenerating || project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                    Button("保存并下一章") {
+                        saveCurrentChapterDraft(for: project, advanceToNextChapter: true)
+                    }
+                    .buttonStyle(.bordered)
                     .disabled(isSavingChapter || isGenerating || project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
 
@@ -1322,7 +1334,7 @@ struct WritingDeskView: View {
         }
     }
 
-    private func saveCurrentChapterDraft(for project: NovelProject) {
+    private func saveCurrentChapterDraft(for project: NovelProject, advanceToNextChapter: Bool = false) {
         let latestProject = appState.project(for: project.id) ?? project
         let trimmedDraft = latestProject.draftText.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -1340,7 +1352,12 @@ struct WritingDeskView: View {
             }
 
             guard let configuration = appState.aiConfiguration else {
-                aiStatusMessage = "已按当前标题更新 \(result.chapterDraft.chapterSummary)。未配置模型，暂未刷新全局记忆和章节树。"
+                if advanceToNextChapter {
+                    appState.beginNextChapter(after: result.chapterDraft, for: project.id)
+                    aiStatusMessage = "已按当前标题更新 \(result.chapterDraft.chapterSummary)，并进入下一章。未配置模型，暂未刷新全局记忆和章节树。"
+                } else {
+                    aiStatusMessage = "已按当前标题更新 \(result.chapterDraft.chapterSummary)。未配置模型，暂未刷新全局记忆和章节树。"
+                }
                 isSavingChapter = false
                 return
             }
@@ -1349,7 +1366,8 @@ struct WritingDeskView: View {
                 for: project,
                 saveResult: result,
                 configuration: configuration,
-                statusPrefix: "已按当前标题更新"
+                statusPrefix: "已按当前标题更新",
+                advanceToNextChapter: advanceToNextChapter
             )
             return
         }
@@ -1358,7 +1376,12 @@ struct WritingDeskView: View {
             let fallbackTitle = fallbackChapterTitle(for: latestProject)
             appState.updateCurrentChapterTitle(fallbackTitle, for: project.id)
             if let result = completeChapterDraftSave(for: project, statusPrefix: "模型未配置，已按当前标题保存") {
-                aiStatusMessage = "模型未配置，已按当前标题保存 \(result.chapterDraft.chapterSummary)。暂未刷新全局记忆和章节树。"
+                if advanceToNextChapter {
+                    appState.beginNextChapter(after: result.chapterDraft, for: project.id)
+                    aiStatusMessage = "模型未配置，已按当前标题保存 \(result.chapterDraft.chapterSummary)，并进入下一章。暂未刷新全局记忆和章节树。"
+                } else {
+                    aiStatusMessage = "模型未配置，已按当前标题保存 \(result.chapterDraft.chapterSummary)。暂未刷新全局记忆和章节树。"
+                }
             }
             isSavingChapter = false
             return
@@ -1381,7 +1404,8 @@ struct WritingDeskView: View {
                             for: project,
                             saveResult: result,
                             configuration: configuration,
-                            statusPrefix: "AI 已拟好标题并保存"
+                            statusPrefix: "AI 已拟好标题并保存",
+                            advanceToNextChapter: advanceToNextChapter
                         )
                     } else {
                         isSavingChapter = false
@@ -1402,7 +1426,8 @@ struct WritingDeskView: View {
                             saveResult: result,
                             configuration: configuration,
                             statusPrefix: "AI 拟标题失败，已按当前标题保存",
-                            detailMessage: error.localizedDescription
+                            detailMessage: error.localizedDescription,
+                            advanceToNextChapter: advanceToNextChapter
                         )
                     } else {
                         isSavingChapter = false
@@ -1615,7 +1640,8 @@ struct WritingDeskView: View {
         saveResult: ChapterDraftSaveResult,
         configuration: AIConnectionConfiguration,
         statusPrefix: String,
-        detailMessage: String? = nil
+        detailMessage: String? = nil,
+        advanceToNextChapter: Bool = false
     ) {
         let chapterDraft = saveResult.chapterDraft
         aiStatusMessage = "\(statusPrefix) \(chapterDraft.chapterSummary)。正在更新全局记忆和章节树…"
@@ -1686,6 +1712,10 @@ struct WritingDeskView: View {
                     )
                 }
 
+                if advanceToNextChapter {
+                    appState.beginNextChapter(after: chapterDraft, for: project.id)
+                }
+
                 projectContextRefreshTokens.removeValue(forKey: project.id)
                 isSavingChapter = false
                 aiStatusMessage = chapterSaveRefreshMessage(
@@ -1695,7 +1725,8 @@ struct WritingDeskView: View {
                     globalMemoryResult: globalMemoryResult,
                     preservedLocalGlobalMemory: preservedLocalGlobalMemory,
                     chapterTreeResult: chapterTreeResult,
-                    chapterTreeApplyOutcome: chapterTreeApplyOutcome
+                    chapterTreeApplyOutcome: chapterTreeApplyOutcome,
+                    advancedToNextChapter: advanceToNextChapter
                 )
                 revealWritingDeskWindow(for: project.id)
             }
@@ -1709,7 +1740,8 @@ struct WritingDeskView: View {
         globalMemoryResult: Result<String, Error>,
         preservedLocalGlobalMemory: Bool,
         chapterTreeResult: Result<ChapterTreeRefresh, Error>,
-        chapterTreeApplyOutcome: ChapterTreeRefreshApplyOutcome
+        chapterTreeApplyOutcome: ChapterTreeRefreshApplyOutcome,
+        advancedToNextChapter: Bool = false
     ) -> String {
         let detailPrefix = detailMessage.map { "\($0) " } ?? ""
         var refreshNotes: [String] = []
@@ -1738,6 +1770,10 @@ struct WritingDeskView: View {
             }
         case let .failure(error):
             refreshNotes.append("章节树更新失败：\(error.localizedDescription)")
+        }
+
+        if advancedToNextChapter {
+            refreshNotes.append("已进入下一章")
         }
 
         return "\(statusPrefix) \(chapterSummary)。\(detailPrefix)\(refreshNotes.joined(separator: "；"))。"

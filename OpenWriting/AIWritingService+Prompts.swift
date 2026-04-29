@@ -146,17 +146,19 @@ extension AIWritingService {
             .prefix(3)
             .map(\.chapterSummary)
             .joined(separator: "、")
-        let volumePlan = normalized(
+        let volumePlan = bounded(
             project.volumePlanNotes,
             fallback: project.storyLength.supportsVolumePlanning
                 ? "当前还没有明确分卷规划，请至少先写清本卷目标、卷末回收点和下一卷的升级方向。"
-                : "当前项目不以分卷规划为主。"
+                : "当前项目不以分卷规划为主。",
+            limit: 1_400
         )
-        let activeThreads = normalized(
+        let activeThreads = bounded(
             project.activeThreadsNotes,
             fallback: project.storyLength.supportsThreadTracking
                 ? "当前还没有整理在途线索，请至少明确主线、关系线和最近必须推进的伏笔线。"
-                : "当前项目以单次闭环为主，不强调多线并行。"
+                : "当前项目以单次闭环为主，不强调多线并行。",
+            limit: 1_400
         )
 
         return """
@@ -183,10 +185,10 @@ extension AIWritingService {
         \(support.currentDraftExcerpt)
 
         全局记忆：
-        \(normalized(project.continuityNotes, fallback: "暂无，请优先保持当前正文语气、叙事视角和冲突方向。"))
+        \(bounded(project.continuityNotes, fallback: "暂无，请优先保持当前正文语气、叙事视角和冲突方向。", limit: 2_200))
 
         作品大纲：
-        \(normalized(project.outlineText, fallback: "暂无大纲，请依据项目摘要和当前章节目标稳步推进。"))
+        \(bounded(project.outlineText, fallback: "暂无大纲，请依据项目摘要和当前章节目标稳步推进。", limit: 3_200))
 
         分卷/阶段规划：
         \(volumePlan)
@@ -201,16 +203,16 @@ extension AIWritingService {
         \(support.styleFingerprint)
 
         手动参考文本：
-        \(normalized(project.referenceContextText, fallback: "暂无手动补充的参考文本。"))
+        \(bounded(project.referenceContextText, fallback: "暂无手动补充的参考文本。", limit: 1_600))
 
         检索到的相关参考文本：
         \(support.relevantReferences)
 
         特殊要求：
-        \(normalized(project.specialRequirements, fallback: "暂无额外特殊要求。"))
+        \(bounded(project.specialRequirements, fallback: "暂无额外特殊要求。", limit: 1_200))
 
         字数设定：
-        \(normalized(project.wordTargetText, fallback: "暂无专门字数设定，请按正常章节节奏展开。"))
+        \(bounded(project.wordTargetText, fallback: "暂无专门字数设定，请按正常章节节奏展开。", limit: 500))
 
         上一已保存章节：
         \(previousChapterSummary)
@@ -259,13 +261,13 @@ extension AIWritingService {
         \(normalized(project.draftContinuationCache, fallback: "暂无上一章节结尾缓存。"))
 
         全局记忆：
-        \(normalized(project.continuityNotes, fallback: "暂无全局记忆。"))
+        \(bounded(project.continuityNotes, fallback: "暂无全局记忆。", limit: 1_800))
 
         章节树关键约束：
         \(support.chapterTreeFocus)
 
         作品大纲：
-        \(normalized(project.outlineText, fallback: "暂无完整大纲。"))
+        \(bounded(project.outlineText, fallback: "暂无完整大纲。", limit: 2_200))
 
         风格指纹：
         \(support.styleFingerprint)
@@ -274,7 +276,7 @@ extension AIWritingService {
         \(support.relevantReferences)
 
         特殊要求与额外指令：
-        \(normalized(project.specialRequirements, fallback: "暂无特殊要求。"))
+        \(bounded(project.specialRequirements, fallback: "暂无特殊要求。", limit: 1_000))
         \(normalized(additionalInstruction, fallback: "延续当前场景，不要跳章节。"))
 
         输出要求：
@@ -422,28 +424,28 @@ extension AIWritingService {
         本章目标：\(project.chapterFocus)
 
         作品大纲：
-        \(normalized(project.outlineText, fallback: "暂无完整大纲。"))
+        \(bounded(project.outlineText, fallback: "暂无完整大纲。", limit: 3_600))
 
         章节骨架拆解：
-        \(normalized(project.structureNotes, fallback: "暂无单独拆解，请先参考作品大纲。"))
+        \(bounded(project.structureNotes, fallback: "暂无单独拆解，请先参考作品大纲。", limit: 1_800))
 
         场景推进记录：
-        \(normalized(project.sceneProgressNotes, fallback: "暂无场景推进记录。"))
+        \(bounded(project.sceneProgressNotes, fallback: "暂无场景推进记录。", limit: 1_800))
 
         角色弧线记录：
-        \(normalized(project.characterArcNotes, fallback: "暂无角色弧线记录。"))
+        \(bounded(project.characterArcNotes, fallback: "暂无角色弧线记录。", limit: 1_800))
 
         伏笔与回收记录：
-        \(normalized(project.foreshadowNotes, fallback: "暂无伏笔回收记录。"))
+        \(bounded(project.foreshadowNotes, fallback: "暂无伏笔回收记录。", limit: 1_800))
 
         分卷/阶段规划：
-        \(normalized(project.volumePlanNotes, fallback: project.storyLength.supportsVolumePlanning ? "暂无分卷规划。" : "当前项目不以分卷规划为主。"))
+        \(bounded(project.volumePlanNotes, fallback: project.storyLength.supportsVolumePlanning ? "暂无分卷规划。" : "当前项目不以分卷规划为主。", limit: 1_800))
 
         在途线索：
-        \(normalized(project.activeThreadsNotes, fallback: project.storyLength.supportsThreadTracking ? "暂无在途线索整理。" : "当前项目以单次闭环为主。"))
+        \(bounded(project.activeThreadsNotes, fallback: project.storyLength.supportsThreadTracking ? "暂无在途线索整理。" : "当前项目以单次闭环为主。", limit: 1_800))
 
         全局记忆：
-        \(normalized(project.continuityNotes, fallback: "暂无全局记忆。"))
+        \(bounded(project.continuityNotes, fallback: "暂无全局记忆。", limit: 2_400))
 
         最新保存章节正文：
         \(normalized(excerpt(from: chapterDraft.content, limit: 3_600), fallback: "正文还较短，请重点根据大纲和本章目标判断结构。"))
@@ -472,7 +474,7 @@ extension AIWritingService {
         本章目标：\(project.chapterFocus)
 
         作品大纲：
-        \(normalized(project.outlineText, fallback: "暂无完整大纲。"))
+        \(bounded(project.outlineText, fallback: "暂无完整大纲。", limit: 3_000))
 
         手动参考文本：
         \(normalized(project.referenceContextText, fallback: "暂无手动参考文本。"))
@@ -550,31 +552,31 @@ extension AIWritingService {
         当前创作进度：已创作 \(project.writtenChapters) 章
 
         现有全局记忆：
-        \(normalized(project.continuityNotes, fallback: "暂无现成全局记忆，请根据本次保存章节建立第一版。"))
+        \(bounded(project.continuityNotes, fallback: "暂无现成全局记忆，请根据本次保存章节建立第一版。", limit: 2_800))
 
         作品大纲：
-        \(normalized(project.outlineText, fallback: "暂无完整大纲。"))
+        \(bounded(project.outlineText, fallback: "暂无完整大纲。", limit: 3_200))
 
         章节骨架拆解：
-        \(normalized(project.structureNotes, fallback: "暂无章节骨架拆解。"))
+        \(bounded(project.structureNotes, fallback: "暂无章节骨架拆解。", limit: 1_800))
 
         场景推进记录：
-        \(normalized(project.sceneProgressNotes, fallback: "暂无场景推进记录。"))
+        \(bounded(project.sceneProgressNotes, fallback: "暂无场景推进记录。", limit: 1_800))
 
         角色弧线记录：
-        \(normalized(project.characterArcNotes, fallback: "暂无角色弧线记录。"))
+        \(bounded(project.characterArcNotes, fallback: "暂无角色弧线记录。", limit: 1_800))
 
         伏笔与回收记录：
-        \(normalized(project.foreshadowNotes, fallback: "暂无伏笔回收记录。"))
+        \(bounded(project.foreshadowNotes, fallback: "暂无伏笔回收记录。", limit: 1_800))
 
         分卷/阶段规划：
-        \(normalized(project.volumePlanNotes, fallback: project.storyLength.supportsVolumePlanning ? "暂无分卷规划。" : "当前项目不以分卷规划为主。"))
+        \(bounded(project.volumePlanNotes, fallback: project.storyLength.supportsVolumePlanning ? "暂无分卷规划。" : "当前项目不以分卷规划为主。", limit: 1_800))
 
         在途线索：
-        \(normalized(project.activeThreadsNotes, fallback: project.storyLength.supportsThreadTracking ? "暂无在途线索整理。" : "当前项目以单次闭环为主。"))
+        \(bounded(project.activeThreadsNotes, fallback: project.storyLength.supportsThreadTracking ? "暂无在途线索整理。" : "当前项目以单次闭环为主。", limit: 1_800))
 
         章节树总结：
-        \(normalized(project.outlineSummary, fallback: "暂无章节树总结。"))
+        \(bounded(project.outlineSummary, fallback: "暂无章节树总结。", limit: 1_600))
 
         最新保存章节正文：
         \(excerpt(from: chapterDraft.content, limit: 4_200))
@@ -597,6 +599,12 @@ extension AIWritingService {
     static func normalized(_ text: String, fallback: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? fallback : trimmed
+    }
+
+    static func bounded(_ text: String, fallback: String, limit: Int) -> String {
+        let resolvedText = normalized(text, fallback: fallback)
+        guard resolvedText != fallback else { return resolvedText }
+        return excerpt(from: resolvedText, limit: limit)
     }
 
     static func normalizeChapterTitle(_ text: String) -> String {
