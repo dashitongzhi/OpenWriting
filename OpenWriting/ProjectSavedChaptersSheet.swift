@@ -7,6 +7,8 @@ struct ProjectSavedChaptersSheet: View {
     let projectID: NovelProject.ID
 
     @State private var selectedChapterID: ChapterDraft.ID?
+    @State private var searchText = ""
+    @State private var pendingRestore: (chapter: ChapterDraft, version: ChapterDraftVersion)?
 
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
@@ -19,6 +21,10 @@ struct ProjectSavedChaptersSheet: View {
     private var selectedChapter: ChapterDraft? {
         guard let project else { return nil }
         return resolvedSavedChapter(in: project, selectedChapterID: selectedChapterID)
+    }
+
+    private var searchResults: [LongformSearchResult] {
+        appState.searchLongformProject(searchText, in: projectID)
     }
 
     private var directoryStyle: SavedChapterDirectoryStyle {
@@ -68,19 +74,33 @@ struct ProjectSavedChaptersSheet: View {
                         .accessibilityHint("关闭已保存章节窗口")
                     }
 
+                    TextField("搜索章节、正文、素材、大纲、伏笔或全局记忆", text: $searchText)
+                        .textFieldStyle(.roundedBorder)
+
                     ViewThatFits(in: .horizontal) {
                         HStack(alignment: .top, spacing: 24) {
-                            SavedChapterDirectoryList(
-                                title: "章节目录",
-                                countLabel: "\(project.savedChapterCount) 章",
-                                chapterDrafts: project.sortedChapterDrafts,
-                                selectedChapterID: selectedChapter?.id,
-                                style: directoryStyle,
-                                onSelect: { chapterDraft in
-                                    selectedChapterID = chapterDraft.id
+                            VStack(alignment: .leading, spacing: 18) {
+                                SavedChapterDirectoryList(
+                                    title: "章节目录",
+                                    countLabel: "\(project.savedChapterCount) 章",
+                                    chapterDrafts: project.sortedChapterDrafts,
+                                    selectedChapterID: selectedChapter?.id,
+                                    style: directoryStyle,
+                                    onSelect: { chapterDraft in
+                                        selectedChapterID = chapterDraft.id
+                                    }
+                                )
+
+                                if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                    LongformSearchResultsPanel(
+                                        results: searchResults,
+                                        onSelectChapter: { chapterID in
+                                            selectedChapterID = chapterID
+                                        }
+                                    )
                                 }
-                            )
-                            .frame(width: 300, alignment: .topLeading)
+                            }
+                            .frame(width: 320, alignment: .topLeading)
 
                             SavedChapterPreviewPanel(
                                 chapterDraft: selectedChapter,
@@ -92,6 +112,9 @@ struct ProjectSavedChaptersSheet: View {
                                     appState.loadChapterDraft(chapterDraft.id, for: project.id)
                                     appState.openWritingDesk(for: project.id)
                                     dismiss()
+                                },
+                                onRestoreVersion: { chapterDraft, version in
+                                    pendingRestore = (chapterDraft, version)
                                 }
                             )
                             .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -119,8 +142,20 @@ struct ProjectSavedChaptersSheet: View {
                                     appState.loadChapterDraft(chapterDraft.id, for: project.id)
                                     appState.openWritingDesk(for: project.id)
                                     dismiss()
+                                },
+                                onRestoreVersion: { chapterDraft, version in
+                                    pendingRestore = (chapterDraft, version)
                                 }
                             )
+
+                            if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                LongformSearchResultsPanel(
+                                    results: searchResults,
+                                    onSelectChapter: { chapterID in
+                                        selectedChapterID = chapterID
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -174,5 +209,37 @@ struct ProjectSavedChaptersSheet: View {
             }
         }
         .frame(minWidth: 720, minHeight: 540, alignment: .topLeading)
+        .confirmationDialog(
+            "回滚章节版本",
+            isPresented: Binding(
+                get: { pendingRestore != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        pendingRestore = nil
+                    }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let pendingRestore {
+                Button("回滚到 \(pendingRestore.version.savedAt)", role: .destructive) {
+                    appState.restoreChapterVersion(
+                        pendingRestore.version.id,
+                        chapterDraftID: pendingRestore.chapter.id,
+                        for: projectID
+                    )
+                    selectedChapterID = pendingRestore.chapter.id
+                    self.pendingRestore = nil
+                }
+            }
+
+            Button("取消", role: .cancel) {
+                pendingRestore = nil
+            }
+        } message: {
+            if let pendingRestore {
+                Text("将《\(pendingRestore.chapter.chapterSummary)》恢复为历史版本《\(pendingRestore.version.chapterTitle)》。当前版本会先自动保存到历史中。")
+            }
+        }
     }
 }

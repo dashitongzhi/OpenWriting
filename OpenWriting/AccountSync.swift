@@ -185,12 +185,15 @@ actor ICloudProjectStore {
     private enum CloudKitKey {
         static let recordType = "ProjectSnapshot"
         static let projectRecordType = "ProjectPayload"
+        static let chapterRecordType = "ChapterPayload"
         static let payloadAsset = "payloadAsset"
         static let updatedAt = "updatedAt"
         static let scope = "scope"
         static let activeProjectID = "activeProjectID"
         static let projectIDs = "projectIDs"
         static let projectID = "projectID"
+        static let chapterIDs = "chapterIDs"
+        static let chapterID = "chapterID"
     }
 
     private let container: CKContainer?
@@ -293,24 +296,62 @@ actor ICloudProjectStore {
         do {
             let snapshotRecordID = Self.snapshotRecordID(for: scope)
             let projectRecordIDs = snapshot.recentProjects.map { Self.projectRecordID(for: $0.id, scope: scope) }
+            let chapterRecordIDs = snapshot.recentProjects.flatMap { project in
+                project.chapterDrafts.map { Self.chapterRecordID(for: $0.id, projectID: project.id, scope: scope) }
+            }
             var recordIDsToFetch = projectRecordIDs
+            recordIDsToFetch.append(contentsOf: chapterRecordIDs)
             recordIDsToFetch.append(snapshotRecordID)
-            let existingRecords = try await existingRecords(for: recordIDsToFetch, in: database)
+            var existingRecordsByID = try await existingRecords(for: recordIDsToFetch, in: database)
 
-            let previousProjectIDs = existingProjectIDs(from: existingRecords[snapshotRecordID])
-            let deletedRecordIDs = Set(previousProjectIDs)
+            let previousProjectIDs = existingProjectIDs(from: existingRecordsByID[snapshotRecordID])
+            let previousProjectRecordIDs = previousProjectIDs.map { Self.projectRecordID(for: $0, scope: scope) }
+            let missingPreviousProjectRecordIDs = previousProjectRecordIDs.filter { existingRecordsByID[$0] == nil }
+            if !missingPreviousProjectRecordIDs.isEmpty {
+                let previousProjectRecords = try await existingRecords(for: missingPreviousProjectRecordIDs, in: database)
+                existingRecordsByID.merge(previousProjectRecords) { current, _ in current }
+            }
+
+            var deletedRecordIDs = Set(previousProjectIDs)
                 .subtracting(snapshot.recentProjects.map(\.id))
                 .map { Self.projectRecordID(for: $0, scope: scope) }
+            let currentChapterRecordIDs = Set(chapterRecordIDs)
+            let previousChapterRecordIDs = previousProjectRecordIDs.compactMap { existingRecordsByID[$0] }.flatMap { record in
+                chapterIDs(from: record)?.map {
+                    Self.chapterRecordID(
+                        for: $0,
+                        projectID: ((record[CloudKitKey.projectID] as? NSString) as String?) ?? "",
+                        scope: scope
+                    )
+                } ?? []
+            }
+            deletedRecordIDs.append(contentsOf: Set(previousChapterRecordIDs).subtracting(currentChapterRecordIDs))
 
             let encoder = self.encoder
             let sanitizedScope = Self.sanitized(scope)
             let projectPayloads = try await MainActor.run {
-                try snapshot.recentProjects.map { project in
-                    (
+                try snapshot.recentProjects.map { project -> (projectID: String, updatedAt: Date, chapterIDs: [String], data: Data) in
+                    var metadata = project
+                    let chapterIDs = project.chapterDrafts.map(\.id)
+                    metadata.chapterDrafts = []
+                    return (
                         projectID: project.id,
                         updatedAt: project.updatedAtDate,
-                        data: try encoder.encode(project)
+                        chapterIDs: chapterIDs,
+                        data: try encoder.encode(metadata)
                     )
+                }
+            }
+            let chapterPayloads = try await MainActor.run {
+                try snapshot.recentProjects.flatMap { project in
+                    try project.chapterDrafts.map { chapterDraft in
+                        (
+                            projectID: project.id,
+                            chapterID: chapterDraft.id,
+                            updatedAt: chapterDraft.savedAtDate,
+                            data: try encoder.encode(chapterDraft)
+                        )
+                    }
                 }
             }
 
@@ -320,10 +361,26 @@ actor ICloudProjectStore {
                     identifier: "project_\(sanitizedScope)_\(Self.sanitized(payload.projectID))"
                 )
                 let recordID = Self.projectRecordID(for: payload.projectID, scope: scope)
-                let record = existingRecords[recordID]
+                let record = existingRecordsByID[recordID]
                     ?? CKRecord(recordType: CloudKitKey.projectRecordType, recordID: recordID)
                 record[CloudKitKey.scope] = sanitizedScope as NSString
                 record[CloudKitKey.projectID] = payload.projectID as NSString
+                record[CloudKitKey.updatedAt] = payload.updatedAt as NSDate
+                record[CloudKitKey.chapterIDs] = payload.chapterIDs as NSArray
+                record[CloudKitKey.payloadAsset] = CKAsset(fileURL: payloadURL)
+                return (record, payloadURL)
+            }
+            let chapterRecords = try chapterPayloads.map { payload in
+                let payloadURL = try writeTemporaryPayload(
+                    payload.data,
+                    identifier: "chapter_\(sanitizedScope)_\(Self.sanitized(payload.projectID))_\(Self.sanitized(payload.chapterID))"
+                )
+                let recordID = Self.chapterRecordID(for: payload.chapterID, projectID: payload.projectID, scope: scope)
+                let record = existingRecordsByID[recordID]
+                    ?? CKRecord(recordType: CloudKitKey.chapterRecordType, recordID: recordID)
+                record[CloudKitKey.scope] = sanitizedScope as NSString
+                record[CloudKitKey.projectID] = payload.projectID as NSString
+                record[CloudKitKey.chapterID] = payload.chapterID as NSString
                 record[CloudKitKey.updatedAt] = payload.updatedAt as NSDate
                 record[CloudKitKey.payloadAsset] = CKAsset(fileURL: payloadURL)
                 return (record, payloadURL)
@@ -333,9 +390,12 @@ actor ICloudProjectStore {
                 for (_, payloadURL) in projectRecords {
                     try? fileManager.removeItem(at: payloadURL)
                 }
+                for (_, payloadURL) in chapterRecords {
+                    try? fileManager.removeItem(at: payloadURL)
+                }
             }
 
-            let indexRecord = existingRecords[snapshotRecordID]
+            let indexRecord = existingRecordsByID[snapshotRecordID]
                 ?? CKRecord(recordType: CloudKitKey.recordType, recordID: snapshotRecordID)
             indexRecord[CloudKitKey.scope] = sanitizedScope as NSString
             indexRecord[CloudKitKey.updatedAt] = snapshot.updatedAt as NSDate
@@ -344,10 +404,10 @@ actor ICloudProjectStore {
             indexRecord[CloudKitKey.payloadAsset] = nil
 
             _ = try await database.modifyRecords(
-                saving: [indexRecord] + projectRecords.map { $0.0 },
+                saving: [indexRecord] + projectRecords.map { $0.0 } + chapterRecords.map { $0.0 },
                 deleting: deletedRecordIDs,
                 savePolicy: .changedKeys,
-                atomically: true
+                atomically: false
             )
         } catch let error as StoreError {
             throw error
@@ -409,6 +469,14 @@ actor ICloudProjectStore {
         CKRecord.ID(recordName: "project_\(sanitized(scope))_\(sanitized(projectID))")
     }
 
+    private nonisolated static func chapterRecordID(
+        for chapterID: String,
+        projectID: String,
+        scope: String
+    ) -> CKRecord.ID {
+        CKRecord.ID(recordName: "chapter_\(sanitized(scope))_\(sanitized(projectID))_\(sanitized(chapterID))")
+    }
+
     private func loadIndexedSnapshot(
         from indexRecord: CKRecord,
         scope: String,
@@ -426,6 +494,7 @@ actor ICloudProjectStore {
         let projectRecordIDs = projectIDs.map { Self.projectRecordID(for: $0, scope: scope) }
         let fetchedRecords = try await existingRecords(for: projectRecordIDs, in: database)
         var projectDataByID: [String: Data] = [:]
+        var chapterIDsByProjectID: [String: [String]] = [:]
 
         for projectID in projectIDs {
             let recordID = Self.projectRecordID(for: projectID, scope: scope)
@@ -441,20 +510,57 @@ actor ICloudProjectStore {
 
             do {
                 projectDataByID[projectID] = try Data(contentsOf: assetURL)
+                chapterIDsByProjectID[projectID] = chapterIDs(from: record) ?? []
             } catch {
                 throw StoreError.decodeFailed(error.localizedDescription)
             }
         }
 
+        let chapterRecordIDs = chapterIDsByProjectID.flatMap { projectID, chapterIDs in
+            chapterIDs.map { Self.chapterRecordID(for: $0, projectID: projectID, scope: scope) }
+        }
+        let fetchedChapterRecords = try await existingRecords(for: chapterRecordIDs, in: database)
+        var chapterDataByProjectID: [String: [Data]] = [:]
+
+        for (projectID, chapterIDs) in chapterIDsByProjectID {
+            for chapterID in chapterIDs {
+                let recordID = Self.chapterRecordID(for: chapterID, projectID: projectID, scope: scope)
+                guard let record = fetchedChapterRecords[recordID] else {
+                    throw StoreError.missingPayload
+                }
+
+                guard let asset = record[CloudKitKey.payloadAsset] as? CKAsset,
+                      let assetURL = asset.fileURL
+                else {
+                    throw StoreError.missingPayload
+                }
+
+                do {
+                    chapterDataByProjectID[projectID, default: []].append(try Data(contentsOf: assetURL))
+                } catch {
+                    throw StoreError.decodeFailed(error.localizedDescription)
+                }
+            }
+        }
+
         let decoder = self.decoder
         let resolvedProjectDataByID = projectDataByID
+        let resolvedChapterDataByProjectID = chapterDataByProjectID
+        let resolvedChapterIDsByProjectID = chapterIDsByProjectID
         let recentProjects: [NovelProject] = try await MainActor.run {
             try projectIDs.map { projectID in
                 guard let data = resolvedProjectDataByID[projectID] else {
                     throw StoreError.missingPayload
                 }
 
-                return try decoder.decode(NovelProject.self, from: data)
+                var project = try decoder.decode(NovelProject.self, from: data)
+                if let chapterIDs = resolvedChapterIDsByProjectID[projectID], !chapterIDs.isEmpty {
+                    let chapters = try resolvedChapterDataByProjectID[projectID, default: []].map {
+                        try decoder.decode(ChapterDraft.self, from: $0)
+                    }
+                    project.chapterDrafts = chapters.sorted(by: ChapterDraft.sortDescending)
+                }
+                return project
             }
         }
 
@@ -480,6 +586,22 @@ actor ICloudProjectStore {
         }
 
         if let array = indexRecord[CloudKitKey.projectIDs] as? NSArray {
+            return array.compactMap { $0 as? String }
+        }
+
+        return nil
+    }
+
+    private nonisolated func chapterIDs(from record: CKRecord) -> [String]? {
+        if let direct = record[CloudKitKey.chapterIDs] as? [String] {
+            return direct
+        }
+
+        if let array = record[CloudKitKey.chapterIDs] as? [NSString] {
+            return array.map(String.init)
+        }
+
+        if let array = record[CloudKitKey.chapterIDs] as? NSArray {
             return array.compactMap { $0 as? String }
         }
 

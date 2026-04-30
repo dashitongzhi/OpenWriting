@@ -392,15 +392,39 @@ enum AIWritingService {
                 }
                 .prefix(4)
 
-            let excerpts = rankedDocuments.map { document, _ in
+            let chapterExcerpts = relevantChapterExcerpts(for: project, keywords: keywords)
+            let documentExcerpts = rankedDocuments.map { document, _ in
                 "参考《\(document.title)》：\n\(bestReferenceWindow(in: document.content, keywords: keywords, limit: 1_400))"
             }
 
-            return excerpts.isEmpty ? "暂无导入参考文本。" : excerpts.joined(separator: "\n\n")
+            let excerpts = chapterExcerpts + documentExcerpts
+            return excerpts.isEmpty ? "暂无相关章节或导入参考文本。" : excerpts.joined(separator: "\n\n")
+        }
+
+        private static func relevantChapterExcerpts(for project: NovelProject, keywords: [String]) -> [String] {
+            project.chapterDrafts
+                .filter { $0.chapterNumber != project.currentChapterNumber }
+                .map { chapter in
+                    (chapter, referenceScore(chapter.content + "\n" + chapter.chapterSummary, keywords: keywords))
+                }
+                .filter { _, score in score > 0 }
+                .sorted { lhs, rhs in
+                    if lhs.1 == rhs.1 {
+                        return lhs.0.chapterNumber > rhs.0.chapterNumber
+                    }
+                    return lhs.1 > rhs.1
+                }
+                .prefix(4)
+                .map { chapter, _ in
+                    "相关已保存章节《\(chapter.chapterSummary)》：\n\(bestReferenceWindow(in: chapter.content, keywords: keywords, limit: 1_200))"
+                }
         }
 
         private static func referenceScore(_ document: ReferenceDocument, keywords: [String]) -> Int {
-            let haystack = "\(document.title)\n\(document.content)"
+            referenceScore("\(document.title)\n\(document.content)", keywords: keywords)
+        }
+
+        private static func referenceScore(_ haystack: String, keywords: [String]) -> Int {
             return keywords.reduce(0) { score, keyword in
                 haystack.localizedStandardContains(keyword) ? score + keyword.count : score
             }

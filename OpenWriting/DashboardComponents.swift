@@ -51,6 +51,7 @@ struct CurrentProjectSnapshotCard: View {
                     HStack(spacing: 14) {
                         Label(project.updatedAt, systemImage: "clock")
                         Label("已创作 \(project.writtenChapters) 章", systemImage: "text.book.closed")
+                        Label("\(project.manuscriptWordCount) 字", systemImage: "textformat.123")
                     }
                     .font(.caption)
                     .foregroundStyle(palette.textSecondary)
@@ -62,8 +63,13 @@ struct CurrentProjectSnapshotCard: View {
                         )
 
                         ProjectChapterPill(
-                            label: "已创作",
-                            value: "\(project.writtenChapters) 章"
+                            label: "全书字数",
+                            value: "\(project.manuscriptWordCount)"
+                        )
+
+                        ProjectChapterPill(
+                            label: "完成度",
+                            value: project.completionStatusLabel
                         )
                     }
                 }

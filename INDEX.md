@@ -32,6 +32,7 @@
 | `OpenWriting/DomainModels.swift` | `NovelLength`, `NovelProject`, `ChapterDraft`, `ReferenceDocument`, `GlobalMemorySnapshot`, `PersistedTimestampCodec` 等 | 领域模型、兼容时间戳编解码与项目核心数据结构。 |
 | `OpenWriting/DateFormatting.swift` | `TimestampLabel` | 首页与工作区复用的时间标签辅助。 |
 | `OpenWriting/ProjectFileStore.swift` | `ProjectFileStore` | 本地项目文件存储、按账号 scope 隔离读写、旧 `UserDefaults` 项目数据承接。 |
+| `OpenWriting/ProjectExportService.swift` | `ProjectExportService`, `ZipArchiveBuilder` | 项目本地导出，生成备份 JSON、Markdown、DOCX 与 EPUB 成书文件。 |
 | `OpenWriting/TextFileDecoding.swift` | `TextFileDecoding` | 文本导入编码识别与解码兜底，兼容 UTF 系列与常见中文编码。 |
 | `OpenWriting/ChapterTreeRefresh.swift` | `ChapterTreeRefresh`, `ChapterTreeRefreshBaseline`, `ChapterTreeRefreshApplyOutcome` | 章节树结构化刷新结果、解析和回写保护模型。 |
 | `OpenWriting/AIWritingService.swift` | `AIConnectionConfiguration`, `AIWritingMode`, `AIWritingLength`, `AIWritingService` | AI 请求封装，提供续写、章节命名、大纲生成、全局记忆刷新和章节树结构化刷新。 |

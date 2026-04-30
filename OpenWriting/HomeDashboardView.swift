@@ -1,3 +1,4 @@
+import AppKit
 import Observation
 import SwiftUI
 import UniformTypeIdentifiers
@@ -407,10 +408,11 @@ struct HomeDashboardView: View {
                 }
             }
 
-            HStack(spacing: 12) {
-                WorkspaceMetricBadge(label: "全部项目", value: "\(appState.recentProjects.count)")
-                WorkspaceMetricBadge(label: "已创作章节", value: "\(appState.totalWrittenChapters) 章")
-            }
+                HStack(spacing: 12) {
+                    WorkspaceMetricBadge(label: "全部项目", value: "\(appState.recentProjects.count)")
+                    WorkspaceMetricBadge(label: "已创作章节", value: "\(appState.totalWrittenChapters) 章")
+                    WorkspaceMetricBadge(label: "已保存字数", value: "\(appState.totalSavedChapterWordCount)")
+                }
 
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) {
@@ -476,8 +478,13 @@ struct HomeDashboardView: View {
                     )
 
                     ProjectChapterPill(
-                        label: "已创作",
-                        value: "\(project.writtenChapters) 章"
+                        label: "全书字数",
+                        value: "\(project.manuscriptWordCount)"
+                    )
+
+                    ProjectChapterPill(
+                        label: "完成度",
+                        value: project.completionStatusLabel
                     )
                 }
             }
@@ -1468,7 +1475,8 @@ private struct WorkspaceUtilityCard: View {
             }
 
             HStack(spacing: 12) {
-                WorkspaceMetricBadge(label: "正文词数", value: "\(activeProject?.draftWordCount ?? 0)")
+                WorkspaceMetricBadge(label: "全书字数", value: "\(activeProject?.manuscriptWordCount ?? 0)")
+                WorkspaceMetricBadge(label: "当前章", value: "\(activeProject?.draftWordCount ?? 0)")
                 WorkspaceMetricBadge(label: "已创作章节", value: "\(activeProject?.writtenChapters ?? 0) 章")
             }
 
@@ -1658,6 +1666,7 @@ private struct ProjectsWorkspacePanel: View {
     @Bindable var appState: AppState
     @State private var pendingDeletionProject: NovelProject?
     @State private var chapterBrowserProjectID: NovelProject.ID?
+    @State private var exportStatusMessage = "本地导出会生成项目备份、分章 Markdown、全书 Markdown、DOCX 和 EPUB。"
 
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
@@ -1666,7 +1675,7 @@ private struct ProjectsWorkspacePanel: View {
     var body: some View {
         DashboardPanel(
             title: "项目列表",
-            subtitle: "这里集中展示最近项目，创建新项目后也会立刻出现在这里。"
+            subtitle: exportStatusMessage
         ) {
             VStack(alignment: .leading, spacing: 14) {
                 if appState.recentProjects.isEmpty {
@@ -1686,6 +1695,9 @@ private struct ProjectsWorkspacePanel: View {
                         },
                         onViewChapters: {
                             chapterBrowserProjectID = project.id
+                        },
+                        onExport: {
+                            exportProject(project)
                         },
                         onDelete: {
                             pendingDeletionProject = project
@@ -1738,6 +1750,24 @@ private struct ProjectsWorkspacePanel: View {
                     projectID: chapterBrowserProjectID
                 )
             }
+        }
+    }
+
+    private func exportProject(_ project: NovelProject) {
+        let panel = NSSavePanel()
+        panel.title = "导出《\(project.title)》"
+        panel.nameFieldStringValue = "\(project.title)-OpenWriting-Export"
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            let summary = try ProjectExportService.exportProject(project, to: url)
+            exportStatusMessage = "已导出 \(summary.fileCount) 个文件到 \(summary.directoryURL.path)。"
+            NSWorkspace.shared.activateFileViewerSelecting([summary.directoryURL])
+        } catch {
+            exportStatusMessage = "导出失败：\(error.localizedDescription)"
         }
     }
 }
@@ -2197,6 +2227,7 @@ private struct ProjectSpaceProjectRow: View {
     let isSelected: Bool
     let onSelect: () -> Void
     let onViewChapters: () -> Void
+    let onExport: () -> Void
     let onDelete: () -> Void
 
     private var palette: DashboardPalette {
@@ -2248,6 +2279,9 @@ private struct ProjectSpaceProjectRow: View {
                             value: project.currentChapterSummary
                         )
                         WorkspaceMetricBadge(label: "已创作章节", value: "\(project.writtenChapters) 章")
+                        WorkspaceMetricBadge(label: "全书字数", value: "\(project.manuscriptWordCount)")
+                        WorkspaceMetricBadge(label: "完成度", value: project.completionStatusLabel)
+                        WorkspaceMetricBadge(label: "目录检查", value: project.chapterIntegrityStatusLabel)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2261,6 +2295,11 @@ private struct ProjectSpaceProjectRow: View {
                 }
                 .buttonStyle(.borderless)
                 .disabled(project.savedChapterCount == 0)
+
+                Button("导出") {
+                    onExport()
+                }
+                .buttonStyle(.borderless)
 
                 Spacer()
 

@@ -357,12 +357,82 @@ enum ChapterDraftSaveResult {
     }
 }
 
+struct ChapterDraftVersion: Identifiable, Codable, Hashable {
+    let id: String
+    var chapterTitle: String
+    var content: String
+    var reason: String
+    private var savedAtTimestamp: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case chapterTitle
+        case content
+        case reason
+        case savedAt
+    }
+
+    var savedAt: String {
+        get { PersistedTimestampCodec.displayLabel(for: savedAtTimestamp, style: .project) }
+        set { savedAtTimestamp = PersistedTimestampCodec.parse(newValue) ?? PersistedTimestampCodec.now() }
+    }
+
+    var savedAtDate: Date {
+        get { savedAtTimestamp }
+        set { savedAtTimestamp = newValue }
+    }
+
+    var wordCount: Int {
+        Self.wordCount(in: content)
+    }
+
+    init(
+        id: String = UUID().uuidString,
+        chapterTitle: String,
+        content: String,
+        reason: String,
+        savedAt: String
+    ) {
+        self.id = id
+        self.chapterTitle = chapterTitle
+        self.content = content
+        self.reason = reason
+        self.savedAtTimestamp = PersistedTimestampCodec.parse(savedAt) ?? PersistedTimestampCodec.now()
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        chapterTitle = try container.decode(String.self, forKey: .chapterTitle)
+        content = try container.decode(String.self, forKey: .content)
+        reason = try container.decodeIfPresent(String.self, forKey: .reason) ?? "历史版本"
+        savedAtTimestamp = try PersistedTimestampCodec.decodeRequired(container, forKey: .savedAt)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(chapterTitle, forKey: .chapterTitle)
+        try container.encode(content, forKey: .content)
+        try container.encode(reason, forKey: .reason)
+        try PersistedTimestampCodec.encode(savedAtTimestamp, to: &container, forKey: .savedAt)
+    }
+
+    static func wordCount(in text: String) -> Int {
+        text
+            .unicodeScalars
+            .filter { !$0.properties.isWhitespace }
+            .count
+    }
+}
+
 struct ChapterDraft: Identifiable, Codable, Hashable {
     let id: String
     var chapterNumber: Int
     var chapterTitle: String
     var content: String
     private var savedAtTimestamp: Date
+    var versionHistory: [ChapterDraftVersion]
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -370,6 +440,7 @@ struct ChapterDraft: Identifiable, Codable, Hashable {
         case chapterTitle
         case content
         case savedAt
+        case versionHistory
     }
 
     var savedAt: String {
@@ -387,13 +458,15 @@ struct ChapterDraft: Identifiable, Codable, Hashable {
         chapterNumber: Int,
         chapterTitle: String,
         content: String,
-        savedAt: String
+        savedAt: String,
+        versionHistory: [ChapterDraftVersion] = []
     ) {
         self.id = id
         self.chapterNumber = chapterNumber
         self.chapterTitle = chapterTitle
         self.content = content
         self.savedAtTimestamp = PersistedTimestampCodec.parse(savedAt) ?? PersistedTimestampCodec.now()
+        self.versionHistory = versionHistory
     }
 
     init(from decoder: Decoder) throws {
@@ -403,6 +476,7 @@ struct ChapterDraft: Identifiable, Codable, Hashable {
         chapterTitle = try container.decode(String.self, forKey: .chapterTitle)
         content = try container.decode(String.self, forKey: .content)
         savedAtTimestamp = try PersistedTimestampCodec.decodeRequired(container, forKey: .savedAt)
+        versionHistory = try container.decodeIfPresent([ChapterDraftVersion].self, forKey: .versionHistory) ?? []
     }
 
     func encode(to encoder: Encoder) throws {
@@ -412,6 +486,7 @@ struct ChapterDraft: Identifiable, Codable, Hashable {
         try container.encode(chapterTitle, forKey: .chapterTitle)
         try container.encode(content, forKey: .content)
         try PersistedTimestampCodec.encode(savedAtTimestamp, to: &container, forKey: .savedAt)
+        try container.encode(versionHistory, forKey: .versionHistory)
     }
 
     var chapterLabel: String {
@@ -423,10 +498,20 @@ struct ChapterDraft: Identifiable, Codable, Hashable {
     }
 
     var wordCount: Int {
-        content
-            .unicodeScalars
-            .filter { !$0.properties.isWhitespace }
-            .count
+        ChapterDraftVersion.wordCount(in: content)
+    }
+
+    var versionCount: Int {
+        versionHistory.count
+    }
+
+    func versionSnapshot(reason: String, savedAt: String) -> ChapterDraftVersion {
+        ChapterDraftVersion(
+            chapterTitle: chapterTitle,
+            content: content,
+            reason: reason,
+            savedAt: savedAt
+        )
     }
 
     var previewText: String {
@@ -540,6 +625,42 @@ struct OutlineGenerationProfile: Codable, Hashable {
     private static func hasContent(_ text: String) -> Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+}
+
+enum LongformSearchResultKind: String, CaseIterable, Identifiable {
+    case chapter
+    case reference
+    case memory
+    case outline
+    case entity
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .chapter:
+            return "章节"
+        case .reference:
+            return "素材"
+        case .memory:
+            return "记忆"
+        case .outline:
+            return "大纲"
+        case .entity:
+            return "实体"
+        }
+    }
+}
+
+struct LongformSearchResult: Identifiable, Hashable {
+    let id: String
+    let kind: LongformSearchResultKind
+    let title: String
+    let subtitle: String
+    let excerpt: String
+    let score: Int
+    let chapterID: ChapterDraft.ID?
+    let referenceDocumentID: ReferenceDocument.ID?
 }
 
 struct GlobalMemorySnapshot: Codable, Hashable {
@@ -993,6 +1114,35 @@ struct NovelProject: Identifiable, Codable {
         chapterDrafts.count
     }
 
+    var duplicateChapterNumbers: [Int] {
+        let grouped = Dictionary(grouping: chapterDrafts, by: \.chapterNumber)
+        return grouped
+            .filter { $0.value.count > 1 }
+            .map(\.key)
+            .sorted()
+    }
+
+    var missingChapterNumbers: [Int] {
+        let chapterNumbers = Set(chapterDrafts.map(\.chapterNumber))
+        guard let highest = chapterNumbers.max(), highest > 1 else { return [] }
+        return (1...highest).filter { !chapterNumbers.contains($0) }
+    }
+
+    var chapterIntegrityStatusLabel: String {
+        if duplicateChapterNumbers.isEmpty && missingChapterNumbers.isEmpty {
+            return "目录连续"
+        }
+
+        var issues: [String] = []
+        if !missingChapterNumbers.isEmpty {
+            issues.append("缺 \(missingChapterNumbers.count) 章")
+        }
+        if !duplicateChapterNumbers.isEmpty {
+            issues.append("重 \(duplicateChapterNumbers.count) 处")
+        }
+        return issues.joined(separator: " · ")
+    }
+
     var sortedChapterDrafts: [ChapterDraft] {
         chapterDrafts.sorted(by: ChapterDraft.sortDescending)
     }
@@ -1128,6 +1278,29 @@ struct NovelProject: Identifiable, Codable {
             .count
     }
 
+    var savedChapterWordCount: Int {
+        chapterDrafts.reduce(0) { $0 + $1.wordCount }
+    }
+
+    var manuscriptWordCount: Int {
+        savedChapterWordCount + draftWordCount
+    }
+
+    var estimatedTargetWordCount: Int? {
+        Self.estimatedWordTarget(from: wordTargetText)
+            ?? Self.estimatedWordTarget(from: outlineGenerationProfile.expectedLength)
+    }
+
+    var completionPercentage: Int? {
+        guard let estimatedTargetWordCount, estimatedTargetWordCount > 0 else { return nil }
+        return min(999, Int((Double(manuscriptWordCount) / Double(estimatedTargetWordCount)) * 100))
+    }
+
+    var completionStatusLabel: String {
+        guard let completionPercentage else { return "未设定" }
+        return "\(completionPercentage)%"
+    }
+
     var draftParagraphCount: Int {
         let paragraphs = draftText
             .components(separatedBy: CharacterSet.newlines)
@@ -1173,6 +1346,77 @@ struct NovelProject: Identifiable, Codable {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .count
+    }
+
+    private static func estimatedWordTarget(from text: String) -> Int? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let nsText = trimmed as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+        let rangePattern = #"(\d+(?:\.\d+)?)\s*(万|千)?\s*[-~—–至到]\s*(\d+(?:\.\d+)?)\s*(万|千)?\s*字?"#
+        let singlePattern = #"(\d+(?:\.\d+)?)\s*(万|千)?\s*字"#
+        let projectKeywords = ["全书", "全文", "总字数", "总计", "预计", "完本", "全稿"]
+
+        func normalizedValue(_ numberText: String, unit: String?) -> Int? {
+            guard let base = Double(numberText) else { return nil }
+            switch unit {
+            case "万":
+                return Int(base * 10_000)
+            case "千":
+                return Int(base * 1_000)
+            default:
+                return Int(base)
+            }
+        }
+
+        func context(for range: NSRange) -> String {
+            let lowerBound = max(0, range.location - 14)
+            let upperBound = min(nsText.length, range.location + range.length + 14)
+            return nsText.substring(with: NSRange(location: lowerBound, length: upperBound - lowerBound))
+        }
+
+        if let rangeExpression = try? NSRegularExpression(pattern: rangePattern) {
+            let candidates = rangeExpression.matches(in: trimmed, range: fullRange).compactMap { match -> (value: Int, score: Int)? in
+                guard match.numberOfRanges >= 5 else { return nil }
+                let lowerText = nsText.substring(with: match.range(at: 1))
+                let lowerUnit = match.range(at: 2).location == NSNotFound ? nil : nsText.substring(with: match.range(at: 2))
+                let upperText = nsText.substring(with: match.range(at: 3))
+                let upperUnit = match.range(at: 4).location == NSNotFound ? lowerUnit : nsText.substring(with: match.range(at: 4))
+                guard
+                    let lower = normalizedValue(lowerText, unit: lowerUnit),
+                    let upper = normalizedValue(upperText, unit: upperUnit)
+                else { return nil }
+                let value = max(lower, upper)
+                let score = projectKeywords.contains(where: context(for: match.range).contains) ? 2 : 1
+                return (value, score)
+            }
+
+            if let best = candidates.max(by: { lhs, rhs in
+                lhs.score == rhs.score ? lhs.value < rhs.value : lhs.score < rhs.score
+            }) {
+                return best.value
+            }
+        }
+
+        if let singleExpression = try? NSRegularExpression(pattern: singlePattern) {
+            let candidates = singleExpression.matches(in: trimmed, range: fullRange).compactMap { match -> (value: Int, score: Int)? in
+                guard match.numberOfRanges >= 3 else { return nil }
+                let numberText = nsText.substring(with: match.range(at: 1))
+                let unit = match.range(at: 2).location == NSNotFound ? nil : nsText.substring(with: match.range(at: 2))
+                guard let value = normalizedValue(numberText, unit: unit), value >= 10_000 else { return nil }
+                let score = projectKeywords.contains(where: context(for: match.range).contains) ? 2 : 1
+                return (value, score)
+            }
+
+            if let best = candidates.max(by: { lhs, rhs in
+                lhs.score == rhs.score ? lhs.value < rhs.value : lhs.score < rhs.score
+            }) {
+                return best.value
+            }
+        }
+
+        return nil
     }
 }
 

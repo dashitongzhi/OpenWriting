@@ -224,7 +224,7 @@ final class AppState {
     }
 
     var totalDraftWordCount: Int {
-        recentProjects.reduce(0) { $0 + $1.draftWordCount }
+        recentProjects.reduce(0) { $0 + $1.manuscriptWordCount }
     }
 
     var totalReferenceDocumentCount: Int {
@@ -233,6 +233,10 @@ final class AppState {
 
     var totalWrittenChapters: Int {
         recentProjects.reduce(0) { $0 + $1.writtenChapters }
+    }
+
+    var totalSavedChapterWordCount: Int {
+        recentProjects.reduce(0) { $0 + $1.savedChapterWordCount }
     }
 
     var activeProject: NovelProject? {
@@ -641,9 +645,17 @@ final class AppState {
             let timestamp = Self.currentTimestampLabel()
 
             if let existingIndex = project.chapterDrafts.firstIndex(where: { $0.chapterNumber == normalizedChapterNumber }) {
+                let hasMeaningfulChange = project.chapterDrafts[existingIndex].chapterTitle != normalizedChapterTitle
+                    || project.chapterDrafts[existingIndex].content != trimmedDraft
+                let previousSnapshot = hasMeaningfulChange
+                    ? project.chapterDrafts[existingIndex].versionSnapshot(reason: "保存前自动版本", savedAt: timestamp)
+                    : nil
                 project.chapterDrafts[existingIndex].chapterTitle = normalizedChapterTitle
                 project.chapterDrafts[existingIndex].content = trimmedDraft
                 project.chapterDrafts[existingIndex].savedAt = timestamp
+                if let previousSnapshot {
+                    project.chapterDrafts[existingIndex].versionHistory.insert(previousSnapshot, at: 0)
+                }
                 let updatedChapterDraft = project.chapterDrafts[existingIndex]
                 project.chapterDrafts.sort(by: ChapterDraft.sortDescending)
                 result = .updated(updatedChapterDraft)
@@ -719,10 +731,18 @@ final class AppState {
 
             let normalizedTitle = Self.normalizedChapterTitle(title)
             let timestamp = Self.currentTimestampLabel()
+            let hasMeaningfulChange = project.chapterDrafts[existingIndex].chapterTitle != normalizedTitle
+                || project.chapterDrafts[existingIndex].content != trimmedContent
+            let previousSnapshot = hasMeaningfulChange
+                ? project.chapterDrafts[existingIndex].versionSnapshot(reason: "手动编辑前自动版本", savedAt: timestamp)
+                : nil
 
             project.chapterDrafts[existingIndex].chapterTitle = normalizedTitle
             project.chapterDrafts[existingIndex].content = trimmedContent
             project.chapterDrafts[existingIndex].savedAt = timestamp
+            if let previousSnapshot {
+                project.chapterDrafts[existingIndex].versionHistory.insert(previousSnapshot, at: 0)
+            }
 
             let chapterNumber = project.chapterDrafts[existingIndex].chapterNumber
             let updated = project.chapterDrafts[existingIndex]
@@ -739,6 +759,46 @@ final class AppState {
         }
 
         return updatedDraft
+    }
+
+    @discardableResult
+    func restoreChapterVersion(
+        _ versionID: ChapterDraftVersion.ID,
+        chapterDraftID: ChapterDraft.ID,
+        for projectID: NovelProject.ID
+    ) -> ChapterDraft? {
+        var restoredDraft: ChapterDraft?
+
+        updateProject(projectID) { project in
+            guard let existingIndex = project.chapterDrafts.firstIndex(where: { $0.id == chapterDraftID }),
+                  let version = project.chapterDrafts[existingIndex].versionHistory.first(where: { $0.id == versionID })
+            else { return }
+
+            let timestamp = Self.currentTimestampLabel()
+            let currentSnapshot = project.chapterDrafts[existingIndex].versionSnapshot(
+                reason: "回滚前自动版本",
+                savedAt: timestamp
+            )
+
+            project.chapterDrafts[existingIndex].chapterTitle = version.chapterTitle
+            project.chapterDrafts[existingIndex].content = version.content
+            project.chapterDrafts[existingIndex].savedAt = timestamp
+            project.chapterDrafts[existingIndex].versionHistory.insert(currentSnapshot, at: 0)
+
+            let restored = project.chapterDrafts[existingIndex]
+            project.chapterDrafts.sort(by: ChapterDraft.sortDescending)
+
+            if project.currentChapterNumber == restored.chapterNumber {
+                project.currentChapterTitle = restored.chapterTitle
+                project.draftText = restored.content
+            }
+
+            project.writtenChapters = max(project.writtenChapters, restored.chapterNumber)
+            project.updatedAt = timestamp
+            restoredDraft = restored
+        }
+
+        return restoredDraft
     }
 
     func touchProject(_ projectID: NovelProject.ID) {
@@ -796,6 +856,91 @@ final class AppState {
             project.globalMemoryUpdatedAt = Self.currentTimestampLabel()
             project.updatedAt = Self.currentTimestampLabel()
         }
+    }
+
+    func searchLongformProject(_ query: String, in projectID: NovelProject.ID, limit: Int = 60) -> [LongformSearchResult] {
+        guard let project = project(for: projectID) else { return [] }
+        let tokens = Self.searchTokens(from: query)
+        guard !tokens.isEmpty else { return [] }
+
+        var results: [LongformSearchResult] = []
+
+        for chapter in project.chapterDrafts {
+            let haystack = "\(chapter.chapterSummary)\n\(chapter.content)"
+            let score = Self.searchScore(in: haystack, tokens: tokens)
+            guard score > 0 else { continue }
+
+            results.append(
+                LongformSearchResult(
+                    id: "chapter-\(chapter.id)",
+                    kind: .chapter,
+                    title: chapter.chapterSummary,
+                    subtitle: "\(chapter.wordCount) 字 · \(chapter.savedAt)",
+                    excerpt: Self.searchExcerpt(from: haystack, tokens: tokens, limit: 180),
+                    score: score + 8,
+                    chapterID: chapter.id,
+                    referenceDocumentID: nil
+                )
+            )
+        }
+
+        for document in project.referenceDocuments {
+            let haystack = "\(document.title)\n\(document.content)"
+            let score = Self.searchScore(in: haystack, tokens: tokens)
+            guard score > 0 else { continue }
+
+            results.append(
+                LongformSearchResult(
+                    id: "reference-\(document.id)",
+                    kind: .reference,
+                    title: document.title,
+                    subtitle: "\(document.category.title) · \(document.wordCount) 字",
+                    excerpt: Self.searchExcerpt(from: haystack, tokens: tokens, limit: 180),
+                    score: score + 5,
+                    chapterID: nil,
+                    referenceDocumentID: document.id
+                )
+            )
+        }
+
+        let outlineSources: [(LongformSearchResultKind, String, String, String)] = [
+            (.outline, "作品大纲", "大纲设定", project.outlineText),
+            (.outline, "章节树总结", project.outlineSummaryStatusLabel, project.outlineSummary),
+            (.outline, "章节骨架拆解", project.structureStatusLabel, project.structureNotes),
+            (.outline, "场景推进记录", project.sceneProgressStatusLabel, project.sceneProgressNotes),
+            (.outline, "角色弧线记录", project.characterArcStatusLabel, project.characterArcNotes),
+            (.outline, "伏笔与回收记录", project.foreshadowStatusLabel, project.foreshadowNotes),
+            (.outline, "分卷/阶段规划", project.volumePlanStatusLabel, project.volumePlanNotes),
+            (.outline, "在途线索", project.activeThreadsStatusLabel, project.activeThreadsNotes),
+            (.memory, "全局记忆", project.globalMemoryStatusLabel, project.continuityNotes)
+        ]
+
+        for (kind, title, subtitle, text) in outlineSources {
+            let score = Self.searchScore(in: text, tokens: tokens)
+            guard score > 0 else { continue }
+            results.append(
+                LongformSearchResult(
+                    id: "\(kind.rawValue)-\(title)",
+                    kind: kind,
+                    title: title,
+                    subtitle: subtitle,
+                    excerpt: Self.searchExcerpt(from: text, tokens: tokens, limit: 180),
+                    score: score + 3,
+                    chapterID: nil,
+                    referenceDocumentID: nil
+                )
+            )
+        }
+
+        return results
+            .sorted {
+                if $0.score == $1.score {
+                    return $0.title.localizedStandardCompare($1.title) == .orderedAscending
+                }
+                return $0.score > $1.score
+            }
+            .prefix(limit)
+            .map { $0 }
     }
 
     func project(for projectID: NovelProject.ID) -> NovelProject? {
@@ -926,6 +1071,62 @@ final class AppState {
     private static func normalizedChapterTitle(_ title: String) -> String {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "未命名章节" : trimmed
+    }
+
+    private static func searchTokens(from query: String) -> [String] {
+        var seen = Set<String>()
+        return query
+            .components(separatedBy: CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters).union(.symbols))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { token in
+                guard token.count >= 2 else { return false }
+                let normalized = token.lowercased()
+                guard !seen.contains(normalized) else { return false }
+                seen.insert(normalized)
+                return true
+            }
+            .prefix(12)
+            .map { String($0) }
+    }
+
+    private static func searchScore(in text: String, tokens: [String]) -> Int {
+        guard !text.isEmpty else { return 0 }
+        let lowercasedText = text.lowercased()
+        return tokens.reduce(0) { score, token in
+            let lowercasedToken = token.lowercased()
+            var tokenScore = 0
+            var searchRange = lowercasedText.startIndex..<lowercasedText.endIndex
+            while let range = lowercasedText.range(of: lowercasedToken, options: [], range: searchRange) {
+                tokenScore += max(1, lowercasedToken.count)
+                searchRange = range.upperBound..<lowercasedText.endIndex
+            }
+            return score + tokenScore
+        }
+    }
+
+    private static func searchExcerpt(from text: String, tokens: [String], limit: Int) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > limit else { return trimmed }
+
+        let lowercasedText = trimmed.lowercased()
+        let firstRange = tokens
+            .compactMap { lowercasedText.range(of: $0.lowercased()) }
+            .min { lhs, rhs in
+                lhs.lowerBound < rhs.lowerBound
+            }
+
+        guard let firstRange else {
+            return String(trimmed.prefix(limit)) + "..."
+        }
+
+        let lowerDistance = lowercasedText.distance(from: lowercasedText.startIndex, to: firstRange.lowerBound)
+        let startOffset = max(0, lowerDistance - limit / 3)
+        let endOffset = min(trimmed.count, startOffset + limit)
+        let start = trimmed.index(trimmed.startIndex, offsetBy: startOffset)
+        let end = trimmed.index(trimmed.startIndex, offsetBy: endOffset)
+        let prefix = startOffset == 0 ? "" : "..."
+        let suffix = endOffset == trimmed.count ? "" : "..."
+        return prefix + String(trimmed[start..<end]) + suffix
     }
 
     private static func defaultNextChapterFocus(after chapterDraft: ChapterDraft, storyLength: NovelLength) -> String {
