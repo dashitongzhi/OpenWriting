@@ -221,14 +221,12 @@ extension NovelProject {
             sections.append("【结构化记忆】\n\(buckets.formattedForContext)")
         }
 
-        // Legacy continuity notes (backward compat)
-        if hasContinuityNotes {
-            sections.append("【全局记忆】\n\(continuityNotes)")
-        }
-
-        // Global memory snapshot
+        // Global memory snapshot (parsed from continuityNotes) — preferred over raw notes
         if globalMemorySnapshot.hasStructuredContent {
             sections.append("【记忆快照】\n\(globalMemorySnapshot.formattedText)")
+        } else if hasContinuityNotes {
+            // Fallback to raw continuity notes only when snapshot lacks structured content
+            sections.append("【全局记忆】\n\(continuityNotes)")
         }
 
         return sections.isEmpty ? "暂无记忆上下文。" : sections.joined(separator: "\n\n")

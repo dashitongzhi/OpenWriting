@@ -156,7 +156,7 @@ struct QualityReviewReport: Codable, Identifiable {
         self.reviewedAt = Date()
         self.dimensionResults = dimensionResults
         let scores = dimensionResults.map { $0.score }
-        self.overallScore = scores.isEmpty ? 0 : scores.reduce(0, +) / scores.count
+        self.overallScore = scores.isEmpty ? 0 : Int((Double(scores.reduce(0, +)) / Double(scores.count)).rounded())
         self.overallSummary = overallSummary
     }
 

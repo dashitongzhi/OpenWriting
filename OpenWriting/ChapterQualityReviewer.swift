@@ -516,7 +516,7 @@ enum UnifiedQualityReviewer {
 
     private static func fallbackParse(from text: String) -> ChapterReviewResult {
         return ChapterReviewResult(
-            overallScore: 75,
+            overallScore: 0,
             dimensionScores: [:],
             issues: [ReviewIssue(
                 dimension: .aiFlavor,

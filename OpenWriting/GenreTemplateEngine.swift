@@ -962,12 +962,64 @@ func detectNarrativeStage(
 +// MARK: - Composite Genre Support
 +
 +extension GenreTemplateLibrary {
-+    /// Resolve a composite genre string like "都市异能+规则怪谈" into a merged template
-+    static func resolveComposite(_ input: String) -> GenreTemplate {
-+        let separators: [Character] = ["+", "/", "、", "与"]
-+        let parts = input.split { separators.contains($0) }
-+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-+            .filter { !$0.isEmpty }
+    /// Check if "与" is used as a genre separator (short strings on each side, max 6 chars).
+    /// Avoids splitting natural text like "奇幻与冒险的旅程".
+    private static func hasYuSeparator(_ text: String) -> Bool {
+        guard let range = text.range(of: "与") else { return false }
+        let leftPart = String(text[text.startIndex..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        var rightPart = ""
+        var i = range.upperBound
+        while i < text.endIndex {
+            let char = text[i]
+            if char == "+" || char == "/" || char == "、" || char == "与" { break }
+            rightPart.append(char)
+            i = text.index(after: i)
+        }
+        let rightTrimmed = rightPart.trimmingCharacters(in: .whitespacesAndNewlines)
+        return leftPart.count <= 6 && rightTrimmed.count <= 6
+    }
+
+    /// Split composite genre string, treating "与" as separator only when both sides are short (≤6 chars).
+    private static func splitCompositeGenre(_ input: String) -> [String] {
+        var parts: [String] = []
+        var current = ""
+        var i = input.startIndex
+        while i < input.endIndex {
+            let char = input[i]
+            if char == "+" || char == "/" || char == "、" {
+                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { parts.append(trimmed) }
+                current = ""
+            } else if char == "与" {
+                let leftTrimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                var rightPart = ""
+                var j = input.index(after: i)
+                while j < input.endIndex {
+                    let rChar = input[j]
+                    if rChar == "+" || rChar == "/" || rChar == "、" || rChar == "与" { break }
+                    rightPart.append(rChar)
+                    j = input.index(after: j)
+                }
+                let rightTrimmed = rightPart.trimmingCharacters(in: .whitespacesAndNewlines)
+                if leftTrimmed.count <= 6 && rightTrimmed.count <= 6 {
+                    if !leftTrimmed.isEmpty { parts.append(leftTrimmed) }
+                    current = ""
+                } else {
+                    current.append(char)
+                }
+            } else {
+                current.append(char)
+            }
+            i = input.index(after: i)
+        }
+        let lastTrimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !lastTrimmed.isEmpty { parts.append(lastTrimmed) }
+        return parts
+    }
+
+    /// Resolve a composite genre string like "都市异能+规则怪谈" into a merged template
+    static func resolveComposite(_ input: String) -> GenreTemplate {
+        let parts = splitCompositeGenre(input)
 +
 +        guard parts.count > 1 else { return template(for: input) }
 +
@@ -1017,7 +1069,7 @@ func detectNarrativeStage(
 +        let trimmed = projectGenre.trimmingCharacters(in: .whitespacesAndNewlines)
 +        guard !trimmed.isEmpty else { return defaultTemplate }
 +
-+        let hasComposite = trimmed.contains("+") || trimmed.contains("/") || trimmed.contains("与")
++        let hasComposite = trimmed.contains("+") || trimmed.contains("/") || hasYuSeparator(trimmed)
 +        if hasComposite { return resolveComposite(trimmed) }
 +
 +        return template(for: trimmed)

@@ -167,6 +167,12 @@ extension AIWritingService {
             limit: 1_400
         )
 
+        let narrativeStage = detectNarrativeStage(
+            currentChapter: project.currentChapterNumber,
+            totalChapters: nil,
+            storyLength: project.storyLength
+        )
+
         return """
         项目名称：\(project.title)
         类型：\(project.genre)
@@ -236,8 +242,8 @@ extension AIWritingService {
         \(GenreTemplateLibrary.autoDetect(from: project.genre).formattedForPrompt)
 
         ===== 叙事阶段 =====
-        \(detectNarrativeStage(currentChapter: project.currentChapterNumber, totalChapters: nil, storyLength: project.storyLength).pacingDirective)
-        \(detectNarrativeStage(currentChapter: project.currentChapterNumber, totalChapters: nil, storyLength: project.storyLength).contextWeightHint)
+        \(narrativeStage.pacingDirective)
+        \(narrativeStage.contextWeightHint)
 
         输出要求：
         \(length.instruction)
