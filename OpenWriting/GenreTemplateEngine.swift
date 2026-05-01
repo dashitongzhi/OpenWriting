@@ -453,45 +453,7 @@ enum GenreTemplateLibrary {
                 ]
             ),
 
-            // MARK: Legacy-migrated templates (16 genres)
-
-            // === 高武 ===
-            migrateLegacyTemplate(LegacyGenreTemplateLibrary.lookup("高武")!),
-            // === 西幻 ===
-            migrateLegacyTemplate(LegacyGenreTemplateLibrary.lookup("西幻")!),
-            // === 无限流 ===
-            migrateLegacyTemplate(LegacyGenreTemplateLibrary.lookup("无限流")!),
-            // === 末世 ===
-            migrateLegacyTemplate(LegacyGenreTemplateLibrary.lookup("末世")!),
-            // === 科幻 ===
-            migrateLegacyTemplate(LegacyGenreTemplateLibrary.lookup("科幻")!),
-            // === 都市日常 ===
-            migrateLegacyTemplate(LegacyGenreTemplateLibrary.lookup("都市日常")!),
-            // === 都市脑洞 ===
-            migrateLegacyTemplate(LegacyGenreTemplateLibrary.lookup("都市脑洞")!),
-            // === 电竞 ===
-            migrateLegacyTemplate(LegacyGenreTemplateLibrary.lookup("电竞")!),
-            // === 直播文 ===
-            migrateLegacyTemplate(LegacyGenreTemplateLibrary.lookup("直播文")!),
-            // === 现实题材 ===
-            migrateLegacyTemplate(LegacyGenreTemplateLibrary.lookup("现实题材")!),
-            // === 宫斗宅斗 ===
-            migrateLegacyTemplate(LegacyGenreTemplateLibrary.lookup("宫斗宅斗")!),
-            // === 豪门总裁 ===
-            migrateLegacyTemplate(LegacyGenreTemplateLibrary.lookup("豪门总裁")!),
-            // === 职场婚恋 ===
-            migrateLegacyTemplate(LegacyGenreTemplateLibrary.lookup("职场婚恋")!),
-            // === 幻想言情 ===
-            migrateLegacyTemplate(LegacyGenreTemplateLibrary.lookup("幻想言情")!),
-            // === 悬疑脑洞 ===
-            migrateLegacyTemplate(LegacyGenreTemplateLibrary.lookup("悬疑脑洞")!),
-            // === 悬疑灵异 ===
-            migrateLegacyTemplate(LegacyGenreTemplateLibrary.lookup("悬疑灵异")!),
-            // === 克苏鲁 ===
-            migrateLegacyTemplate(LegacyGenreTemplateLibrary.lookup("克苏鲁")!),
-            // === 狗血言情 ===
-            migrateLegacyTemplate(LegacyGenreTemplateLibrary.lookup("狗血言情")!),
-
+        ] + migrateLegacyTemplates() + [
             // MARK: Additional romance/mystery genres (no legacy source)
 
             // === 民国言情 ===
@@ -851,7 +813,7 @@ enum NarrativeStage: String, CaseIterable, Codable {
 func detectNarrativeStage(
     currentChapter: Int,
     totalChapters: Int?,
-    storyLength: StoryLength,
+    storyLength: NovelLength,
     outlineText: String = ""
 ) -> NarrativeStage {
     if let total = totalChapters, total > 0 {
@@ -867,51 +829,32 @@ func detectNarrativeStage(
     }
 
     switch storyLength {
-    case .shortStory:
-        if currentChapter <= 1 { return .openingHook }
-        if currentChapter <= 2 { return .risingConflict }
-        if currentChapter <= 3 { return .climax }
-        return .denouement
-    case .novelette:
-        if currentChapter <= 2 { return .openingHook }
-        if currentChapter <= 4 { return .risingConflict }
-        if currentChapter <= 6 { return .climaxBuildup }
-        if currentChapter <= 8 { return .climax }
-        return .fallingAction
-    case .shortNovel:
+    case .short:
         if currentChapter <= 3 { return .openingHook }
-        if currentChapter <= 8 { return .worldSetup }
-        if currentChapter <= 15 { return .risingConflict }
-        if currentChapter <= 18 { return .midpointTurn }
-        if currentChapter <= 22 { return .climaxBuildup }
-        if currentChapter <= 25 { return .climax }
+        if currentChapter <= 5 { return .worldSetup }
+        if currentChapter <= 8 { return .risingConflict }
+        if currentChapter <= 10 { return .midpointTurn }
+        if currentChapter <= 12 { return .climaxBuildup }
+        if currentChapter <= 15 { return .climax }
         return .fallingAction
-    case .novel:
+    case .medium:
         if currentChapter <= 5 { return .openingHook }
         if currentChapter <= 15 { return .worldSetup }
-        if currentChapter <= 40 { return .risingConflict }
-        if currentChapter <= 50 { return .midpointTurn }
-        if currentChapter <= 70 { return .climaxBuildup }
-        if currentChapter <= 85 { return .climax }
+        if currentChapter <= 30 { return .risingConflict }
+        if currentChapter <= 40 { return .midpointTurn }
+        if currentChapter <= 50 { return .climaxBuildup }
+        if currentChapter <= 60 { return .climax }
         return .fallingAction
-    case .longNovel:
+    case .long:
         if currentChapter <= 8 { return .openingHook }
-+        if currentChapter <= 25 { return .worldSetup }
-+        if currentChapter <= 60 { return .risingConflict }
-+        if currentChapter <= 80 { return .midpointTurn }
-+        if currentChapter <= 100 { return .climaxBuildup }
-+        if currentChapter <= 120 { return .climax }
-+        return .fallingAction
-+    case .epic:
-+        if currentChapter <= 10 { return .openingHook }
-+        if currentChapter <= 35 { return .worldSetup }
-+        if currentChapter <= 90 { return .risingConflict }
-+        if currentChapter <= 120 { return .midpointTurn }
-+        if currentChapter <= 160 { return .climaxBuildup }
-+        if currentChapter <= 190 { return .climax }
-+        return .fallingAction
-+    }
-+}
+        if currentChapter <= 25 { return .worldSetup }
+        if currentChapter <= 60 { return .risingConflict }
+        if currentChapter <= 80 { return .midpointTurn }
+        if currentChapter <= 100 { return .climaxBuildup }
+        if currentChapter <= 120 { return .climax }
+        return .fallingAction
+    }
+}
 +
 +// MARK: - Legacy Template Migration Helpers
 +
@@ -995,6 +938,25 @@ func detectNarrativeStage(
 +        writingDirectives: directives,
 +        antiPatterns: antiPatterns
 +    )
++}
+
++/// Safely migrate all legacy templates — skips any missing keys instead of crashing.
++private func migrateLegacyTemplates() -> [GenreTemplate] {
++    let legacyNames = [
++        "高武", "西幻", "无限流", "末世", "科幻",
++        "都市日常", "都市脑洞", "电竞", "直播文", "现实题材",
++        "宫斗宅斗", "豪门总裁", "职场婚恋", "幻想言情",
++        "悬疑脑洞", "悬疑灵异", "克苏鲁", "狗血言情",
++    ]
++    return legacyNames.compactMap { name -> GenreTemplate? in
++        guard let legacy = LegacyGenreTemplateLibrary.lookup(name) else {
++            #if DEBUG
++            print("[GenreTemplateEngine] Warning: legacy template '\(name)' not found, skipping")
++            #endif
++            return nil
++        }
++        return migrateLegacyTemplate(legacy)
++    }
 +}
 +
 +// MARK: - Composite Genre Support

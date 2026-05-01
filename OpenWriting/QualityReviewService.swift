@@ -200,11 +200,17 @@ struct QualityReviewReport: Codable, Identifiable {
     }
 
     /// Whether the chapter passes (no critical issues, score >= 6).
+    /// Handles both legacy 1-10 scale and unified 0-100 scale.
+    /// When constructed from ChapterReviewResult, overallScore is 0-100;
+    /// when computed from legacy dimensionResults, it is 1-10.
     var isPassed: Bool {
         let hasCritical = dimensionResults.contains { result in
             result.issues.contains { $0.severity == .critical }
         }
-        return !hasCritical && overallScore >= 6
+        // Detect scale: if any dimension score > 10, it's the unified 0-100 scale.
+        let isUnifiedScale = dimensionResults.contains { $0.score > 10 }
+        let threshold = isUnifiedScale ? 60 : 6
+        return !hasCritical && overallScore >= threshold
     }
 
     /// All issues sorted by severity.

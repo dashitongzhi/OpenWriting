@@ -7,22 +7,59 @@ import Foundation
 
 extension NovelProject {
 
+    // MARK: - In-Memory Cache (avoids repeated JSON decoding on every property access)
+
+    private static let cacheLock = NSLock()
+    private static var memoryBucketsCache: [String: MemoryBuckets] = [:]
+    private static var strandWeaveCache: [String: StrandWeaveState] = [:]
+    private static var antiPatternsCache: [String: [String]] = [:]
+    private static var lastReviewCache: [String: ChapterReviewResult?] = [:]
+    private static var lastReviewCacheLoaded: Set<String> = []
+
+    /// Clear all cached data for a given project ID (called on project deletion).
+    static func clearIntegrationCache(for projectID: String) {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        memoryBucketsCache.removeValue(forKey: projectID)
+        strandWeaveCache.removeValue(forKey: projectID)
+        antiPatternsCache.removeValue(forKey: projectID)
+        lastReviewCache.removeValue(forKey: projectID)
+        lastReviewCacheLoaded.remove(projectID)
+    }
+
     // MARK: - Memory Buckets
 
     /// Structured memory buckets, replacing/supplementing the flat continuityNotes.
     var memoryBuckets: MemoryBuckets {
         get {
-            // Try to load from UserDefaults keyed by project ID
-            if let data = UserDefaults.standard.data(forKey: "memoryBuckets_\(id)"),
-               let buckets = try? JSONDecoder().decode(MemoryBuckets.self, from: data) {
-                return buckets
+            let pid = id
+            Self.cacheLock.lock()
+            if let cached = Self.memoryBucketsCache[pid] {
+                Self.cacheLock.unlock()
+                return cached
             }
-            // Migrate from existing GlobalMemorySnapshot
-            return MemoryBuckets.migrate(from: globalMemorySnapshot, currentChapter: writtenChapters)
+            Self.cacheLock.unlock()
+
+            let decoded: MemoryBuckets
+            if let data = UserDefaults.standard.data(forKey: "memoryBuckets_\(pid)"),
+               let buckets = try? JSONDecoder().decode(MemoryBuckets.self, from: data) {
+                decoded = buckets
+            } else {
+                decoded = MemoryBuckets.migrate(from: globalMemorySnapshot, currentChapter: writtenChapters)
+            }
+
+            Self.cacheLock.lock()
+            Self.memoryBucketsCache[pid] = decoded
+            Self.cacheLock.unlock()
+            return decoded
         }
         set {
+            let pid = id
+            Self.cacheLock.lock()
+            Self.memoryBucketsCache[pid] = newValue
+            Self.cacheLock.unlock()
             if let data = try? JSONEncoder().encode(newValue) {
-                UserDefaults.standard.set(data, forKey: "memoryBuckets_\(id)")
+                UserDefaults.standard.set(data, forKey: "memoryBuckets_\(pid)")
             }
         }
     }
@@ -31,15 +68,34 @@ extension NovelProject {
 
     var strandWeaveState: StrandWeaveState {
         get {
-            if let data = UserDefaults.standard.data(forKey: "strandWeave_\(id)"),
-               let state = try? JSONDecoder().decode(StrandWeaveState.self, from: data) {
-                return state
+            let pid = id
+            Self.cacheLock.lock()
+            if let cached = Self.strandWeaveCache[pid] {
+                Self.cacheLock.unlock()
+                return cached
             }
-            return .empty
+            Self.cacheLock.unlock()
+
+            let decoded: StrandWeaveState
+            if let data = UserDefaults.standard.data(forKey: "strandWeave_\(pid)"),
+               let state = try? JSONDecoder().decode(StrandWeaveState.self, from: data) {
+                decoded = state
+            } else {
+                decoded = .empty
+            }
+
+            Self.cacheLock.lock()
+            Self.strandWeaveCache[pid] = decoded
+            Self.cacheLock.unlock()
+            return decoded
         }
         set {
+            let pid = id
+            Self.cacheLock.lock()
+            Self.strandWeaveCache[pid] = newValue
+            Self.cacheLock.unlock()
             if let data = try? JSONEncoder().encode(newValue) {
-                UserDefaults.standard.set(data, forKey: "strandWeave_\(id)")
+                UserDefaults.standard.set(data, forKey: "strandWeave_\(pid)")
             }
         }
     }
@@ -48,17 +104,39 @@ extension NovelProject {
 
     var lastReviewResult: ChapterReviewResult? {
         get {
-            if let data = UserDefaults.standard.data(forKey: "lastReview_\(id)"),
-               let result = try? JSONDecoder().decode(ChapterReviewResult.self, from: data) {
-                return result
+            let pid = id
+            Self.cacheLock.lock()
+            if Self.lastReviewCacheLoaded.contains(pid) {
+                let cached = Self.lastReviewCache[pid]
+                Self.cacheLock.unlock()
+                return cached ?? nil
             }
-            return nil
+            Self.cacheLock.unlock()
+
+            let decoded: ChapterReviewResult?
+            if let data = UserDefaults.standard.data(forKey: "lastReview_\(pid)"),
+               let result = try? JSONDecoder().decode(ChapterReviewResult.self, from: data) {
+                decoded = result
+            } else {
+                decoded = nil
+            }
+
+            Self.cacheLock.lock()
+            Self.lastReviewCache[pid] = decoded
+            Self.lastReviewCacheLoaded.insert(pid)
+            Self.cacheLock.unlock()
+            return decoded
         }
         set {
+            let pid = id
+            Self.cacheLock.lock()
+            Self.lastReviewCache[pid] = newValue
+            Self.lastReviewCacheLoaded.insert(pid)
+            Self.cacheLock.unlock()
             if let value = newValue, let data = try? JSONEncoder().encode(value) {
-                UserDefaults.standard.set(data, forKey: "lastReview_\(id)")
+                UserDefaults.standard.set(data, forKey: "lastReview_\(pid)")
             } else {
-                UserDefaults.standard.removeObject(forKey: "lastReview_\(id)")
+                UserDefaults.standard.removeObject(forKey: "lastReview_\(pid)")
             }
         }
     }
@@ -67,10 +145,27 @@ extension NovelProject {
 
     var accumulatedAntiPatterns: [String] {
         get {
-            UserDefaults.standard.stringArray(forKey: "antiPatterns_\(id)") ?? []
+            let pid = id
+            Self.cacheLock.lock()
+            if let cached = Self.antiPatternsCache[pid] {
+                Self.cacheLock.unlock()
+                return cached
+            }
+            Self.cacheLock.unlock()
+
+            let decoded = UserDefaults.standard.stringArray(forKey: "antiPatterns_\(pid)") ?? []
+
+            Self.cacheLock.lock()
+            Self.antiPatternsCache[pid] = decoded
+            Self.cacheLock.unlock()
+            return decoded
         }
         set {
-            UserDefaults.standard.set(newValue, forKey: "antiPatterns_\(id)")
+            let pid = id
+            Self.cacheLock.lock()
+            Self.antiPatternsCache[pid] = newValue
+            Self.cacheLock.unlock()
+            UserDefaults.standard.set(newValue, forKey: "antiPatterns_\(pid)")
         }
     }
 

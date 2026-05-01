@@ -380,6 +380,20 @@ final class AppState {
     func deleteProject(_ projectID: NovelProject.ID) {
         guard recentProjects.contains(where: { $0.id == projectID }) else { return }
 
+        // MAJOR #4: Clean up orphaned UserDefaults keys for this project
+        let keysToRemove = [
+            "memoryBuckets_\(projectID)",
+            "strandWeave_\(projectID)",
+            "lastReview_\(projectID)",
+            "antiPatterns_\(projectID)",
+        ]
+        for key in keysToRemove {
+            userDefaults.removeObject(forKey: key)
+        }
+
+        // Clear in-memory cache for this project
+        NovelProject.clearIntegrationCache(for: projectID)
+
         recentProjects.removeAll { $0.id == projectID }
 
         if projectSpaceScrollTarget == projectID {
@@ -1085,12 +1099,38 @@ final class AppState {
         storyFacts: [MemoryItem]
     ) {
         let nonNameWords: Set<String> = [
-            "什么", "怎么", "知道", "已经", "没有", "一个", "不是", "可能",
-            "可以", "这个", "那个", "他们", "我们", "你们", "自己", "因为",
-            "所以", "但是", "如果", "虽然", "或者", "然后", "现在", "这里",
-            "那里", "时候", "起来", "出来", "下去", "过来", "一下", "一点",
-            "觉得", "应该", "需要", "希望", "还是", "就是", "只是", "不过",
-            "说话", "说道", "回答", "笑道", "道", "说", "答"
+            // Pronouns & demonstratives
+            "什么", "怎么", "那个", "这个", "他们", "我们", "你们", "自己",
+            "别人", "大家", "哪个", "哪些", "任何", "某个", "某些", "每个",
+            "谁", "哪", "哪位", "哪边", "哪儿", "哪里",
+            // Common verbs
+            "知道", "没有", "觉得", "需要", "希望", "认为", "相信", "明白",
+            "看见", "听到", "感到", "想起", "发现", "决定", "开始", "结束",
+            "离开", "回来", "过来", "出去", "起来", "下来", "上去", "出来",
+            "告诉", "说道", "回答", "笑道", "说话", "问道", "叹道", "怒道",
+            "冷声道", "轻声道", "淡淡道", "大声道", "低声道", "急道", "惊道",
+            "道", "说", "答", "叫", "喊", "笑", "哭", "叹", "问", "怒",
+            "想", "看", "听", "走", "来", "去", "到", "回", "出", "入",
+            "站", "坐", "躺", "拿", "放", "拉", "推", "打", "挡",
+            // Adverbs & conjunctions
+            "已经", "不是", "可能", "可以", "应该", "还是", "就是", "只是",
+            "不过", "因为", "所以", "但是", "如果", "虽然", "或者", "然后",
+            "忽然", "突然", "居然", "竟然", "果然", "依然", "仍然", "当然",
+            "自然", "显然", "似乎", "仿佛", "好像", "大概", "也许", "或许",
+            "几乎", "简直", "根本", "实在", "确实", "真正", "完全", "非常",
+            "特别", "尤其", "甚至", "至少", "至多", "反正", "总之", "否则",
+            "于是", "接着", "随后", "随即", "马上", "立刻", "立即", "赶紧",
+            "连忙", "急忙", "急忙", "渐渐", "慢慢", "悄悄", "偷偷", "默默",
+            // Time & location words
+            "现在", "刚才", "此时", "这时", "那时", "这里", "那里", "到处",
+            "时候", "一下", "一点", "一些", "许多", "很多", "所有", "全部",
+            "刚才", "方才", "之前", "之后", "以后", "以前", "将来", "未来",
+            "昨天", "今天", "明天", "前天", "后天",
+            // Measure words & particles
+            "一个", "两个", "几个", "那些", "这些", "每个", "各种", "各位",
+            "本人", "自身", "对方", "彼此", "互相", "一起", "一同", "单独",
+            // Sentence-final particles & fillers
+            "的话", "罢了", "而已", "算了", "好吧", "对了", "行了", "够了"
         ]
 
         // --- Characters from dialogue (supports both "" and "" quotes) ---
@@ -1255,9 +1295,15 @@ final class AppState {
         var timelineItems: [MemoryItem] = []
         let timeMarkers = [
             "黎明", "清晨", "早上", "上午", "中午", "下午",
-            "傍晚", "黄昏", "晚上", "深夜", "午夜",
+            "傍晚", "黄昏", "晚上", "深夜", "午夜", "凌晨",
+            "日出", "日落", "天亮", "天黑",
             "三天后", "第二天", "次日", "当日", "当晚",
-            "一周后", "一个月后", "一年后", "数日后", "数月后"
+            "一周后", "一个月后", "一年后", "数日后", "数月后",
+            "数年后", "半月后", "两周后", "数年后", "多年后",
+            "片刻后", "半晌", "一炷香", "一盏茶",
+            "过了许久", "过了很久", "不知过了多久",
+            "日复一日", "年复一年", "转眼间", "不知不觉",
+            "那一年", "这一年", "那日", "这日", "翌日"
         ]
 
         for marker in timeMarkers {
@@ -1288,7 +1334,7 @@ final class AppState {
                     count += 1
                     searchStart = range.upperBound
                 }
-                if count >= 1 {
+                if count >= 2 {
                     storyFactItems.append(MemoryItem(
                         category: .storyFact,
                         subject: marker,

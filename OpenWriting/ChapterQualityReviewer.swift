@@ -610,7 +610,7 @@ enum UnifiedQualityReviewer {
     private static func excerpt(_ text: String, limit: Int) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count > limit else { return trimmed.isEmpty ? "暂无" : trimmed }
-        return String(trimmed.prefix(limit)) + "…"
+        return "…" + String(trimmed.suffix(limit))
     }
 
     private static func normalized(_ text: String, fallback: String) -> String {
