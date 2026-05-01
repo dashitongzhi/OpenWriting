@@ -14,6 +14,12 @@ extension AIWritingService {
     4. 如果参考文本与当前项目冲突，以当前项目摘要、大纲、全局记忆和已有正文为准。
     5. 根据项目规模控制叙事：短篇要集中闭环，中篇要稳住阶段推进，长篇要维护分卷延展、长期伏笔和人物长期状态。
     6. 保持连续性，避免突然跳到未来情节、提前透支长期真相或重复已写内容。
+
+    \(AntiAIWritingGuide.formattedGuide)
+
+    \(CBNStructureGuide.formattedGuide)
+
+    \(NarrativeStageGuide.formattedGuide)
     """
 
     static let writingPlanSystemPrompt = """
@@ -226,6 +232,13 @@ extension AIWritingService {
         额外指令：
         \(normalized(additionalInstruction, fallback: "延续当前场景，不要跳章节。"))
 
+        ===== 题材配置 =====
+        \(GenreTemplateLibrary.autoDetect(from: project.genre).formattedForPrompt)
+
+        ===== 叙事阶段 =====
+        \(detectNarrativeStage(currentChapter: project.currentChapterNumber, totalChapters: nil, storyLength: project.storyLength).pacingDirective)
+        \(detectNarrativeStage(currentChapter: project.currentChapterNumber, totalChapters: nil, storyLength: project.storyLength).contextWeightHint)
+
         输出要求：
         \(length.instruction)
         必须保持与当前章节位置、角色口吻、时间线状态和伏笔进度一致。
@@ -272,6 +285,12 @@ extension AIWritingService {
         风格指纹：
         \(support.styleFingerprint)
 
+        题材配置：
+        \(GenreTemplateLibrary.autoDetect(from: project.genre).formattedForPrompt)
+
+        叙事阶段：
+        \(detectNarrativeStage(currentChapter: project.currentChapterNumber, totalChapters: nil, storyLength: project.storyLength).pacingDirective)
+
         相关参考文本：
         \(support.relevantReferences)
 
@@ -314,6 +333,9 @@ extension AIWritingService {
         风格指纹：
         \(support.styleFingerprint)
 
+        题材配置：
+        \(GenreTemplateLibrary.autoDetect(from: project.genre).formattedForPrompt)
+
         额外指令：
         \(normalized(additionalInstruction, fallback: "暂无额外指令。"))
 
@@ -349,6 +371,9 @@ extension AIWritingService {
 
         已有候选正文（不要重复）：
         \(draft)
+
+        ===== 题材配置 =====
+        \(GenreTemplateLibrary.autoDetect(from: project.genre).formattedForPrompt)
 
         输出要求：
         只输出补写部分，接在已有候选正文之后即可。
@@ -423,6 +448,9 @@ extension AIWritingService {
         最新保存章节：\(chapterDraft.chapterSummary)
         本章目标：\(project.chapterFocus)
 
+        题材配置：
+        \(GenreTemplateLibrary.autoDetect(from: project.genre).formattedForPrompt)
+
         作品大纲：
         \(bounded(project.outlineText, fallback: "暂无完整大纲。", limit: 3_600))
 
@@ -473,6 +501,9 @@ extension AIWritingService {
         当前章节标题参考：\(normalized(project.currentChapterTitle, fallback: "暂无"))
         本章目标：\(project.chapterFocus)
 
+        题材配置：
+        \(GenreTemplateLibrary.autoDetect(from: project.genre).formattedForPrompt)
+
         作品大纲：
         \(bounded(project.outlineText, fallback: "暂无完整大纲。", limit: 3_000))
 
@@ -501,6 +532,9 @@ extension AIWritingService {
         项目摘要：\(normalized(project.summary, fallback: "暂无项目摘要。"))
         现有大纲参考：
         \(normalized(project.outlineText, fallback: "暂无现成大纲，请从零开始生成。"))
+
+        题材配置：
+        \(GenreTemplateLibrary.autoDetect(from: project.genre).formattedForPrompt)
 
         规模要求：
         \(project.storyLength.outlineDirective)
@@ -550,6 +584,9 @@ extension AIWritingService {
         项目摘要：\(normalized(project.summary, fallback: "暂无项目摘要。"))
         当前保存章节：\(chapterDraft.chapterSummary)
         当前创作进度：已创作 \(project.writtenChapters) 章
+
+        题材配置：
+        \(GenreTemplateLibrary.autoDetect(from: project.genre).formattedForPrompt)
 
         现有全局记忆：
         \(bounded(project.continuityNotes, fallback: "暂无现成全局记忆，请根据本次保存章节建立第一版。", limit: 2_800))
@@ -640,19 +677,24 @@ extension AIWritingService {
         **类型**: \(template.category.rawValue)
         **简介**: \(template.description)
         
-        **世界观核心规则**:
-        \(template.worldRules.map { "- \($0)" }.joined(separator: "\n"))
+        **核心卖点**: \(template.coreSellingPoint)
         
-        **典型角色原型**:
-        \(template.characterArchetypes.map { "- \($0)" }.joined(separator: "\n"))
-        
-        **节奏指导**: \(template.pacingGuide)
+        **节奏配置**:
+        - 停滞阈值：\(template.stagnationThreshold) 章
+        - 铺垫容忍：\(template.setupTolerance.displayName)
+        - Strand 比例：Quest \(Int(template.strandConfig.questTarget * 100))% / Fire \(Int(template.strandConfig.fireTarget * 100))% / Constellation \(Int(template.strandConfig.constellationTarget * 100))%
         
         **常见 Hook 模式**:
-        \(template.hookPatterns.map { "- \($0)" }.joined(separator: "\n"))
+        \(template.preferredHookTypes.map { "- \($0.displayName)" }.joined(separator: "\n"))
         
         **爽点类型**:
-        \(template.pleasurePointTypes.map { "- \($0)" }.joined(separator: "\n"))
+        \(template.preferredCoolPointPatterns.map { "- \($0.displayName)" }.joined(separator: "\n"))
+
+        **写作指引**:
+        \(template.writingDirectives.map { "- \($0)" }.joined(separator: "\n"))
+
+        **避让模式**:
+        \(template.antiPatterns.map { "- \($0)" }.joined(separator: "\n"))
         """
     }
 

@@ -536,6 +536,44 @@ final class AppState {
         }
     }
 
+    func updateGenreTemplate(_ templateID: GenreTemplate.ID, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.genreTemplateId = templateID
+            if let template = GenreTemplateLibrary.allTemplates.first(where: { $0.id == templateID }) {
+                let config = template.strandConfig
+                var strandState = project.strandWeaveState
+                strandState.questTarget = config.questTarget
+                strandState.fireTarget = config.fireTarget
+                strandState.constellationTarget = config.constellationTarget
+                strandState.questMaxConsecutive = config.questMaxConsecutive
+                strandState.fireMaxGap = config.fireMaxGap
+                strandState.constellationMaxGap = config.constellationMaxGap
+                project.strandWeaveState = strandState
+            }
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func applyEnhancedWritingUpdate(
+        _ context: MemoryUpdateContext?,
+        review: ChapterReviewResult?,
+        for projectID: NovelProject.ID
+    ) {
+        updateProject(projectID) { project in
+            if let context {
+                project.strandWeaveState = context.strandState
+                let mergedAntiPatterns = Set(project.accumulatedAntiPatterns).union(context.antiPatterns)
+                project.accumulatedAntiPatterns = Array(mergedAntiPatterns.prefix(50))
+            }
+
+            if let review {
+                project.lastReviewResult = review
+            }
+
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
     @discardableResult
     func applyChapterTreeRefresh(
         _ refresh: ChapterTreeRefresh,
@@ -992,6 +1030,306 @@ final class AppState {
             project.globalMemoryUpdatedAt = Self.currentTimestampLabel()
             project.updatedAt = Self.currentTimestampLabel()
         }
+    }
+
+    // MARK: - Memory Buckets Auto-Population
+
+    /// Extract structured memory items from a chapter draft and upsert them
+    /// into the project's MemoryBuckets. Runs keyword-based extraction
+    /// for characters, relationships, locations, foreshadowing, and timeline.
+    func extractAndStoreMemoryItems(
+        from chapterContent: String,
+        chapterNumber: Int,
+        for projectID: NovelProject.ID
+    ) {
+        let (characters, relationships, locations, foreshadowing, timeline, storyFacts) =
+            extractStructuredMemory(from: chapterContent, chapterNumber: chapterNumber)
+
+        let allItems = characters + relationships + locations + foreshadowing + timeline + storyFacts
+        guard !allItems.isEmpty else { return }
+
+        updateProject(projectID) { project in
+            var buckets = project.memoryBuckets
+            for item in allItems {
+                buckets.upsert(item)
+            }
+            buckets.compact(currentChapter: chapterNumber)
+            project.memoryBuckets = buckets
+        }
+    }
+
+    /// Append locally-detected AI-flavor anti-patterns from a chapter draft.
+    /// These accumulate across chapters and are injected into writing prompts.
+    func appendLocalAntiPatterns(
+        from chapterContent: String,
+        for projectID: NovelProject.ID
+    ) {
+        let localPatterns = ChapterQualityReviewer.quickAIFlavorCheck(text: chapterContent)
+        guard !localPatterns.isEmpty else { return }
+
+        updateProject(projectID) { project in
+            project.appendAntiPatterns(from: localPatterns)
+        }
+    }
+
+    /// Keyword-based extraction of structured memory items from Chinese chapter text.
+    private func extractStructuredMemory(
+        from text: String,
+        chapterNumber: Int
+    ) -> (
+        characters: [MemoryItem],
+        relationships: [MemoryItem],
+        locations: [MemoryItem],
+        foreshadowing: [MemoryItem],
+        timeline: [MemoryItem],
+        storyFacts: [MemoryItem]
+    ) {
+        let nonNameWords: Set<String> = [
+            "什么", "怎么", "知道", "已经", "没有", "一个", "不是", "可能",
+            "可以", "这个", "那个", "他们", "我们", "你们", "自己", "因为",
+            "所以", "但是", "如果", "虽然", "或者", "然后", "现在", "这里",
+            "那里", "时候", "起来", "出来", "下去", "过来", "一下", "一点",
+            "觉得", "应该", "需要", "希望", "还是", "就是", "只是", "不过",
+            "说话", "说道", "回答", "笑道", "道", "说", "答"
+        ]
+
+        // --- Characters from dialogue (supports both "" and "" quotes) ---
+        var characterFrequency: [String: Int] = [:]
+        if let regex = try? NSRegularExpression(pattern: "[\u{201C}\u{0022}]([^\u{201C}\u{201D}\u{0022}\n]{1,20})[\u{201D}\u{0022}]") {
+            let nsText = text as NSString
+            for match in regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)) {
+                if match.numberOfRanges >= 2 {
+                    let dialogue = nsText.substring(with: match.range(at: 1))
+                    let contextStart = max(0, match.range.location - 10)
+                    let contextLength = min(match.range.location - contextStart, 20)
+                    let context = nsText.substring(with: NSRange(location: contextStart, length: contextLength))
+                    let candidates = extractNamesFromContext(context, excluding: nonNameWords)
+                    for name in candidates {
+                        characterFrequency[name, default: 0] += 1
+                    }
+                }
+            }
+        }
+
+        // --- Characters from action patterns ---
+        let actionPatterns = ["道：", "笑道", "怒道", "冷声道", "道，", "说道："]
+        for pattern in actionPatterns {
+            var searchStart = text.startIndex
+            while let range = text.range(of: pattern, range: searchStart..<text.endIndex) {
+                let contextStart = text.index(range.lowerBound, offsetBy: -min(10, text.distance(from: text.startIndex, to: range.lowerBound)), limitedBy: text.startIndex) ?? text.startIndex
+                let context = String(text[contextStart..<range.lowerBound])
+                let candidates = extractNamesFromContext(context, excluding: nonNameWords)
+                for name in candidates {
+                    characterFrequency[name, default: 0] += 2
+                }
+                searchStart = range.upperBound
+            }
+        }
+
+        let characterNames = characterFrequency
+            .filter { $0.value >= 2 }
+            .sorted { $0.value > $1.value }
+            .prefix(15)
+            .map { $0.key }
+
+        let characterItems = characterNames.map { name in
+            MemoryItem(
+                category: .characterState,
+                subject: name,
+                field: "出场",
+                value: "在第\(chapterNumber)章中出场并有对白或行动",
+                sourceChapter: chapterNumber
+            )
+        }
+
+        // --- Relationships from co-occurrence in dialogue/action ---
+        var relationshipPairs: [String: Int] = [:]
+        let allNames = Set(characterNames)
+        let paragraphs = text.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        for paragraph in paragraphs {
+            let present = allNames.filter { paragraph.contains($0) }
+            if present.count >= 2 {
+                let sorted = present.sorted()
+                for i in 0..<sorted.count {
+                    for j in (i+1)..<sorted.count {
+                        let key = "\(sorted[i])↔\(sorted[j])"
+                        relationshipPairs[key, default: 0] += 1
+                    }
+                }
+            }
+        }
+
+        let relationshipItems = relationshipPairs
+            .filter { $0.value >= 1 }
+            .prefix(10)
+            .map { (pair, count) -> MemoryItem in
+                let names = pair.components(separatedBy: "↔")
+                return MemoryItem(
+                    category: .relationship,
+                    subject: pair,
+                    field: count >= 3 ? "密切互动" : "互动",
+                    value: "第\(chapterNumber)章中共同出现\(count)次",
+                    sourceChapter: chapterNumber
+                )
+            }
+
+        // --- Locations ---
+        var locationFrequency: [String: Int] = [:]
+        let locationMarkers = [
+            "在(.{2,8}?)[，。,.]", "来到(.{2,8}?)[，。,.]",
+            "到达(.{2,8}?)[，。,.]", "离开(.{2,8}?)[，。,.]",
+            "进入(.{2,8}?)[，。,.]", "走出(.{2,8}?)[，。,.]"
+        ]
+        let nonLocationWords: Set<String> = [
+            "这里", "那里", "此时", "这时", "什么", "自己", "对方", "面前",
+            "身后", "旁边", "外面", "里面", "上面", "下面", "前面", "后面",
+            "之间", "其中", "之后", "之前", "以后", "以前"
+        ]
+
+        for pattern in locationMarkers {
+            if let regex = try? NSRegularExpression(pattern: pattern) {
+                let nsText = text as NSString
+                for match in regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)) {
+                    if match.numberOfRanges >= 2 {
+                        let location = nsText.substring(with: match.range(at: 1))
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        if location.count >= 2 && location.count <= 8 && !nonLocationWords.contains(location) {
+                            locationFrequency[location, default: 0] += 1
+                        }
+                    }
+                }
+            }
+        }
+
+        let locationItems = locationFrequency
+            .filter { $0.value >= 1 }
+            .prefix(8)
+            .map { (location, _) -> MemoryItem in
+                MemoryItem(
+                    category: .worldRule,
+                    subject: location,
+                    field: "地点",
+                    value: "在第\(chapterNumber)章中出现",
+                    sourceChapter: chapterNumber
+                )
+            }
+
+        // --- Foreshadowing / Open Loops ---
+        var foreshadowItems: [MemoryItem] = []
+        let mysteryPatterns = [
+            ("暗示线索", ["暗示", "似乎", "仿佛", "好像"]),
+            ("悬疑伏笔", ["疑团", "谜团", "悬念", "蹊跷", "奇怪"]),
+            ("未解之谜", ["不知", "不解", "未明", "不明", "无法解释"]),
+            ("隐藏信息", ["秘密", "隐瞒", "隐藏", "藏着", "背后的真相"]),
+            ("预兆", ["预感", "预兆", "不祥", "隐隐"])
+        ]
+
+        for (field, markers) in mysteryPatterns {
+            for marker in markers {
+                var searchStart = text.startIndex
+                while let range = text.range(of: marker, range: searchStart..<text.endIndex) {
+                    let ctxStart = text.index(range.lowerBound, offsetBy: -min(8, text.distance(from: text.startIndex, to: range.lowerBound)), limitedBy: text.startIndex) ?? text.startIndex
+                    let ctxEnd = text.index(range.upperBound, offsetBy: min(20, text.distance(from: range.upperBound, to: text.endIndex)), limitedBy: text.endIndex) ?? text.endIndex
+                    let context = String(text[ctxStart..<ctxEnd])
+                        .replacingOccurrences(of: "\n", with: " ")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if context.count >= 4 {
+                        foreshadowItems.append(MemoryItem(
+                            category: .openLoop,
+                            subject: String(context.prefix(30)),
+                            field: field,
+                            value: context,
+                            status: .tentative,
+                            sourceChapter: chapterNumber
+                        ))
+                    }
+                    searchStart = range.upperBound
+                }
+            }
+        }
+
+        // --- Timeline ---
+        var timelineItems: [MemoryItem] = []
+        let timeMarkers = [
+            "黎明", "清晨", "早上", "上午", "中午", "下午",
+            "傍晚", "黄昏", "晚上", "深夜", "午夜",
+            "三天后", "第二天", "次日", "当日", "当晚",
+            "一周后", "一个月后", "一年后", "数日后", "数月后"
+        ]
+
+        for marker in timeMarkers {
+            if text.contains(marker) {
+                timelineItems.append(MemoryItem(
+                    category: .timeline,
+                    subject: marker,
+                    field: "时间标记",
+                    value: "第\(chapterNumber)章提及「\(marker)」",
+                    sourceChapter: chapterNumber
+                ))
+            }
+        }
+
+        // --- Story Facts from plot-significant patterns ---
+        var storyFactItems: [MemoryItem] = []
+        let factPatterns = [
+            ("关键转折", ["决定", "选择", "放弃", "离开", "归来", "背叛"]),
+            ("能力揭示", ["觉醒", "突破", "领悟", "解锁", "获得"]),
+            ("重要信息", ["真相", "发现", "揭露", "得知", "原来"])
+        ]
+
+        for (field, markers) in factPatterns {
+            for marker in markers {
+                var count = 0
+                var searchStart = text.startIndex
+                while let range = text.range(of: marker, range: searchStart..<text.endIndex) {
+                    count += 1
+                    searchStart = range.upperBound
+                }
+                if count >= 1 {
+                    storyFactItems.append(MemoryItem(
+                        category: .storyFact,
+                        subject: marker,
+                        field: field,
+                        value: "第\(chapterNumber)章中出现\(count)次",
+                        sourceChapter: chapterNumber
+                    ))
+                }
+            }
+        }
+
+        return (
+            characters: Array(characterItems.prefix(10)),
+            relationships: Array(relationshipItems.prefix(8)),
+            locations: Array(locationItems.prefix(6)),
+            foreshadowing: Array(foreshadowItems.prefix(8)),
+            timeline: Array(timelineItems.prefix(6)),
+            storyFacts: Array(storyFactItems.prefix(8))
+        )
+    }
+
+    /// Extract likely character names from a short context string.
+    private func extractNamesFromContext(_ context: String, excluding nonNames: Set<String>) -> [String] {
+        let trimmed = context.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        let separators = CharacterSet(charactersIn: "，。、；：！？… \t\n\"'")
+        let tokens = trimmed.components(separatedBy: separators)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.count >= 2 && $0.count <= 6 }
+
+        var names: [String] = []
+        for token in tokens {
+            guard !nonNames.contains(token) else { continue }
+            let isCapitalized = token.unicodeScalars.first.map { CharacterSet.uppercaseLetters.contains($0) } ?? false
+            let allChinese = token.unicodeScalars.allSatisfy { $0.value >= 0x4E00 && $0.value <= 0x9FFF }
+            if isCapitalized || (allChinese && token.count >= 2 && token.count <= 4) {
+                names.append(token)
+            }
+        }
+        return names
     }
 
     func searchLongformProject(_ query: String, in projectID: NovelProject.ID, limit: Int = 60) -> [LongformSearchResult] {

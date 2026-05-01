@@ -84,10 +84,33 @@ extension NovelProject {
         accumulatedAntiPatterns = Array(existing.prefix(50))
     }
 
+    /// Append anti-patterns from a raw string array (e.g., local quick-check results).
+    mutating func appendAntiPatterns(from patterns: [String]) {
+        var existing = Set(accumulatedAntiPatterns)
+        for pattern in patterns {
+            existing.insert(pattern)
+        }
+        accumulatedAntiPatterns = Array(existing.prefix(50))
+    }
+
     // MARK: - Genre Template
 
     var genreTemplate: GenreTemplate {
-        GenreTemplateLibrary.template(for: genre)
+        if let genreTemplateId,
+           let selected = GenreTemplateLibrary.allTemplates.first(where: { $0.id == genreTemplateId }) {
+            return selected
+        }
+        GenreTemplateLibrary.autoDetect(from: genre)
+    }
+
+    // MARK: - Narrative Stage Detection
+
+    var narrativeStage: NarrativeStage {
+        detectNarrativeStage(
+            currentChapter: currentChapterNumber,
+            totalChapters: nil,
+            storyLength: storyLength
+        )
     }
 
     // MARK: - Enhanced Memory Context

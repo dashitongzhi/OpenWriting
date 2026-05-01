@@ -428,6 +428,7 @@ struct ChapterDraftVersion: Identifiable, Codable, Hashable {
 
 struct ChapterDraft: Identifiable, Codable, Hashable {
     let id: String
+    var volumeNumber: Int
     var chapterNumber: Int
     var chapterTitle: String
     var content: String
@@ -436,6 +437,7 @@ struct ChapterDraft: Identifiable, Codable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case id
+        case volumeNumber
         case chapterNumber
         case chapterTitle
         case content
@@ -455,6 +457,7 @@ struct ChapterDraft: Identifiable, Codable, Hashable {
 
     init(
         id: String = UUID().uuidString,
+        volumeNumber: Int = 1,
         chapterNumber: Int,
         chapterTitle: String,
         content: String,
@@ -462,6 +465,7 @@ struct ChapterDraft: Identifiable, Codable, Hashable {
         versionHistory: [ChapterDraftVersion] = []
     ) {
         self.id = id
+        self.volumeNumber = max(volumeNumber, 1)
         self.chapterNumber = chapterNumber
         self.chapterTitle = chapterTitle
         self.content = content
@@ -472,6 +476,7 @@ struct ChapterDraft: Identifiable, Codable, Hashable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        volumeNumber = try container.decodeIfPresent(Int.self, forKey: .volumeNumber) ?? 1
         chapterNumber = try container.decode(Int.self, forKey: .chapterNumber)
         chapterTitle = try container.decode(String.self, forKey: .chapterTitle)
         content = try container.decode(String.self, forKey: .content)
@@ -482,6 +487,7 @@ struct ChapterDraft: Identifiable, Codable, Hashable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
+        try container.encode(volumeNumber, forKey: .volumeNumber)
         try container.encode(chapterNumber, forKey: .chapterNumber)
         try container.encode(chapterTitle, forKey: .chapterTitle)
         try container.encode(content, forKey: .content)
@@ -490,7 +496,7 @@ struct ChapterDraft: Identifiable, Codable, Hashable {
     }
 
     var chapterLabel: String {
-        "第 \(chapterNumber) 章"
+        volumeNumber > 1 ? "第 \(volumeNumber) 卷 · 第 \(chapterNumber) 章" : "第 \(chapterNumber) 章"
     }
 
     var chapterSummary: String {
@@ -521,11 +527,47 @@ struct ChapterDraft: Identifiable, Codable, Hashable {
     }
 
     nonisolated static func sortDescending(_ lhs: ChapterDraft, _ rhs: ChapterDraft) -> Bool {
+        if lhs.volumeNumber != rhs.volumeNumber {
+            return lhs.volumeNumber > rhs.volumeNumber
+        }
+
         if lhs.chapterNumber == rhs.chapterNumber {
             return lhs.savedAtTimestamp > rhs.savedAtTimestamp
         }
 
         return lhs.chapterNumber > rhs.chapterNumber
+    }
+}
+
+struct ChapterDraftMetadata: Identifiable, Codable, Hashable {
+    let id: String
+    var volumeNumber: Int
+    var chapterNumber: Int
+    var chapterTitle: String
+    var chapterSummary: String
+    var wordCount: Int
+    var savedAt: String
+    var previewText: String
+
+    init(chapterDraft: ChapterDraft) {
+        id = chapterDraft.id
+        volumeNumber = max(chapterDraft.volumeNumber, 1)
+        chapterNumber = max(chapterDraft.chapterNumber, 1)
+        chapterTitle = chapterDraft.chapterTitle
+        chapterSummary = chapterDraft.chapterSummary
+        wordCount = chapterDraft.wordCount
+        savedAt = chapterDraft.savedAt
+        previewText = chapterDraft.previewText
+    }
+
+    nonisolated static func sortDescending(_ lhs: ChapterDraftMetadata, _ rhs: ChapterDraftMetadata) -> Bool {
+        if lhs.volumeNumber != rhs.volumeNumber {
+            return lhs.volumeNumber > rhs.volumeNumber
+        }
+        if lhs.chapterNumber != rhs.chapterNumber {
+            return lhs.chapterNumber > rhs.chapterNumber
+        }
+        return lhs.savedAt.localizedStandardCompare(rhs.savedAt) == .orderedDescending
     }
 }
 
@@ -856,6 +898,7 @@ struct NovelProject: Identifiable, Codable {
     var storyLength: NovelLength
     private var updatedAtTimestamp: Date
     var currentChapterTitle: String
+    var currentVolumeNumber: Int
     var currentChapterNumber: Int
     var writtenChapters: Int
     var chapterFocus: String
@@ -878,6 +921,7 @@ struct NovelProject: Identifiable, Codable {
     private var globalMemoryUpdatedAtTimestamp: Date?
     var referenceDocuments: [ReferenceDocument]
     var chapterDrafts: [ChapterDraft]
+    var chapterCatalog: [ChapterDraftMetadata]
     /// 题材模板 ID（可选，关联 GenreTemplate）
     var genreTemplateId: String?
     /// Strand Weave 节奏追踪器
@@ -893,6 +937,7 @@ struct NovelProject: Identifiable, Codable {
         case storyLength
         case updatedAt
         case currentChapterTitle
+        case currentVolumeNumber
         case currentChapterNumber
         case writtenChapters
         case chapterFocus
@@ -915,6 +960,7 @@ struct NovelProject: Identifiable, Codable {
         case globalMemoryUpdatedAt
         case referenceDocuments
         case chapterDrafts
+        case chapterCatalog
         case chapters
         case genreTemplateId
         case strandWeaveTracker
@@ -929,6 +975,7 @@ struct NovelProject: Identifiable, Codable {
         storyLength: NovelLength = .long,
         updatedAt: String,
         currentChapterTitle: String,
+        currentVolumeNumber: Int = 1,
         currentChapterNumber: Int,
         writtenChapters: Int,
         chapterFocus: String,
@@ -951,6 +998,7 @@ struct NovelProject: Identifiable, Codable {
         globalMemoryUpdatedAt: String = "",
         referenceDocuments: [ReferenceDocument],
         chapterDrafts: [ChapterDraft] = [],
+        chapterCatalog: [ChapterDraftMetadata] = [],
         genreTemplateId: String? = nil,
         strandWeaveTracker: StrandWeaveTracker? = nil,
         qualityReviewReports: [QualityReviewReport]? = nil
@@ -962,6 +1010,7 @@ struct NovelProject: Identifiable, Codable {
         self.storyLength = storyLength
         self.updatedAtTimestamp = PersistedTimestampCodec.parse(updatedAt) ?? PersistedTimestampCodec.now()
         self.currentChapterTitle = currentChapterTitle
+        self.currentVolumeNumber = max(currentVolumeNumber, 1)
         self.currentChapterNumber = currentChapterNumber
         self.writtenChapters = writtenChapters
         self.chapterFocus = chapterFocus
@@ -987,6 +1036,9 @@ struct NovelProject: Identifiable, Codable {
         self.globalMemoryUpdatedAtTimestamp = PersistedTimestampCodec.parseOptional(globalMemoryUpdatedAt)
         self.referenceDocuments = referenceDocuments
         self.chapterDrafts = chapterDrafts
+        self.chapterCatalog = chapterCatalog.isEmpty
+            ? chapterDrafts.map(ChapterDraftMetadata.init).sorted(by: ChapterDraftMetadata.sortDescending)
+            : chapterCatalog
         self.genreTemplateId = genreTemplateId
         self.strandWeaveTracker = strandWeaveTracker ?? StrandWeaveTracker()
         self.qualityReviewReports = qualityReviewReports ?? []
@@ -1001,6 +1053,7 @@ struct NovelProject: Identifiable, Codable {
         storyLength = try container.decodeIfPresent(NovelLength.self, forKey: .storyLength) ?? .long
         updatedAtTimestamp = try PersistedTimestampCodec.decodeRequired(container, forKey: .updatedAt)
         currentChapterTitle = try container.decodeIfPresent(String.self, forKey: .currentChapterTitle) ?? "开篇设定"
+        currentVolumeNumber = try container.decodeIfPresent(Int.self, forKey: .currentVolumeNumber) ?? 1
         currentChapterNumber = try container.decodeIfPresent(Int.self, forKey: .currentChapterNumber) ?? 1
         writtenChapters = try container.decodeIfPresent(Int.self, forKey: .writtenChapters)
             ?? container.decodeIfPresent(Int.self, forKey: .chapters)
@@ -1027,6 +1080,8 @@ struct NovelProject: Identifiable, Codable {
         globalMemoryUpdatedAtTimestamp = PersistedTimestampCodec.decodeOptional(container, forKey: .globalMemoryUpdatedAt)
         referenceDocuments = try container.decodeIfPresent([ReferenceDocument].self, forKey: .referenceDocuments) ?? []
         chapterDrafts = try container.decodeIfPresent([ChapterDraft].self, forKey: .chapterDrafts) ?? []
+        chapterCatalog = try container.decodeIfPresent([ChapterDraftMetadata].self, forKey: .chapterCatalog)
+            ?? chapterDrafts.map(ChapterDraftMetadata.init).sorted(by: ChapterDraftMetadata.sortDescending)
         genreTemplateId = try container.decodeIfPresent(String.self, forKey: .genreTemplateId)
         strandWeaveTracker = try container.decodeIfPresent(StrandWeaveTracker.self, forKey: .strandWeaveTracker) ?? StrandWeaveTracker()
         qualityReviewReports = try container.decodeIfPresent([QualityReviewReport].self, forKey: .qualityReviewReports) ?? []
@@ -1041,6 +1096,7 @@ struct NovelProject: Identifiable, Codable {
         try container.encode(storyLength, forKey: .storyLength)
         try PersistedTimestampCodec.encode(updatedAtTimestamp, to: &container, forKey: .updatedAt)
         try container.encode(currentChapterTitle, forKey: .currentChapterTitle)
+        try container.encode(currentVolumeNumber, forKey: .currentVolumeNumber)
         try container.encode(currentChapterNumber, forKey: .currentChapterNumber)
         try container.encode(writtenChapters, forKey: .writtenChapters)
         try container.encode(chapterFocus, forKey: .chapterFocus)
@@ -1063,13 +1119,14 @@ struct NovelProject: Identifiable, Codable {
         try PersistedTimestampCodec.encodeIfPresent(globalMemoryUpdatedAtTimestamp, to: &container, forKey: .globalMemoryUpdatedAt)
         try container.encode(referenceDocuments, forKey: .referenceDocuments)
         try container.encode(chapterDrafts, forKey: .chapterDrafts)
+        try container.encode(chapterCatalog, forKey: .chapterCatalog)
         try container.encodeIfPresent(genreTemplateId, forKey: .genreTemplateId)
         try container.encode(strandWeaveTracker, forKey: .strandWeaveTracker)
         try container.encode(qualityReviewReports, forKey: .qualityReviewReports)
     }
 
     var currentChapterLabel: String {
-        "第 \(currentChapterNumber) 章"
+        currentVolumeNumber > 1 ? "第 \(currentVolumeNumber) 卷 · 第 \(currentChapterNumber) 章" : "第 \(currentChapterNumber) 章"
     }
 
     var currentChapterSummary: String {
@@ -1148,7 +1205,9 @@ struct NovelProject: Identifiable, Codable {
     }
 
     var hasSavedCurrentChapter: Bool {
-        chapterDrafts.contains(where: { $0.chapterNumber == currentChapterNumber })
+        chapterDrafts.contains(where: {
+            $0.volumeNumber == currentVolumeNumber && $0.chapterNumber == currentChapterNumber
+        })
     }
 
     var materialCategoriesWithContent: [ReferenceMaterialCategory] {

@@ -45,6 +45,8 @@ struct WritingDeskView: View {
     @State private var activeDraftPolishMode: DraftPolishMode?
     @State private var pendingDraftPolishReview: DraftPolishReview?
     @State private var pendingDraftPolishReviewAnchorPoint: CGPoint?
+    @State private var latestChapterReview: ChapterReviewResult?
+    @State private var latestStrandWarning: StrandWeaveState.PacingWarning?
 
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
@@ -570,6 +572,9 @@ struct WritingDeskView: View {
                 WritingDeskTimelineRow(snapshot: timingSnapshot)
             }
 
+            genreTemplateSelector(for: project)
+            strandWeaveIndicator(for: project)
+
             Text(aiStatusMessage)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -666,8 +671,82 @@ struct WritingDeskView: View {
                     .disabled(aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
+
+            if let review = latestChapterReview ?? project.lastReviewResult {
+                ChapterQualityReviewPanel(review: review)
+            }
         }
         .frame(height: layout?.aiCardHeight, alignment: .top)
+    }
+
+    private func genreTemplateSelector(for project: NovelProject) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("题材模板")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Picker("题材模板", selection: genreTemplateBinding(for: project.id)) {
+                ForEach(GenreTemplateLibrary.allTemplates) { template in
+                    Text(template.name).tag(template.id)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+
+            Text(project.genreTemplate.coreSellingPoint)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.secondary.opacity(0.07))
+        )
+    }
+
+    private func strandWeaveIndicator(for project: NovelProject) -> some View {
+        let state = project.strandWeaveState
+        let ratios = state.ratios
+        let warning = latestStrandWarning ?? state.checkRedLines(currentChapter: project.currentChapterNumber).first
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Strand Weave")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Text("Q \(strandPercent(ratios[.quest])) · F \(strandPercent(ratios[.fire])) · C \(strandPercent(ratios[.constellation]))")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 6) {
+                StrandRatioBar(label: "Quest", value: ratios[.quest] ?? 0, color: palette.activeAccent)
+                StrandRatioBar(label: "Fire", value: ratios[.fire] ?? 0, color: palette.warningAccent)
+                StrandRatioBar(label: "Constellation", value: ratios[.constellation] ?? 0, color: palette.readyAccent)
+            }
+
+            if let warning {
+                Label(warning.message, systemImage: warning.isCritical ? "exclamationmark.triangle.fill" : "exclamationmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(warning.isCritical ? palette.warningAccent : .secondary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.secondary.opacity(0.07))
+        )
+    }
+
+    private func strandPercent(_ value: Double?) -> String {
+        "\(Int(((value ?? 0) * 100).rounded()))%"
     }
 
     private var emptyState: some View {
@@ -983,6 +1062,18 @@ struct WritingDeskView: View {
         )
     }
 
+    private func genreTemplateBinding(for projectID: NovelProject.ID) -> Binding<GenreTemplate.ID> {
+        Binding(
+            get: {
+                guard let project = appState.project(for: projectID) else {
+                    return GenreTemplateLibrary.defaultTemplate.id
+                }
+                return project.genreTemplate.id
+            },
+            set: { appState.updateGenreTemplate($0, for: projectID) }
+        )
+    }
+
     private func draftBinding(for projectID: NovelProject.ID) -> Binding<String> {
         Binding(
             get: { appState.project(for: projectID)?.draftText ?? "" },
@@ -1112,7 +1203,7 @@ struct WritingDeskView: View {
             let startedAt = Date()
 
             do {
-                let suggestion = try await AIWritingService.continueChapter(
+                let enhancedResult = try await AIWritingService.continueChapterEnhanced(
                     configuration: configuration,
                     project: latestProject,
                     mode: latestProject.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .advanceChapter : .continueScene,
@@ -1139,13 +1230,32 @@ struct WritingDeskView: View {
                         return
                     }
 
-                    aiSuggestion = suggestion
+                    guard enhancedResult.validation.isReady else {
+                        clearWritingGenerationRequest(token: requestToken)
+                        isGenerating = false
+                        writingRunState = .idle
+                        stopWritingProgressMonitor(resetSnapshot: true)
+                        aiStatusMessage = enhancedResult.validation.readySummary
+                        revealWritingDeskWindow(for: project.id)
+                        return
+                    }
+
+                    aiSuggestion = enhancedResult.text
+                    latestChapterReview = enhancedResult.review
+                    latestStrandWarning = enhancedResult.strandWarning
+                    appState.applyEnhancedWritingUpdate(
+                        enhancedResult.memoryUpdate,
+                        review: enhancedResult.review,
+                        for: project.id
+                    )
                     clearWritingGenerationRequest(token: requestToken)
                     isGenerating = false
                     writingRunState = .idle
                     stopWritingProgressMonitor()
                     timingSnapshot = AIWriterTimingSnapshot.completed(total: total)
-                    aiStatusMessage = "候选稿已生成。满意可接受进草稿箱，不满意可继续重写。"
+                    aiStatusMessage = enhancedResult.summary.isEmpty
+                        ? "候选稿已生成。满意可接受进草稿箱，不满意可继续重写。"
+                        : enhancedResult.summary
                     revealWritingDeskWindow(for: project.id)
                     focusAIEditor()
                     requestAutoScroll(to: .ai)
@@ -1748,6 +1858,21 @@ struct WritingDeskView: View {
                     appState.beginNextChapter(after: chapterDraft, for: project.id)
                 }
 
+                // Auto-populate MemoryBuckets from the saved chapter content
+                let chapterContent = chapterDraft.content
+                let chapterNum = chapterDraft.chapterNumber
+                appState.extractAndStoreMemoryItems(
+                    from: chapterContent,
+                    chapterNumber: chapterNum,
+                    for: project.id
+                )
+
+                // Accumulate locally-detected AI anti-patterns
+                appState.appendLocalAntiPatterns(
+                    from: chapterContent,
+                    for: project.id
+                )
+
                 projectContextRefreshTokens.removeValue(forKey: project.id)
                 isSavingChapter = false
                 aiStatusMessage = chapterSaveRefreshMessage(
@@ -1852,6 +1977,8 @@ struct WritingDeskView: View {
         activeDraftPolishMode = nil
         pendingDraftPolishReview = nil
         pendingDraftPolishReviewAnchorPoint = nil
+        latestChapterReview = activeProject?.lastReviewResult
+        latestStrandWarning = nil
         isSelectionPolishPopoverPresented = false
         saveMessage = "自动保存已开启，可按章节收录"
         aiStatusMessage = "准备就绪，可先补大纲、参考文本和特殊要求，再开始当前章节写作。"
@@ -2999,6 +3126,100 @@ private struct DraftSelectionPolishPopover: View {
 
     private var borderColor: Color {
         palette.editorBorder
+    }
+}
+
+private struct StrandRatioBar: View {
+    let label: String
+    let value: Double
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule(style: .continuous)
+                        .fill(Color.secondary.opacity(0.12))
+                    Capsule(style: .continuous)
+                        .fill(color.opacity(0.78))
+                        .frame(width: max(4, proxy.size.width * min(max(value, 0), 1)))
+                }
+            }
+            .frame(height: 7)
+
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+    }
+}
+
+private struct ChapterQualityReviewPanel: View {
+    let review: ChapterReviewResult
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("质量审查", systemImage: review.hasBlockingIssues ? "exclamationmark.triangle.fill" : "checkmark.seal.fill")
+                    .font(.subheadline.weight(.semibold))
+
+                Spacer()
+
+                Text("\(review.overallScore)/100")
+                    .font(.headline.monospacedDigit())
+            }
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 128), spacing: 8)], alignment: .leading, spacing: 8) {
+                ForEach(ReviewDimension.allCases) { dimension in
+                    HStack {
+                        Text(dimension.displayName)
+                            .font(.caption2)
+                            .lineLimit(1)
+                        Spacer()
+                        Text("\(review.dimensionScores[dimension] ?? 0)")
+                            .font(.caption.monospacedDigit().weight(.semibold))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.secondary.opacity(0.08))
+                    )
+                }
+            }
+
+            if !review.issues.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(review.issues.prefix(3)) { issue in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("[\(issue.severity.displayName)] \(issue.description)")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(issue.isBlocking ? .red : .primary)
+                                .lineLimit(2)
+
+                            if !issue.fixHint.isEmpty {
+                                Text(issue.fixHint)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
+                        }
+                    }
+                }
+            } else {
+                Text("未发现阻断问题。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.secondary.opacity(0.07))
+        )
     }
 }
 

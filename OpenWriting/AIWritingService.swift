@@ -293,6 +293,22 @@ enum AIWritingService {
         )
     }
 
+    static func generateText(
+        configuration: AIConnectionConfiguration,
+        systemPrompt: String,
+        userPrompt: String,
+        temperature: Double,
+        maxTokens: Int
+    ) async throws -> String {
+        try await completeText(
+            configuration: configuration,
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            temperature: temperature,
+            maxTokens: maxTokens
+        )
+    }
+
     private static func completeText(
         configuration: AIConnectionConfiguration,
         systemPrompt: String,
@@ -556,9 +572,11 @@ enum AIWritingService {
     ) async throws -> String {
         // 使用标准续写（增强上下文通过 project 的已有字段注入）
         return try await continueChapter(
-            project: project,
             configuration: configuration,
-            progressHandler: progressHandler
+            project: project,
+            mode: project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .advanceChapter : .continueScene,
+            additionalInstruction: template.map { AIWritingService.genreTemplateContext($0) } ?? "",
+            length: .medium
         )
     }
 }

@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 // MARK: - Strand Weave Rhythm System
@@ -159,7 +160,7 @@ class StrandWeaveTracker: ObservableObject, Codable {
         secondary 可以为 null（如果章节只有一种明显线索）
         """
         
-        let response = try await AIWritingService.completeText(
+        let response = try await AIWritingService.generateText(
             configuration: configuration,
             systemPrompt: systemPrompt,
             userPrompt: "请分析以下章节：\n\n\(chapterContent)",
@@ -337,11 +338,11 @@ class StrandWeaveTracker: ObservableObject, Codable {
     
     private func extractJSON(from text: String) -> String {
         if let startRange = text.range(of: "```json"),
-           let endRange = text.range(of: "```", range: startRange.upperBound..<text.endRange) {
+           let endRange = text.range(of: "```", range: startRange.upperBound..<text.endIndex) {
             return String(text[startRange.upperBound..<endRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         if let startRange = text.range(of: "{"),
-           let endRange = text.range(of: "}", options: .backwards, range: startRange.upperBound..<text.endRange) {
+           let endRange = text.range(of: "}", options: .backwards, range: startRange.upperBound..<text.endIndex) {
             return String(text[startRange.lowerBound...endRange.upperBound])
         }
         return text
@@ -361,5 +362,136 @@ struct RhythmRedLineConfig: Codable {
         self.maxConsecutiveQuest = maxConsecutiveQuest
         self.maxGapFire = maxGapFire
         self.maxGapConstellation = maxGapConstellation
+    }
+}
+
+// MARK: - Lightweight Strand State
+
+struct StrandWeaveState: Codable, Hashable {
+    struct Entry: Identifiable, Codable, Hashable {
+        let id: String
+        let chapterNumber: Int
+        let dominant: StrandType
+        let recordedAt: Date
+
+        init(chapterNumber: Int, dominant: StrandType, recordedAt: Date = Date()) {
+            self.id = "\(chapterNumber)-\(dominant.rawValue)"
+            self.chapterNumber = chapterNumber
+            self.dominant = dominant
+            self.recordedAt = recordedAt
+        }
+    }
+
+    struct PacingWarning: Identifiable, Codable, Hashable {
+        let id: String
+        let strand: StrandType
+        let message: String
+        let isCritical: Bool
+
+        init(strand: StrandType, message: String, isCritical: Bool) {
+            self.id = "\(strand.rawValue)-\(message)"
+            self.strand = strand
+            self.message = message
+            self.isCritical = isCritical
+        }
+    }
+
+    var entries: [Entry]
+    var questTarget: Double
+    var fireTarget: Double
+    var constellationTarget: Double
+    var questMaxConsecutive: Int
+    var fireMaxGap: Int
+    var constellationMaxGap: Int
+
+    static let empty = StrandWeaveState(
+        entries: [],
+        questTarget: 0.60,
+        fireTarget: 0.20,
+        constellationTarget: 0.20,
+        questMaxConsecutive: 5,
+        fireMaxGap: 10,
+        constellationMaxGap: 15
+    )
+
+    mutating func recordChapter(_ chapterNumber: Int, dominant: StrandType) {
+        entries.removeAll { $0.chapterNumber == chapterNumber }
+        entries.append(Entry(chapterNumber: chapterNumber, dominant: dominant))
+        entries.sort { $0.chapterNumber < $1.chapterNumber }
+    }
+
+    func checkRedLines(currentChapter: Int) -> [PacingWarning] {
+        var warnings: [PacingWarning] = []
+        let questStreak = recentConsecutive(.quest)
+        if questStreak >= questMaxConsecutive {
+            warnings.append(PacingWarning(
+                strand: .quest,
+                message: "主线剧情已连续 \(questStreak) 章，建议插入感情线或世界观扩展。",
+                isCritical: true
+            ))
+        }
+
+        let fireGap = gapSince(.fire, currentChapter: currentChapter)
+        if fireGap >= fireMaxGap {
+            warnings.append(PacingWarning(
+                strand: .fire,
+                message: "感情线已断档 \(fireGap) 章，建议补一段关系推进。",
+                isCritical: false
+            ))
+        }
+
+        let constellationGap = gapSince(.constellation, currentChapter: currentChapter)
+        if constellationGap >= constellationMaxGap {
+            warnings.append(PacingWarning(
+                strand: .constellation,
+                message: "世界观扩展已断档 \(constellationGap) 章，建议补充规则、势力或背景信息。",
+                isCritical: false
+            ))
+        }
+
+        return warnings
+    }
+
+    var ratios: [StrandType: Double] {
+        guard !entries.isEmpty else {
+            return [.quest: 0, .fire: 0, .constellation: 0]
+        }
+
+        let total = Double(entries.count)
+        let counts = Dictionary(grouping: entries, by: \.dominant).mapValues { Double($0.count) }
+        return [
+            .quest: (counts[.quest] ?? 0) / total,
+            .fire: (counts[.fire] ?? 0) / total,
+            .constellation: (counts[.constellation] ?? 0) / total
+        ]
+    }
+
+    var formattedForContext: String {
+        let current = ratios
+        let rows = StrandType.allCases.map { strand -> String in
+            let percent = Int((current[strand] ?? 0) * 100)
+            return "- \(strand.rawValue): \(percent)%"
+        }
+        let warnings = checkRedLines(currentChapter: entries.last?.chapterNumber ?? 1)
+            .map { "- \($0.message)" }
+
+        return (["当前 Strand 比例："] + rows + (warnings.isEmpty ? ["暂无节奏红线告警。"] : ["节奏告警："] + warnings))
+            .joined(separator: "\n")
+    }
+
+    private func recentConsecutive(_ strand: StrandType) -> Int {
+        var count = 0
+        for entry in entries.reversed() {
+            guard entry.dominant == strand else { break }
+            count += 1
+        }
+        return count
+    }
+
+    private func gapSince(_ strand: StrandType, currentChapter: Int) -> Int {
+        guard let latest = entries.last(where: { $0.dominant == strand }) else {
+            return max(entries.count, currentChapter - 1)
+        }
+        return max(0, currentChapter - latest.chapterNumber)
     }
 }

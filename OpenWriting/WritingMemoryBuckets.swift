@@ -87,7 +87,7 @@ enum MemoryCategory: String, CaseIterable, Codable, Identifiable {
 
 // MARK: - Memory Item Status (4-state lifecycle)
 
-enum MemoryItemStatus: String, Codable {
+enum MemoryItemStatus: String, Codable, Hashable {
     case active
     case outdated
     case contradicted

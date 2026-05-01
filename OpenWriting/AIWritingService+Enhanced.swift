@@ -136,7 +136,8 @@ extension AIWritingService {
                     dimensionScores: review.dimensionScores,
                     issues: review.issues,
                     hasBlockingIssues: review.hasBlockingIssues,
-                    antiPatterns: review.antiPatterns + localPatterns
+                    antiPatterns: review.antiPatterns + localPatterns,
+                    overallSummary: review.overallSummary
                 )
                 reviewResult = review
             }
@@ -177,8 +178,14 @@ extension AIWritingService {
         5. 根据项目规模控制叙事：短篇要集中闭环，中篇要稳住阶段推进，长篇要维护分卷延展、长期伏笔和人物长期状态。
         6. 保持连续性，避免突然跳到未来情节、提前透支长期真相或重复已写内容。
 
+        \(AntiAIWritingGuide.formattedGuide)
+
         题材约束（\(genreTemplate.name)）：
         \(genreTemplate.formattedForPrompt)
+
+        叙事阶段：
+        \(project.narrativeStage.pacingDirective)
+        \(project.narrativeStage.contextWeightHint)
         """
 
         if !antiPatterns.isEmpty {
@@ -261,6 +268,10 @@ extension AIWritingService {
 
         ===== 题材配置 =====
         \(support.genreTemplateContext)
+
+        ===== 叙事阶段 =====
+        \(project.narrativeStage.pacingDirective)
+        \(project.narrativeStage.contextWeightHint)
 
         手动参考文本：
         \(normalized(project.referenceContextText, fallback: "暂无手动补充的参考文本。"))

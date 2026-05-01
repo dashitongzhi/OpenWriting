@@ -4,7 +4,7 @@ import Foundation
 // Inspired by webnovel-writer's 37 built-in genre templates
 
 /// 题材分类
-enum GenreCategory: String, Codable, CaseIterable, Identifiable {
+enum LegacyGenreCategory: String, Codable, CaseIterable, Identifiable {
     case xuanhuan = "玄幻修仙"
     case urban = "都市现代"
     case romance = "言情"
@@ -12,17 +12,17 @@ enum GenreCategory: String, Codable, CaseIterable, Identifiable {
     
     var id: String { rawValue }
     
-    var genres: [GenreTemplate] {
-        GenreTemplateLibrary.allTemplates.filter { $0.category == self }
+    var genres: [LegacyGenreTemplate] {
+        LegacyGenreTemplateLibrary.allTemplates.filter { $0.category == self }
     }
 }
 
 /// 题材模板
-struct GenreTemplate: Identifiable, Codable {
+struct LegacyGenreTemplate: Identifiable, Codable {
     let id: String
     let name: String
     let aliases: [String]
-    let category: GenreCategory
+    let category: LegacyGenreCategory
     let description: String
     
     /// 世界观核心规则
@@ -45,7 +45,7 @@ struct GenreTemplate: Identifiable, Codable {
         case questRatio, fireRatio, constellationRatio
     }
     
-    init(id: String, name: String, aliases: [String] = [], category: GenreCategory,
+    init(id: String, name: String, aliases: [String] = [], category: LegacyGenreCategory,
          description: String, worldRules: [String], characterArchetypes: [String],
          pacingGuide: String, hookPatterns: [String], pleasurePointTypes: [String],
          strandRatio: (quest: Double, fire: Double, constellation: Double) = (0.6, 0.2, 0.2)) {
@@ -67,7 +67,7 @@ struct GenreTemplate: Identifiable, Codable {
         id = try c.decode(String.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
         aliases = try c.decodeIfPresent([String].self, forKey: .aliases) ?? []
-        category = try c.decode(GenreCategory.self, forKey: .category)
+        category = try c.decode(LegacyGenreCategory.self, forKey: .category)
         description = try c.decode(String.self, forKey: .description)
         worldRules = try c.decode([String].self, forKey: .worldRules)
         characterArchetypes = try c.decode([String].self, forKey: .characterArchetypes)
@@ -99,12 +99,12 @@ struct GenreTemplate: Identifiable, Codable {
 }
 
 /// 题材模板库
-enum GenreTemplateLibrary {
+enum LegacyGenreTemplateLibrary {
     
-    static let allTemplates: [GenreTemplate] = xuanhuanGenres + urbanGenres + romanceGenres + suspenseGenres
+    static let allTemplates: [LegacyGenreTemplate] = xuanhuanGenres + urbanGenres + romanceGenres + suspenseGenres
     
     /// 通过名称或别名查找题材
-    static func lookup(_ input: String) -> GenreTemplate? {
+    static func lookup(_ input: String) -> LegacyGenreTemplate? {
         let normalized = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return allTemplates.first { template in
             template.name.lowercased() == normalized ||
@@ -113,7 +113,7 @@ enum GenreTemplateLibrary {
     }
     
     /// 支持复合题材查找（如 "都市脑洞+规则怪谈"）
-    static func lookupComposite(_ input: String) -> [GenreTemplate] {
+    static func lookupComposite(_ input: String) -> [LegacyGenreTemplate] {
         let separators: [Character] = ["+", "/", "、", "与"]
         let parts = input.split { separators.contains($0) }
             .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -122,8 +122,8 @@ enum GenreTemplateLibrary {
     
     // MARK: - 玄幻修仙类
     
-    static let xuanhuanGenres: [GenreTemplate] = [
-        GenreTemplate(
+    static let xuanhuanGenres: [LegacyGenreTemplate] = [
+        LegacyGenreTemplate(
             id: "xianxia", name: "修仙", aliases: ["玄幻", "修真", "玄幻修仙"],
             category: .xuanhuan,
             description: "修炼升级、飞升渡劫、宗门争霸的仙侠世界",
@@ -139,7 +139,7 @@ enum GenreTemplateLibrary {
             hookPatterns: ["境界突破", "秘境探宝", "宗门大比", "渡劫危机", "远古传承"],
             pleasurePointTypes: ["打脸装逼", "突破升级", "获得传承", "炼丹成功", "法宝认主"]
         ),
-        GenreTemplate(
+        LegacyGenreTemplate(
             id: "system-flow", name: "系统流", aliases: ["系统文", "面板流"],
             category: .xuanhuan,
             description: "主角获得系统面板，通过完成任务获得奖励和升级",
@@ -155,7 +155,7 @@ enum GenreTemplateLibrary {
             hookPatterns: ["新任务发布", "限时挑战", "隐藏任务", "系统升级", "商城刷新"],
             pleasurePointTypes: ["完成任务获得奖励", "系统商城买到神装", "隐藏成就解锁", "系统升级", "抽奖出金"]
         ),
-        GenreTemplate(
+        LegacyGenreTemplate(
             id: "high-wu", name: "高武", aliases: ["武道", "高武世界"],
             category: .xuanhuan,
             description: "武道修炼极致，肉身成圣、拳碎星辰的高武世界",
@@ -171,7 +171,7 @@ enum GenreTemplateLibrary {
             hookPatterns: ["武道突破", "比武大会", "生死搏杀", "秘境历练", "武道传承"],
             pleasurePointTypes: ["以弱胜强", "武道顿悟", "碾压对手", "获得功法", "肉身蜕变"]
         ),
-        GenreTemplate(
+        LegacyGenreTemplate(
             id: "western-fantasy", name: "西幻", aliases: ["西方奇幻", "剑与魔法"],
             category: .xuanhuan,
             description: "骑士、魔法、龙族、王国争霸的西方奇幻世界",
@@ -187,7 +187,7 @@ enum GenreTemplateLibrary {
             hookPatterns: ["新区域探索", "地下城冒险", "王国战争", "神器发现", "龙族觉醒"],
             pleasurePointTypes: ["获得神器", "击败BOSS", "等级提升", "公会升级", "领地建设"]
         ),
-        GenreTemplate(
+        LegacyGenreTemplate(
             id: "infinite-flow", name: "无限流", aliases: ["副本流", "无限恐怖"],
             category: .xuanhuan,
             description: "进入不同副本/世界完成任务的生存冒险",
@@ -203,7 +203,7 @@ enum GenreTemplateLibrary {
             hookPatterns: ["新副本开启", "副本内隐藏剧情", "队友背叛", "积分商城", "终极副本"],
             pleasurePointTypes: ["通关副本获得SSS评价", "兑换神级道具", "智谋碾压", "团队配合", "隐藏副本解锁"]
         ),
-        GenreTemplate(
+        LegacyGenreTemplate(
             id: "post-apocalypse", name: "末世", aliases: ["末日", "末世生存"],
             category: .xuanhuan,
             description: "文明崩塌后的生存与重建",
@@ -219,7 +219,7 @@ enum GenreTemplateLibrary {
             hookPatterns: ["尸潮来袭", "新资源发现", "聚落冲突", "异能觉醒", "旧文明遗迹"],
             pleasurePointTypes: ["异能升级", "基地扩建", "击败尸潮", "找到稀缺资源", "收服强者"]
         ),
-        GenreTemplate(
+        LegacyGenreTemplate(
             id: "sci-fi", name: "科幻", aliases: ["星际", "太空歌剧"],
             category: .xuanhuan,
             description: "星际航行、外星文明、科技爆发的未来世界",
@@ -239,8 +239,8 @@ enum GenreTemplateLibrary {
     
     // MARK: - 都市现代类
     
-    static let urbanGenres: [GenreTemplate] = [
-        GenreTemplate(
+    static let urbanGenres: [LegacyGenreTemplate] = [
+        LegacyGenreTemplate(
             id: "urban-powers", name: "都市异能", aliases: ["都市修真", "都市超能力"],
             category: .urban,
             description: "现代都市背景下隐藏的异能者世界",
@@ -256,7 +256,7 @@ enum GenreTemplateLibrary {
             hookPatterns: ["异能觉醒", "组织任务", "身份暴露危机", "异能对决", "城市危机"],
             pleasurePointTypes: ["异能升级", "碾压对手", "隐藏身份反转", "拯救城市", "获得组织认可"]
         ),
-        GenreTemplate(
+        LegacyGenreTemplate(
             id: "urban-daily", name: "都市日常", aliases: ["日常流", "生活流"],
             category: .urban,
             description: "贴近现实的都市生活故事，侧重人情世故和情感",
@@ -272,7 +272,7 @@ enum GenreTemplateLibrary {
             hookPatterns: ["职场危机", "感情转折", "家庭矛盾", "事业机会", "旧友重逢"],
             pleasurePointTypes: ["事业成功", "感情进展", "化解危机", "获得认可", "逆袭打脸"]
         ),
-        GenreTemplate(
+        LegacyGenreTemplate(
             id: "urban-brainhole", name: "都市脑洞", aliases: ["脑洞文", "沙雕文"],
             category: .urban,
             description: "设定新奇、脑洞大开的都市故事",
@@ -288,7 +288,7 @@ enum GenreTemplateLibrary {
             hookPatterns: ["设定反转", "身份揭秘", "规则打破", "意外展开", "黑色幽默"],
             pleasurePointTypes: ["神反转", "全网吐槽", "设定炸裂", "笑到喷饭", "细思恐极"]
         ),
-        GenreTemplate(
+        LegacyGenreTemplate(
             id: "esports", name: "电竞", aliases: ["游戏电竞", "电竞文"],
             category: .urban,
             description: "电子竞技职业选手的热血竞技故事",
@@ -304,7 +304,7 @@ enum GenreTemplateLibrary {
             hookPatterns: ["关键团战", "战术创新", "选手对决", "团队危机", "逆风翻盘"],
             pleasurePointTypes: ["逆风翻盘", "战术碾压", "个人秀操作", "团队配合", "夺冠时刻"]
         ),
-        GenreTemplate(
+        LegacyGenreTemplate(
             id: "livestream", name: "直播文", aliases: ["直播", "主播", "直播带货"],
             category: .urban,
             description: "以直播/短视频为载体的都市故事",
@@ -320,7 +320,7 @@ enum GenreTemplateLibrary {
             hookPatterns: ["直播翻车", "意外走红", "平台打压", "带货奇迹", "网红互撕"],
             pleasurePointTypes: ["粉丝暴涨", "带货破纪录", "打脸黑粉", "平台认可", "出圈爆红"]
         ),
-        GenreTemplate(
+        LegacyGenreTemplate(
             id: "realistic", name: "现实题材", aliases: ["现实主义", "纪实"],
             category: .urban,
             description: "关注社会现实问题的严肃题材",
@@ -340,8 +340,8 @@ enum GenreTemplateLibrary {
     
     // MARK: - 言情类
     
-    static let romanceGenres: [GenreTemplate] = [
-        GenreTemplate(
+    static let romanceGenres: [LegacyGenreTemplate] = [
+        LegacyGenreTemplate(
             id: "ancient-romance", name: "古言", aliases: ["古代言情", "古风言情"],
             category: .romance,
             description: "古代背景的言情故事，宫廷/江湖/宅院",
@@ -357,7 +357,7 @@ enum GenreTemplateLibrary {
             hookPatterns: ["身份揭秘", "赐婚/退婚", "家族危机", "宫廷政变", "生死相随"],
             pleasurePointTypes: ["甜蜜互动", "打脸恶毒配角", "男主霸气护妻", "身份反转", "终成眷属"]
         ),
-        GenreTemplate(
+        LegacyGenreTemplate(
             id: "palace-intrigue", name: "宫斗宅斗", aliases: ["宫斗", "宅斗"],
             category: .romance,
             description: "宫廷/后宅女性之间的权谋争斗",
@@ -373,7 +373,7 @@ enum GenreTemplateLibrary {
             hookPatterns: ["陷害与反杀", "宠爱争夺", "子嗣之争", "家族兴衰", "最终上位"],
             pleasurePointTypes: ["反杀对手", "获得宠爱", "子嗣降生", "家族翻盘", "登上高位"]
         ),
-        GenreTemplate(
+        LegacyGenreTemplate(
             id: "sweet-love", name: "青春甜宠", aliases: ["甜宠", "校园恋爱"],
             category: .romance,
             description: "甜蜜轻松的恋爱故事，高甜无虐",
@@ -389,7 +389,7 @@ enum GenreTemplateLibrary {
             hookPatterns: ["甜蜜互动", "意外同居", "假装情侣", "表白名场面", "求婚惊喜"],
             pleasurePointTypes: ["甜蜜暴击", "男主吃醋", "当众表白", "撒狗粮", "幸福结局"]
         ),
-        GenreTemplate(
+        LegacyGenreTemplate(
             id: "ceo-romance", name: "豪门总裁", aliases: ["总裁文", "豪门"],
             category: .romance,
             description: "霸道总裁与灰姑娘的爱情故事",
@@ -405,7 +405,7 @@ enum GenreTemplateLibrary {
             hookPatterns: ["契约关系", "身份暴露", "商业危机", "情敌挑衅", "身世揭秘"],
             pleasurePointTypes: ["总裁霸气护妻", "甜蜜撒糖", "打脸恶毒配角", "身世反转", "盛大婚礼"]
         ),
-        GenreTemplate(
+        LegacyGenreTemplate(
             id: "workplace-romance", name: "职场婚恋", aliases: ["职场言情", "婚恋"],
             category: .romance,
             description: "职场背景的成熟爱情故事",
@@ -421,7 +421,7 @@ enum GenreTemplateLibrary {
             hookPatterns: ["职场危机", "项目合作", "误会澄清", "事业选择", "感情表白"],
             pleasurePointTypes: ["事业成功", "感情进展", "化解危机", "互相成就", "携手同行"]
         ),
-        GenreTemplate(
+        LegacyGenreTemplate(
             id: "fantasy-romance", name: "幻想言情", aliases: ["仙侠言情", "玄幻言情"],
             category: .romance,
             description: "仙侠/玄幻背景的言情故事",
@@ -441,8 +441,8 @@ enum GenreTemplateLibrary {
     
     // MARK: - 悬疑类
     
-    static let suspenseGenres: [GenreTemplate] = [
-        GenreTemplate(
+    static let suspenseGenres: [LegacyGenreTemplate] = [
+        LegacyGenreTemplate(
             id: "rules-mystery", name: "规则怪谈", aliases: ["怪谈", "规则类怪谈"],
             category: .suspense,
             description: "遵循特定规则才能存活的恐怖故事",
@@ -458,7 +458,7 @@ enum GenreTemplateLibrary {
             hookPatterns: ["新规则发现", "规则矛盾", "同伴出局", "真相揭露", "规则反转"],
             pleasurePointTypes: ["推理正确", "规则破解", "智取存活", "真相大白", "反杀怪物"]
         ),
-        GenreTemplate(
+        LegacyGenreTemplate(
             id: "suspense-brainhole", name: "悬疑脑洞", aliases: ["悬疑推理", "烧脑"],
             category: .suspense,
             description: "充满反转和推理的悬疑故事",
@@ -474,7 +474,7 @@ enum GenreTemplateLibrary {
             hookPatterns: ["新线索发现", "嫌疑人排除", "关键反转", "真相揭露", "终极反转"],
             pleasurePointTypes: ["推理正确", "真相大白", "伏笔回收", "反转震撼", "逻辑自洽"]
         ),
-        GenreTemplate(
+        LegacyGenreTemplate(
             id: "supernatural-suspense", name: "悬疑灵异", aliases: ["灵异", "鬼故事"],
             category: .suspense,
             description: "灵异元素与悬疑推理结合的故事",
@@ -490,7 +490,7 @@ enum GenreTemplateLibrary {
             hookPatterns: ["灵异事件", "真相调查", "驱邪过程", "因果揭示", "善后化解"],
             pleasurePointTypes: ["驱邪成功", "真相大白", "怨灵化解", "因果圆满", "能力提升"]
         ),
-        GenreTemplate(
+        LegacyGenreTemplate(
             id: "cthulhu", name: "克苏鲁", aliases: ["克系", "克系悬疑"],
             category: .suspense,
             description: "面对不可名状的宇宙恐怖",
@@ -506,7 +506,7 @@ enum GenreTemplateLibrary {
             hookPatterns: ["异常发现", "理智下降", "邪教仪式", "古神苏醒", "禁忌知识"],
             pleasurePointTypes: ["理智保全", "逃脱恐怖", "知识获取", "邪教挫败", "生存"]
         ),
-        GenreTemplate(
+        LegacyGenreTemplate(
             id: "dog-blood-romance", name: "狗血言情", aliases: ["狗血"],
             category: .suspense,
             description: "极致冲突、极致反转的言情故事",

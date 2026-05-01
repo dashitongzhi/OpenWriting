@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 // MARK: - Enhanced Memory System
@@ -47,7 +48,7 @@ enum MemoryBucket: String, Codable, CaseIterable {
 }
 
 /// 单条记忆项
-struct MemoryItem: Codable, Identifiable {
+struct MemoryManagerItem: Codable, Identifiable {
     let id: UUID
     let bucket: MemoryBucket
     let subject: String
@@ -117,7 +118,7 @@ struct EpisodicMemoryEntry: Codable, Identifiable {
 
 /// 语义记忆存储（长期记忆主真源）
 struct SemanticMemoryStore: Codable {
-    var items: [MemoryItem]
+    var items: [MemoryManagerItem]
     var lastCompactedAt: Date?
     var totalCompressions: Int
     
@@ -128,17 +129,17 @@ struct SemanticMemoryStore: Codable {
     }
     
     /// 按分桶获取活跃记忆
-    func activeItems(in bucket: MemoryBucket) -> [MemoryItem] {
+    func activeItems(in bucket: MemoryBucket) -> [MemoryManagerItem] {
         items.filter { $0.bucket == bucket && $0.status == .active }
     }
     
     /// 获取所有活跃记忆
-    var allActiveItems: [MemoryItem] {
+    var allActiveItems: [MemoryManagerItem] {
         items.filter { $0.status == .active }
     }
     
     /// 获取冲突记忆
-    var contradictedItems: [MemoryItem] {
+    var contradictedItems: [MemoryManagerItem] {
         items.filter { $0.status == .contradicted }
     }
 }
@@ -182,7 +183,7 @@ class MemoryManager: ObservableObject {
         
         // 3. 处理状态变化
         for change in result.stateChanges {
-            let item = MemoryItem(
+            let item = MemoryManagerItem(
                 bucket: .characterState,
                 subject: change.character,
                 field: change.field,
@@ -195,7 +196,7 @@ class MemoryManager: ObservableObject {
         
         // 4. 处理新实体
         for entity in result.newEntities {
-            let item = MemoryItem(
+            let item = MemoryManagerItem(
                 bucket: .storyFacts,
                 subject: entity.name,
                 field: "introduction",
@@ -207,7 +208,7 @@ class MemoryManager: ObservableObject {
         
         // 5. 处理新关系
         for relation in result.newRelationships {
-            let item = MemoryItem(
+            let item = MemoryManagerItem(
                 bucket: .relationships,
                 subject: relation.from,
                 field: relation.type,
@@ -225,7 +226,7 @@ class MemoryManager: ObservableObject {
     }
     
     /// 插入或更新记忆项（去重 + 状态管理）
-    func upsertItem(_ newItem: MemoryItem) {
+    func upsertItem(_ newItem: MemoryManagerItem) {
         let key = newItem.deduplicationKey
         
         // 查找已有的同 key 活跃项
@@ -252,8 +253,8 @@ class MemoryManager: ObservableObject {
     
     /// 从章节提交结果创建记忆项
     func createMemoryFact(bucket: MemoryBucket, subject: String, field: String,
-                          value: String, chapterNumber: Int, evidence: String? = nil) -> MemoryItem {
-        MemoryItem(bucket: bucket, subject: subject, field: field, value: value,
+                          value: String, chapterNumber: Int, evidence: String? = nil) -> MemoryManagerItem {
+        MemoryManagerItem(bucket: bucket, subject: subject, field: field, value: value,
                    sourceChapter: chapterNumber, evidence: evidence)
     }
     
@@ -268,29 +269,29 @@ class MemoryManager: ObservableObject {
     }
     
     /// 查询角色当前状态
-    func queryCharacterState(_ character: String) -> [MemoryItem] {
+    func queryCharacterState(_ character: String) -> [MemoryManagerItem] {
         memoryPack.semanticMemory.activeItems(in: .characterState)
             .filter { $0.subject.lowercased() == character.lowercased() }
     }
     
     /// 查询世界观规则
-    func queryWorldRules() -> [MemoryItem] {
+    func queryWorldRules() -> [MemoryManagerItem] {
         memoryPack.semanticMemory.activeItems(in: .worldRules)
     }
     
     /// 查询未回收伏笔
-    func getOpenLoops() -> [MemoryItem] {
+    func getOpenLoops() -> [MemoryManagerItem] {
         memoryPack.semanticMemory.activeItems(in: .openLoops)
     }
     
     /// 查询时间线
-    func getTimeline() -> [MemoryItem] {
+    func getTimeline() -> [MemoryManagerItem] {
         memoryPack.semanticMemory.activeItems(in: .timeline)
             .sorted { $0.sourceChapter < $1.sourceChapter }
     }
     
     /// 查询角色关系
-    func queryRelationships(_ character: String? = nil) -> [MemoryItem] {
+    func queryRelationships(_ character: String? = nil) -> [MemoryManagerItem] {
         let items = memoryPack.semanticMemory.activeItems(in: .relationships)
         if let character = character {
             return items.filter {
@@ -406,7 +407,7 @@ struct ChapterCommitResult {
     let stateChanges: [StateChange]
     let newEntities: [NewEntity]
     let newRelationships: [NewRelationship]
-    let memoryFacts: [MemoryItem]
+    let memoryFacts: [MemoryManagerItem]
 }
 
 struct StateChange {
