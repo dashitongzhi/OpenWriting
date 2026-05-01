@@ -222,7 +222,75 @@ extension AIWritingService {
             .map(\.chapterSummary)
             .joined(separator: "、")
 
-        return """
+        // Build rankable context sections
+        var sections: [ContextSection] = []
+
+        sections.append(ContextSection(
+            label: "草稿箱当前正文",
+            content: support.currentDraftExcerpt,
+            category: .currentDraft
+        ))
+        sections.append(ContextSection(
+            label: "增强记忆系统",
+            content: support.enhancedMemoryContext,
+            category: .enhancedMemory
+        ))
+        sections.append(ContextSection(
+            label: "作品大纲",
+            content: normalized(project.outlineText, fallback: "暂无大纲，请依据项目摘要和当前章节目标稳步推进。"),
+            category: .outline
+        ))
+        sections.append(ContextSection(
+            label: "分卷/阶段规划",
+            content: normalized(project.volumePlanNotes, fallback: "暂无分卷规划。"),
+            category: .volumePlan
+        ))
+        sections.append(ContextSection(
+            label: "在途线索",
+            content: normalized(project.activeThreadsNotes, fallback: "暂无在途线索。"),
+            category: .activeThreads
+        ))
+        sections.append(ContextSection(
+            label: "章节树关键约束",
+            content: support.chapterTreeFocus,
+            category: .chapterTree
+        ))
+        sections.append(ContextSection(
+            label: "风格指纹",
+            content: support.styleFingerprint,
+            category: .styleFingerprint
+        ))
+        sections.append(ContextSection(
+            label: "节奏监控",
+            content: support.strandContext,
+            category: .strandContext
+        ))
+        sections.append(ContextSection(
+            label: "题材配置",
+            content: support.genreTemplateContext,
+            category: .genreTemplate
+        ))
+        sections.append(ContextSection(
+            label: "手动参考文本",
+            content: normalized(project.referenceContextText, fallback: "暂无手动补充的参考文本。"),
+            category: .manualReference
+        ))
+        sections.append(ContextSection(
+            label: "检索到的相关参考文本",
+            content: support.relevantReferences,
+            category: .retrievedReferences
+        ))
+        sections.append(ContextSection(
+            label: "特殊要求",
+            content: normalized(project.specialRequirements, fallback: "暂无额外特殊要求。"),
+            category: .specialRequirements
+        ))
+
+        // Rank sections by relevance
+        let rankedSections = ContextRanker.rank(sections, project: project)
+
+        // Assemble fixed prefix
+        var prompt = """
         项目名称：\(project.title)
         类型：\(project.genre)
         创作规模：\(project.storyLength.title)
@@ -241,46 +309,19 @@ extension AIWritingService {
 
         本次续写拍点：
         \(normalized(writingPlan, fallback: "请先承接当前草稿，再推进一个明确的新情节拍点。"))
+        """
 
-        草稿箱当前正文（用户可能刚刚修改或新增，必须作为下次生成的直接参考与承接对象）：
-        \(support.currentDraftExcerpt)
+        // Append ranked context sections
+        for section in rankedSections {
+            prompt += "\n\n\(section.label)：\n\(section.content)"
+        }
 
-        ===== 增强记忆系统 =====
-        \(support.enhancedMemoryContext)
+        // Append fixed suffix (always at end)
+        prompt += """
 
-        作品大纲：
-        \(normalized(project.outlineText, fallback: "暂无大纲，请依据项目摘要和当前章节目标稳步推进。"))
-
-        分卷/阶段规划：
-        \(normalized(project.volumePlanNotes, fallback: "暂无分卷规划。"))
-
-        在途线索：
-        \(normalized(project.activeThreadsNotes, fallback: "暂无在途线索。"))
-
-        章节树关键约束：
-        \(support.chapterTreeFocus)
-
-        风格指纹：
-        \(support.styleFingerprint)
-
-        ===== 节奏监控 =====
-        \(support.strandContext)
-
-        ===== 题材配置 =====
-        \(support.genreTemplateContext)
-
-        ===== 叙事阶段 =====
+        叙事阶段：
         \(project.narrativeStage.pacingDirective)
         \(project.narrativeStage.contextWeightHint)
-
-        手动参考文本：
-        \(normalized(project.referenceContextText, fallback: "暂无手动补充的参考文本。"))
-
-        检索到的相关参考文本：
-        \(support.relevantReferences)
-
-        特殊要求：
-        \(normalized(project.specialRequirements, fallback: "暂无额外特殊要求。"))
 
         字数设定：
         \(normalized(project.wordTargetText, fallback: "暂无专门字数设定，请按正常章节节奏展开。"))
@@ -308,6 +349,8 @@ extension AIWritingService {
         若需承上启下，请用新的动作、冲突、观察或结果进入当前章节，而不是复述上一章摘要。
         请直接输出续写后的正文。
         """
+
+        return prompt
     }
 
     // MARK: - Enhanced Writing Plan Prompt

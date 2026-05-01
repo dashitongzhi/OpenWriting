@@ -357,6 +357,153 @@ enum AIWritingService {
         return text
     }
 
+    // MARK: - BM25 Scorer
+
+    /// Okapi BM25 scorer for reference retrieval.
+    /// Supports Chinese text via character-level n-gram tokenization.
+    private struct BM25Scorer {
+        private static let k1: Double = 1.2
+        private static let b: Double = 0.75
+
+        private let corpusSize: Int
+        private let avgDocLength: Double
+        private let docLengths: [Int]
+        private let docTermFreqs: [[String: Int]]
+        private let docFreqs: [String: Int]
+
+        /// Build scorer from a corpus of tokenized documents.
+        init(documents: [[String]]) {
+            corpusSize = documents.count
+            var lengths = [Int]()
+            var allTermFreqs = [[String: Int]]()
+            var freqs = [String: Int]()
+
+            for doc in documents {
+                lengths.append(doc.count)
+                var tf = [String: Int]()
+                for term in doc {
+                    tf[term, default: 0] += 1
+                }
+                allTermFreqs.append(tf)
+                for term in tf.keys {
+                    freqs[term, default: 0] += 1
+                }
+            }
+
+            docLengths = lengths
+            avgDocLength = lengths.isEmpty ? 1 : Double(lengths.reduce(0, +)) / Double(lengths.count)
+            docTermFreqs = allTermFreqs
+            docFreqs = freqs
+        }
+
+        /// BM25 score for a single document against the given query terms.
+        func score(documentIndex: Int, queryTerms: [String]) -> Double {
+            guard corpusSize > 0, documentIndex < corpusSize else { return 0 }
+            let tf = docTermFreqs[documentIndex]
+            let dl = Double(docLengths[documentIndex])
+            var total: Double = 0
+
+            for term in Set(queryTerms) {
+                guard let f = tf[term], f > 0 else { continue }
+                let n = Double(docFreqs[term] ?? 0)
+                let idf = log((Double(corpusSize) - n + 0.5) / (n + 0.5) + 1.0)
+                let numerator = Double(f) * (Self.k1 + 1)
+                let denominator = Double(f) + Self.k1 * (1 - Self.b + Self.b * dl / avgDocLength)
+                total += idf * numerator / denominator
+            }
+            return total
+        }
+
+        // MARK: - Tokenization
+
+        /// Tokenize text for BM25 scoring. Handles both CJK and Latin scripts.
+        /// CJK characters are split into unigrams, bigrams, and trigrams.
+        /// Latin words are kept whole, lowercased.
+        static func tokenize(_ text: String) -> [String] {
+            var tokens = [String]()
+            var cjkBuffer = [Unicode.Scalar]()
+            var latinBuffer = [Unicode.Scalar]()
+
+            for scalar in text.unicodeScalars {
+                if isCJK(scalar) {
+                    if !latinBuffer.isEmpty {
+                        flushLatin(&latinBuffer, into: &tokens)
+                    }
+                    cjkBuffer.append(scalar)
+                } else if scalar.properties.isWhitespace
+                    || scalar.properties.isPunctuation
+                    || scalar.properties.isSymbol
+                    || scalar.value == 0x0A || scalar.value == 0x0D
+                {
+                    if !cjkBuffer.isEmpty {
+                        flushCJK(&cjkBuffer, into: &tokens)
+                    }
+                    if !latinBuffer.isEmpty {
+                        flushLatin(&latinBuffer, into: &tokens)
+                    }
+                } else {
+                    if !cjkBuffer.isEmpty {
+                        flushCJK(&cjkBuffer, into: &tokens)
+                    }
+                    latinBuffer.append(scalar)
+                }
+            }
+            if !cjkBuffer.isEmpty {
+                flushCJK(&cjkBuffer, into: &tokens)
+            }
+            if !latinBuffer.isEmpty {
+                flushLatin(&latinBuffer, into: &tokens)
+            }
+            return tokens
+        }
+
+        private static func flushLatin(_ buffer: inout [Unicode.Scalar], into tokens: inout [String]) {
+            let word = String(Unicode.ScalarView(buffer)).lowercased()
+            if !word.isEmpty { tokens.append(word) }
+            buffer.removeAll()
+        }
+
+        private static func flushCJK(_ buffer: inout [Unicode.Scalar], into tokens: inout [String]) {
+            tokens.append(contentsOf: cjkNGrams(buffer))
+            buffer.removeAll()
+        }
+
+        private static func isCJK(_ scalar: Unicode.Scalar) -> Bool {
+            let v = scalar.value
+            return (v >= 0x4E00 && v <= 0x9FFF)       // CJK Unified Ideographs
+                || (v >= 0x3400 && v <= 0x4DBF)       // CJK Extension A
+                || (v >= 0xF900 && v <= 0xFAFF)       // CJK Compatibility
+                || (v >= 0x20000 && v <= 0x2A6DF)     // CJK Extension B
+                || (v >= 0x2A700 && v <= 0x2CEAF)     // CJK Extensions C–F
+        }
+
+        /// Extract unigrams, bigrams, and trigrams from a run of CJK characters.
+        private static func cjkNGrams(_ chars: [Unicode.Scalar]) -> [String] {
+            let count = chars.count
+            guard count > 0 else { return [] }
+            var tokens = [String]()
+            // Unigrams
+            for i in 0..<count {
+                tokens.append(String(chars[i]))
+            }
+            // Bigrams
+            if count >= 2 {
+                for i in 0..<(count - 1) {
+                    tokens.append(String(chars[i]) + String(chars[i + 1]))
+                }
+            }
+            // Trigrams
+            if count >= 3 {
+                for i in 0..<(count - 2) {
+                    tokens.append(String(chars[i]) + String(chars[i + 1]) + String(chars[i + 2]))
+                }
+            }
+            return tokens
+        }
+    }
+
+    // MARK: - Writing Support Context
+
     struct WritingSupportContext {
         let currentDraftExcerpt: String
         let relevantReferences: String
@@ -395,10 +542,16 @@ enum AIWritingService {
             ]
             .joined(separator: "\n")
 
+            let queryTerms = BM25Scorer.tokenize(query)
             let keywords = keywordCandidates(from: query)
-            let rankedDocuments = project.referenceDocuments
-                .map { document in
-                    (document, referenceScore(document, keywords: keywords))
+
+            // BM25-rank reference documents
+            let docTexts = project.referenceDocuments.map { "\($0.title)\n\($0.content)" }
+            let docTokens = docTexts.map { BM25Scorer.tokenize($0) }
+            let docScorer = BM25Scorer(documents: docTokens)
+            let rankedDocuments = project.referenceDocuments.enumerated()
+                .map { offset, document in
+                    (document, docScorer.score(documentIndex: offset, queryTerms: queryTerms))
                 }
                 .sorted { lhs, rhs in
                     if lhs.1 == rhs.1 {
@@ -408,7 +561,7 @@ enum AIWritingService {
                 }
                 .prefix(4)
 
-            let chapterExcerpts = relevantChapterExcerpts(for: project, keywords: keywords)
+            let chapterExcerpts = relevantChapterExcerpts(for: project, queryTerms: queryTerms, keywords: keywords)
             let documentExcerpts = rankedDocuments.map { document, _ in
                 "参考《\(document.title)》：\n\(bestReferenceWindow(in: document.content, keywords: keywords, limit: 1_400))"
             }
@@ -417,11 +570,18 @@ enum AIWritingService {
             return excerpts.isEmpty ? "暂无相关章节或导入参考文本。" : excerpts.joined(separator: "\n\n")
         }
 
-        private static func relevantChapterExcerpts(for project: NovelProject, keywords: [String]) -> [String] {
-            project.chapterDrafts
+        private static func relevantChapterExcerpts(for project: NovelProject, queryTerms: [String], keywords: [String]) -> [String] {
+            let filteredChapters = project.chapterDrafts
                 .filter { $0.chapterNumber != project.currentChapterNumber }
-                .map { chapter in
-                    (chapter, referenceScore(chapter.content + "\n" + chapter.chapterSummary, keywords: keywords))
+            guard !filteredChapters.isEmpty else { return [] }
+
+            let chapterTexts = filteredChapters.map { $0.content + "\n" + $0.chapterSummary }
+            let chapterTokens = chapterTexts.map { BM25Scorer.tokenize($0) }
+            let chapterScorer = BM25Scorer(documents: chapterTokens)
+
+            return filteredChapters.enumerated()
+                .map { offset, chapter in
+                    (chapter, chapterScorer.score(documentIndex: offset, queryTerms: queryTerms))
                 }
                 .filter { _, score in score > 0 }
                 .sorted { lhs, rhs in
@@ -434,16 +594,6 @@ enum AIWritingService {
                 .map { chapter, _ in
                     "相关已保存章节《\(chapter.chapterSummary)》：\n\(bestReferenceWindow(in: chapter.content, keywords: keywords, limit: 1_200))"
                 }
-        }
-
-        private static func referenceScore(_ document: ReferenceDocument, keywords: [String]) -> Int {
-            referenceScore("\(document.title)\n\(document.content)", keywords: keywords)
-        }
-
-        private static func referenceScore(_ haystack: String, keywords: [String]) -> Int {
-            return keywords.reduce(0) { score, keyword in
-                haystack.localizedStandardContains(keyword) ? score + keyword.count : score
-            }
         }
 
         private static func bestReferenceWindow(in text: String, keywords: [String], limit: Int) -> String {
@@ -469,21 +619,14 @@ enum AIWritingService {
         }
 
         private static func keywordCandidates(from text: String) -> [String] {
-            let separators = CharacterSet.whitespacesAndNewlines
-                .union(.punctuationCharacters)
-                .union(.symbols)
-
             var seen = Set<String>()
-            return text
-                .components(separatedBy: separators)
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            return BM25Scorer.tokenize(text)
                 .filter { token in
-                    guard token.count >= 2, token.count <= 12 else { return false }
-                    guard !seen.contains(token) else { return false }
+                    guard token.count >= 2, !seen.contains(token) else { return false }
                     seen.insert(token)
                     return true
                 }
-                .prefix(80)
+                .prefix(200)
                 .map { String($0) }
         }
 
