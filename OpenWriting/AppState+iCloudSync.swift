@@ -33,9 +33,10 @@ extension AppState {
             return
         }
 
+        let snapshotProjects = hydratedProjectsForPersistenceSnapshot(recentProjects)
         let snapshot = AccountProjectSnapshot(
             activeProjectID: activeProjectID,
-            recentProjects: recentProjects,
+            recentProjects: snapshotProjects,
             updatedAt: Date(timeIntervalSince1970: currentProjectSnapshotTimestamp)
         )
 
@@ -163,9 +164,10 @@ extension AppState {
             }
 
             if !recentProjects.isEmpty {
+                let snapshotProjects = hydratedProjectsForPersistenceSnapshot(recentProjects)
                 let snapshot = AccountProjectSnapshot(
                     activeProjectID: activeProjectID,
-                    recentProjects: recentProjects,
+                    recentProjects: snapshotProjects,
                     updatedAt: Date(timeIntervalSince1970: max(currentProjectSnapshotTimestamp, Date().timeIntervalSince1970))
                 )
                 try await cloudStore.saveSnapshot(snapshot, for: scope)

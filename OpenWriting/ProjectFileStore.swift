@@ -15,6 +15,7 @@ struct ProjectFileStore {
     private struct ChapterIndex: Codable {
         var version: Int
         var chapterIDs: [ChapterDraft.ID]
+        var chapters: [ChapterDraftMetadata]?
     }
 
     init(
@@ -90,24 +91,44 @@ struct ProjectFileStore {
                   var project = try? decoder.decode(NovelProject.self, from: projectData)
             else { return nil }
 
-            project.chapterDrafts = loadChapterDrafts(for: projectID, scope: scope)
+            project.chapterCatalog = loadChapterMetadata(for: projectID, scope: scope)
+            project.chapterDrafts = []
             return project
         }
 
         return projects.isEmpty ? nil : projects
     }
 
-    private func loadChapterDrafts(for projectID: NovelProject.ID, scope: String?) -> [ChapterDraft] {
+    func loadChapterDraft(_ chapterID: ChapterDraft.ID, for projectID: NovelProject.ID, scope: String?) -> ChapterDraft? {
+        let chapterURL = chapterURL(for: chapterID, projectID: projectID, scope: scope)
+        guard let data = try? Data(contentsOf: chapterURL) else { return nil }
+        return try? decoder.decode(ChapterDraft.self, from: data)
+    }
+
+    func loadChapterDrafts(for projectID: NovelProject.ID, scope: String?) -> [ChapterDraft] {
         let indexURL = chapterIndexURL(for: projectID, scope: scope)
         guard let indexData = try? Data(contentsOf: indexURL),
               let index = try? decoder.decode(ChapterIndex.self, from: indexData)
         else { return [] }
 
         return index.chapterIDs.compactMap { chapterID in
-            let chapterURL = chapterURL(for: chapterID, projectID: projectID, scope: scope)
-            guard let data = try? Data(contentsOf: chapterURL) else { return nil }
-            return try? decoder.decode(ChapterDraft.self, from: data)
+            loadChapterDraft(chapterID, for: projectID, scope: scope)
         }
+    }
+
+    private func loadChapterMetadata(for projectID: NovelProject.ID, scope: String?) -> [ChapterDraftMetadata] {
+        let indexURL = chapterIndexURL(for: projectID, scope: scope)
+        guard let indexData = try? Data(contentsOf: indexURL),
+              let index = try? decoder.decode(ChapterIndex.self, from: indexData)
+        else { return [] }
+
+        if let chapters = index.chapters, !chapters.isEmpty {
+            return chapters
+        }
+
+        return loadChapterDrafts(for: projectID, scope: scope)
+            .map(ChapterDraftMetadata.init)
+            .sorted(by: ChapterDraftMetadata.sortDescending)
     }
 
     private func saveShardedProjects(_ projects: [NovelProject], for scope: String?) throws {
@@ -137,7 +158,12 @@ struct ProjectFileStore {
         metadata.chapterDrafts = []
         try writeIfChanged(try encoder.encode(metadata), to: projectMetadataURL(for: project.id, scope: scope))
 
-        let chapterIndex = ChapterIndex(version: 2, chapterIDs: project.chapterDrafts.map(\.id))
+        let chapterCatalog = resolvedChapterCatalog(for: project)
+        let chapterIndex = ChapterIndex(
+            version: 3,
+            chapterIDs: chapterCatalog.map(\.id),
+            chapters: chapterCatalog
+        )
         try writeIfChanged(try encoder.encode(chapterIndex), to: chapterIndexURL(for: project.id, scope: scope))
 
         for chapterDraft in project.chapterDrafts {
@@ -150,8 +176,17 @@ struct ProjectFileStore {
 
         try removeDeletedChapterFiles(
             in: chaptersDirectory,
-            keeping: Set(project.chapterDrafts.map(\.id))
+            keeping: Set(chapterCatalog.map(\.id))
         )
+    }
+
+    private func resolvedChapterCatalog(for project: NovelProject) -> [ChapterDraftMetadata] {
+        var catalogByID = Dictionary(uniqueKeysWithValues: project.chapterCatalog.map { ($0.id, $0) })
+        for chapterDraft in project.chapterDrafts {
+            catalogByID[chapterDraft.id] = ChapterDraftMetadata(chapterDraft: chapterDraft)
+        }
+
+        return catalogByID.values.sorted(by: ChapterDraftMetadata.sortDescending)
     }
 
     private func writeIfChanged(_ data: Data, to url: URL) throws {

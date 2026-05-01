@@ -23,6 +23,11 @@ struct ProjectSavedChaptersSheet: View {
         return resolvedSavedChapter(in: project, selectedChapterID: selectedChapterID)
     }
 
+    private var selectedChapterMetadata: ChapterDraftMetadata? {
+        guard let project else { return nil }
+        return resolvedSavedChapterMetadata(in: project, selectedChapterID: selectedChapterID)
+    }
+
     private var searchResults: [LongformSearchResult] {
         appState.searchLongformProject(searchText, in: projectID)
     }
@@ -83,11 +88,12 @@ struct ProjectSavedChaptersSheet: View {
                                 SavedChapterDirectoryList(
                                     title: "章节目录",
                                     countLabel: "\(project.savedChapterCount) 章",
-                                    chapterDrafts: project.sortedChapterDrafts,
-                                    selectedChapterID: selectedChapter?.id,
+                                    chapterDrafts: project.sortedChapterCatalog,
+                                    selectedChapterID: selectedChapterMetadata?.id,
                                     style: directoryStyle,
-                                    onSelect: { chapterDraft in
-                                        selectedChapterID = chapterDraft.id
+                                    onSelect: { metadata in
+                                        selectedChapterID = metadata.id
+                                        appState.ensureChapterDraftLoaded(metadata.id, for: project.id)
                                     }
                                 )
 
@@ -122,15 +128,16 @@ struct ProjectSavedChaptersSheet: View {
 
                         VStack(alignment: .leading, spacing: 20) {
                             SavedChapterDirectoryList(
-                                title: "章节目录",
-                                countLabel: "\(project.savedChapterCount) 章",
-                                chapterDrafts: project.sortedChapterDrafts,
-                                selectedChapterID: selectedChapter?.id,
-                                style: directoryStyle,
-                                onSelect: { chapterDraft in
-                                    selectedChapterID = chapterDraft.id
-                                }
-                            )
+                                    title: "章节目录",
+                                    countLabel: "\(project.savedChapterCount) 章",
+                                    chapterDrafts: project.sortedChapterCatalog,
+                                    selectedChapterID: selectedChapterMetadata?.id,
+                                    style: directoryStyle,
+                                    onSelect: { metadata in
+                                        selectedChapterID = metadata.id
+                                        appState.ensureChapterDraftLoaded(metadata.id, for: project.id)
+                                    }
+                                )
 
                             SavedChapterPreviewPanel(
                                 chapterDraft: selectedChapter,
@@ -170,16 +177,22 @@ struct ProjectSavedChaptersSheet: View {
                     alignment: .topLeading
                 )
                 .task(id: project.id) {
-                    selectedChapterID = project.sortedChapterDrafts.first?.id
+                    selectedChapterID = project.sortedChapterCatalog.first?.id
+                    if let selectedChapterID {
+                        appState.ensureChapterDraftLoaded(selectedChapterID, for: project.id)
+                    }
                 }
-                .onChange(of: project.chapterDrafts) { _, chapterDrafts in
-                    let sortedDrafts = chapterDrafts.sorted(by: ChapterDraft.sortDescending)
+                .onChange(of: project.chapterCatalog) { _, chapterCatalog in
+                    let sortedDrafts = chapterCatalog.sorted(by: ChapterDraftMetadata.sortDescending)
                     if let selectedChapterID,
                        sortedDrafts.contains(where: { $0.id == selectedChapterID }) {
                         return
                     }
 
                     self.selectedChapterID = sortedDrafts.first?.id
+                    if let selectedChapterID = self.selectedChapterID {
+                        appState.ensureChapterDraftLoaded(selectedChapterID, for: project.id)
+                    }
                 }
             } else {
                 VStack(alignment: .leading, spacing: 16) {

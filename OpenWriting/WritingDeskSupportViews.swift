@@ -33,7 +33,7 @@ struct WritingDeskCollapsedLayout {
             draftPrimaryCardHeight = availableHeight
         }
 
-        draftEditorHeight = max(132, draftPrimaryCardHeight - 340)
+        draftEditorHeight = max(220, draftPrimaryCardHeight - 210)
         cacheEditorHeight = max(72, (cacheCardHeight ?? 0) - 124)
         aiEditorHeight = max(148, aiCardHeight - (showTimeline ? 272 : 214))
     }

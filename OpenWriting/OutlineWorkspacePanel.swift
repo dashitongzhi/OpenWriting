@@ -21,16 +21,22 @@ struct OutlineWorkspacePanel: View {
             }
             .id(project.id)
             .task(id: project.id) {
-                selectedSavedChapterID = project.sortedChapterDrafts.first?.id
+                selectedSavedChapterID = project.sortedChapterCatalog.first?.id
+                if let selectedSavedChapterID {
+                    appState.ensureChapterDraftLoaded(selectedSavedChapterID, for: project.id)
+                }
             }
-            .onChange(of: project.chapterDrafts) { _, chapterDrafts in
-                let sortedDrafts = chapterDrafts.sorted(by: ChapterDraft.sortDescending)
+            .onChange(of: project.chapterCatalog) { _, chapterCatalog in
+                let sortedDrafts = chapterCatalog.sorted(by: ChapterDraftMetadata.sortDescending)
                 if let selectedSavedChapterID,
                    sortedDrafts.contains(where: { $0.id == selectedSavedChapterID }) {
                     return
                 }
 
                 self.selectedSavedChapterID = sortedDrafts.first?.id
+                if let selectedSavedChapterID = self.selectedSavedChapterID {
+                    appState.ensureChapterDraftLoaded(selectedSavedChapterID, for: project.id)
+                }
             }
         } else {
             DashboardPanel(
@@ -52,7 +58,7 @@ struct OutlineWorkspacePanel: View {
             title: "章节目录",
             subtitle: "这里只显示当前已打开项目《\(project.title)》的已保存章节。目录只列章节编号和标题，点开即可预览正文。"
         ) {
-            if project.sortedChapterDrafts.isEmpty {
+            if project.sortedChapterCatalog.isEmpty {
                 Text("当前还没有已保存章节。你在写作台点“AI 拟标题并保存”后，章节会出现在这里。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -62,11 +68,12 @@ struct OutlineWorkspacePanel: View {
                         SavedChapterDirectoryList(
                             title: "章节目录",
                             countLabel: "\(project.savedChapterCount) 章",
-                            chapterDrafts: project.sortedChapterDrafts,
+                            chapterDrafts: project.sortedChapterCatalog,
                             selectedChapterID: selectedSavedChapterID,
                             style: outlineDirectoryStyle,
-                            onSelect: { chapterDraft in
-                                selectedSavedChapterID = chapterDraft.id
+                            onSelect: { metadata in
+                                selectedSavedChapterID = metadata.id
+                                appState.ensureChapterDraftLoaded(metadata.id, for: project.id)
                             }
                         )
                             .frame(width: 320, alignment: .topLeading)
@@ -89,11 +96,12 @@ struct OutlineWorkspacePanel: View {
                         SavedChapterDirectoryList(
                             title: "章节目录",
                             countLabel: "\(project.savedChapterCount) 章",
-                            chapterDrafts: project.sortedChapterDrafts,
+                            chapterDrafts: project.sortedChapterCatalog,
                             selectedChapterID: selectedSavedChapterID,
                             style: outlineDirectoryStyle,
-                            onSelect: { chapterDraft in
-                                selectedSavedChapterID = chapterDraft.id
+                            onSelect: { metadata in
+                                selectedSavedChapterID = metadata.id
+                                appState.ensureChapterDraftLoaded(metadata.id, for: project.id)
                             }
                         )
                         SavedChapterPreviewPanel(

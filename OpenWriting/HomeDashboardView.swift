@@ -129,7 +129,7 @@ struct HomeDashboardView: View {
                 .tracking(3)
                 .foregroundStyle(palette.textSecondary)
 
-            Text("把灵感、设定与结构，变成成真正的作品！")
+            Text("把灵感、设定与结构，变成真正的作品！")
                 .font(.system(size: 48, weight: .bold, design: .serif))
                 .foregroundStyle(palette.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1763,7 +1763,8 @@ private struct ProjectsWorkspacePanel: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         do {
-            let summary = try ProjectExportService.exportProject(project, to: url)
+            let exportProject = appState.hydratedProjectForFullText(project.id) ?? project
+            let summary = try ProjectExportService.exportProject(exportProject, to: url)
             exportStatusMessage = "已导出 \(summary.fileCount) 个文件到 \(summary.directoryURL.path)。"
             NSWorkspace.shared.activateFileViewerSelecting([summary.directoryURL])
         } catch {

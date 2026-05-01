@@ -39,13 +39,25 @@ func resolvedSavedChapter(
     return project.sortedChapterDrafts.first
 }
 
+func resolvedSavedChapterMetadata(
+    in project: NovelProject,
+    selectedChapterID: ChapterDraft.ID?
+) -> ChapterDraftMetadata? {
+    if let selectedChapterID,
+       let metadata = project.sortedChapterCatalog.first(where: { $0.id == selectedChapterID }) {
+        return metadata
+    }
+
+    return project.sortedChapterCatalog.first
+}
+
 struct SavedChapterDirectoryList: View {
     let title: String
     let countLabel: String
-    let chapterDrafts: [ChapterDraft]
+    let chapterDrafts: [ChapterDraftMetadata]
     let selectedChapterID: ChapterDraft.ID?
     let style: SavedChapterDirectoryStyle
-    let onSelect: (ChapterDraft) -> Void
+    let onSelect: (ChapterDraftMetadata) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {

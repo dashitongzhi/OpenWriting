@@ -6,6 +6,7 @@ import Observation
 @Observable
 final class AppState {
     static let emptyConfigurationMessage = "自定义模型需填写 Base URL、模型 ID 与 API Key 后再测试连接。"
+    private static let maxChapterVersionHistoryCount = 12
 
     let userDefaults: UserDefaults
     let projectStore: ProjectFileStore
@@ -413,6 +414,13 @@ final class AppState {
         }
     }
 
+    func updateCurrentVolumeNumber(_ number: Int, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.currentVolumeNumber = max(number, 1)
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
     func updateChapterFocus(_ focus: String, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.chapterFocus = focus
@@ -633,47 +641,150 @@ final class AppState {
         }
     }
 
+    @discardableResult
+    func ensureChapterDraftLoaded(_ chapterDraftID: ChapterDraft.ID, for projectID: NovelProject.ID) -> ChapterDraft? {
+        if let project = project(for: projectID),
+           let loadedDraft = project.chapterDrafts.first(where: { $0.id == chapterDraftID }) {
+            return loadedDraft
+        }
+
+        guard let loadedDraft = projectStore.loadChapterDraft(
+            chapterDraftID,
+            for: projectID,
+            scope: currentStorageScope
+        ) else { return nil }
+
+        updateProject(projectID) { project in
+            if !project.chapterDrafts.contains(where: { $0.id == loadedDraft.id }) {
+                project.chapterDrafts.append(loadedDraft)
+            }
+            Self.upsertChapterMetadata(ChapterDraftMetadata(chapterDraft: loadedDraft), in: &project)
+        }
+
+        return loadedDraft
+    }
+
+    @discardableResult
+    func ensureAllChapterDraftsLoaded(for projectID: NovelProject.ID) -> [ChapterDraft] {
+        guard let project = project(for: projectID) else { return [] }
+        let missingIDs = project.chapterCatalog
+            .map(\.id)
+            .filter { chapterID in
+                !project.chapterDrafts.contains(where: { $0.id == chapterID })
+            }
+
+        let loadedDrafts = missingIDs.compactMap {
+            projectStore.loadChapterDraft($0, for: projectID, scope: currentStorageScope)
+        }
+
+        if !loadedDrafts.isEmpty {
+            updateProject(projectID) { project in
+                for loadedDraft in loadedDrafts where !project.chapterDrafts.contains(where: { $0.id == loadedDraft.id }) {
+                    project.chapterDrafts.append(loadedDraft)
+                    Self.upsertChapterMetadata(ChapterDraftMetadata(chapterDraft: loadedDraft), in: &project)
+                }
+                project.chapterDrafts.sort(by: ChapterDraft.sortDescending)
+            }
+        }
+
+        return self.project(for: projectID)?.chapterDrafts.sorted(by: ChapterDraft.sortDescending)
+            ?? project.chapterDrafts.sorted(by: ChapterDraft.sortDescending)
+    }
+
+    func hydratedProjectForFullText(_ projectID: NovelProject.ID) -> NovelProject? {
+        let loadedChapters = ensureAllChapterDraftsLoaded(for: projectID)
+        guard var project = project(for: projectID) else { return nil }
+        project.chapterDrafts = loadedChapters
+        return project
+    }
+
+    func hydratedProjectsForPersistenceSnapshot(_ projects: [NovelProject]) -> [NovelProject] {
+        projects.map { project in
+            var hydratedProject = project
+            let storedDrafts = projectStore.loadChapterDrafts(
+                for: project.id,
+                scope: currentStorageScope
+            )
+
+            var draftByID = Dictionary(uniqueKeysWithValues: storedDrafts.map { ($0.id, $0) })
+            for chapterDraft in project.chapterDrafts {
+                draftByID[chapterDraft.id] = chapterDraft
+            }
+
+            if !project.chapterCatalog.isEmpty {
+                let retainedChapterIDs = Set(project.chapterCatalog.map(\.id))
+                    .union(project.chapterDrafts.map(\.id))
+                draftByID = draftByID.filter { retainedChapterIDs.contains($0.key) }
+            }
+
+            hydratedProject.chapterDrafts = draftByID.values.sorted(by: ChapterDraft.sortDescending)
+            if !hydratedProject.chapterDrafts.isEmpty {
+                hydratedProject.chapterCatalog = hydratedProject.chapterDrafts
+                    .map(ChapterDraftMetadata.init)
+                    .sorted(by: ChapterDraftMetadata.sortDescending)
+            }
+            return hydratedProject
+        }
+    }
+
     func saveCurrentChapterDraft(for projectID: NovelProject.ID) -> ChapterDraftSaveResult? {
         var result: ChapterDraftSaveResult?
+
+        if let project = project(for: projectID),
+           let existingMetadata = project.chapterCatalog.first(where: {
+               $0.volumeNumber == max(project.currentVolumeNumber, 1)
+                   && $0.chapterNumber == max(project.currentChapterNumber, 1)
+           }) {
+            ensureChapterDraftLoaded(existingMetadata.id, for: projectID)
+        }
 
         updateProject(projectID) { project in
             let trimmedDraft = project.draftText.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedDraft.isEmpty else { return }
 
+            let normalizedVolumeNumber = max(project.currentVolumeNumber, 1)
             let normalizedChapterNumber = max(project.currentChapterNumber, 1)
             let normalizedChapterTitle = Self.normalizedChapterTitle(project.currentChapterTitle)
             let timestamp = Self.currentTimestampLabel()
 
-            if let existingIndex = project.chapterDrafts.firstIndex(where: { $0.chapterNumber == normalizedChapterNumber }) {
+            if let existingIndex = project.chapterDrafts.firstIndex(where: {
+                $0.volumeNumber == normalizedVolumeNumber && $0.chapterNumber == normalizedChapterNumber
+            }) {
                 let hasMeaningfulChange = project.chapterDrafts[existingIndex].chapterTitle != normalizedChapterTitle
                     || project.chapterDrafts[existingIndex].content != trimmedDraft
                 let previousSnapshot = hasMeaningfulChange
                     ? project.chapterDrafts[existingIndex].versionSnapshot(reason: "保存前自动版本", savedAt: timestamp)
                     : nil
+                project.chapterDrafts[existingIndex].volumeNumber = normalizedVolumeNumber
                 project.chapterDrafts[existingIndex].chapterTitle = normalizedChapterTitle
                 project.chapterDrafts[existingIndex].content = trimmedDraft
                 project.chapterDrafts[existingIndex].savedAt = timestamp
                 if let previousSnapshot {
                     project.chapterDrafts[existingIndex].versionHistory.insert(previousSnapshot, at: 0)
+                    Self.trimChapterVersionHistory(&project.chapterDrafts[existingIndex])
                 }
                 let updatedChapterDraft = project.chapterDrafts[existingIndex]
+                Self.upsertChapterMetadata(ChapterDraftMetadata(chapterDraft: updatedChapterDraft), in: &project)
                 project.chapterDrafts.sort(by: ChapterDraft.sortDescending)
                 result = .updated(updatedChapterDraft)
             } else {
                 let chapterDraft = ChapterDraft(
+                    volumeNumber: normalizedVolumeNumber,
                     chapterNumber: normalizedChapterNumber,
                     chapterTitle: normalizedChapterTitle,
                     content: trimmedDraft,
                     savedAt: timestamp
                 )
                 project.chapterDrafts.append(chapterDraft)
+                Self.upsertChapterMetadata(ChapterDraftMetadata(chapterDraft: chapterDraft), in: &project)
                 project.chapterDrafts.sort(by: ChapterDraft.sortDescending)
                 result = .created(chapterDraft)
             }
 
+            project.currentVolumeNumber = normalizedVolumeNumber
             project.currentChapterNumber = normalizedChapterNumber
             project.currentChapterTitle = normalizedChapterTitle
-            project.writtenChapters = max(project.writtenChapters, normalizedChapterNumber)
+            project.writtenChapters = max(project.writtenChapters, project.chapterDrafts.count, normalizedChapterNumber)
             project.updatedAt = timestamp
         }
 
@@ -681,25 +792,41 @@ final class AppState {
     }
 
     func loadChapterDraft(_ chapterDraftID: ChapterDraft.ID, for projectID: NovelProject.ID) {
+        guard let loadedDraft = ensureChapterDraftLoaded(chapterDraftID, for: projectID) else { return }
+
         updateProject(projectID) { project in
-            guard let chapterDraft = project.chapterDrafts.first(where: { $0.id == chapterDraftID }) else { return }
+            let chapterDraft = loadedDraft
+            project.currentVolumeNumber = max(chapterDraft.volumeNumber, 1)
             project.currentChapterNumber = max(chapterDraft.chapterNumber, 1)
             project.currentChapterTitle = chapterDraft.chapterTitle
             project.draftText = chapterDraft.content
-            project.writtenChapters = max(project.writtenChapters, chapterDraft.chapterNumber)
+            project.writtenChapters = max(project.writtenChapters, project.chapterDrafts.count, chapterDraft.chapterNumber)
             project.updatedAt = Self.currentTimestampLabel()
         }
     }
 
     func beginNextChapter(after chapterDraft: ChapterDraft, for projectID: NovelProject.ID) {
+        if let project = project(for: projectID),
+           let existingMetadata = project.chapterCatalog.first(where: {
+               $0.volumeNumber == max(chapterDraft.volumeNumber, 1)
+                   && $0.chapterNumber == max(chapterDraft.chapterNumber + 1, 1)
+           }) {
+            ensureChapterDraftLoaded(existingMetadata.id, for: projectID)
+        }
+
         updateProject(projectID) { project in
             let nextChapterNumber = max(chapterDraft.chapterNumber + 1, 1)
+            let nextVolumeNumber = max(chapterDraft.volumeNumber, 1)
 
-            if let existingDraft = project.chapterDrafts.first(where: { $0.chapterNumber == nextChapterNumber }) {
+            if let existingDraft = project.chapterDrafts.first(where: {
+                $0.volumeNumber == nextVolumeNumber && $0.chapterNumber == nextChapterNumber
+            }) {
+                project.currentVolumeNumber = max(existingDraft.volumeNumber, 1)
                 project.currentChapterNumber = nextChapterNumber
                 project.currentChapterTitle = existingDraft.chapterTitle
                 project.draftText = existingDraft.content
             } else {
+                project.currentVolumeNumber = nextVolumeNumber
                 project.currentChapterNumber = nextChapterNumber
                 project.currentChapterTitle = "待命名章节"
                 project.chapterFocus = Self.defaultNextChapterFocus(
@@ -709,7 +836,7 @@ final class AppState {
                 project.draftText = ""
             }
 
-            project.writtenChapters = max(project.writtenChapters, chapterDraft.chapterNumber)
+            project.writtenChapters = max(project.writtenChapters, project.chapterDrafts.count, chapterDraft.chapterNumber)
             project.updatedAt = Self.currentTimestampLabel()
         }
     }
@@ -722,6 +849,7 @@ final class AppState {
         for projectID: NovelProject.ID
     ) -> ChapterDraft? {
         var updatedDraft: ChapterDraft?
+        ensureChapterDraftLoaded(chapterDraftID, for: projectID)
 
         updateProject(projectID) { project in
             guard let existingIndex = project.chapterDrafts.firstIndex(where: { $0.id == chapterDraftID }) else { return }
@@ -742,18 +870,22 @@ final class AppState {
             project.chapterDrafts[existingIndex].savedAt = timestamp
             if let previousSnapshot {
                 project.chapterDrafts[existingIndex].versionHistory.insert(previousSnapshot, at: 0)
+                Self.trimChapterVersionHistory(&project.chapterDrafts[existingIndex])
             }
 
             let chapterNumber = project.chapterDrafts[existingIndex].chapterNumber
+            let volumeNumber = project.chapterDrafts[existingIndex].volumeNumber
             let updated = project.chapterDrafts[existingIndex]
+            Self.upsertChapterMetadata(ChapterDraftMetadata(chapterDraft: updated), in: &project)
             project.chapterDrafts.sort(by: ChapterDraft.sortDescending)
 
-            if project.currentChapterNumber == chapterNumber {
+            if project.currentVolumeNumber == volumeNumber,
+               project.currentChapterNumber == chapterNumber {
                 project.currentChapterTitle = normalizedTitle
                 project.draftText = trimmedContent
             }
 
-            project.writtenChapters = max(project.writtenChapters, chapterNumber)
+            project.writtenChapters = max(project.writtenChapters, project.chapterDrafts.count, chapterNumber)
             project.updatedAt = timestamp
             updatedDraft = updated
         }
@@ -768,6 +900,7 @@ final class AppState {
         for projectID: NovelProject.ID
     ) -> ChapterDraft? {
         var restoredDraft: ChapterDraft?
+        ensureChapterDraftLoaded(chapterDraftID, for: projectID)
 
         updateProject(projectID) { project in
             guard let existingIndex = project.chapterDrafts.firstIndex(where: { $0.id == chapterDraftID }),
@@ -784,16 +917,19 @@ final class AppState {
             project.chapterDrafts[existingIndex].content = version.content
             project.chapterDrafts[existingIndex].savedAt = timestamp
             project.chapterDrafts[existingIndex].versionHistory.insert(currentSnapshot, at: 0)
+            Self.trimChapterVersionHistory(&project.chapterDrafts[existingIndex])
 
             let restored = project.chapterDrafts[existingIndex]
+            Self.upsertChapterMetadata(ChapterDraftMetadata(chapterDraft: restored), in: &project)
             project.chapterDrafts.sort(by: ChapterDraft.sortDescending)
 
-            if project.currentChapterNumber == restored.chapterNumber {
+            if project.currentVolumeNumber == restored.volumeNumber,
+               project.currentChapterNumber == restored.chapterNumber {
                 project.currentChapterTitle = restored.chapterTitle
                 project.draftText = restored.content
             }
 
-            project.writtenChapters = max(project.writtenChapters, restored.chapterNumber)
+            project.writtenChapters = max(project.writtenChapters, project.chapterDrafts.count, restored.chapterNumber)
             project.updatedAt = timestamp
             restoredDraft = restored
         }
@@ -859,7 +995,7 @@ final class AppState {
     }
 
     func searchLongformProject(_ query: String, in projectID: NovelProject.ID, limit: Int = 60) -> [LongformSearchResult] {
-        guard let project = project(for: projectID) else { return [] }
+        guard let project = hydratedProjectForFullText(projectID) else { return [] }
         let tokens = Self.searchTokens(from: query)
         guard !tokens.isEmpty else { return [] }
 
@@ -1066,6 +1202,20 @@ final class AppState {
 
     private static func currentTimestampLabel() -> String {
         PersistedTimestampCodec.displayLabel(for: Date(), style: .project)
+    }
+
+    private static func trimChapterVersionHistory(_ chapterDraft: inout ChapterDraft) {
+        guard chapterDraft.versionHistory.count > maxChapterVersionHistoryCount else { return }
+        chapterDraft.versionHistory = Array(chapterDraft.versionHistory.prefix(maxChapterVersionHistoryCount))
+    }
+
+    private static func upsertChapterMetadata(_ metadata: ChapterDraftMetadata, in project: inout NovelProject) {
+        if let existingIndex = project.chapterCatalog.firstIndex(where: { $0.id == metadata.id }) {
+            project.chapterCatalog[existingIndex] = metadata
+        } else {
+            project.chapterCatalog.append(metadata)
+        }
+        project.chapterCatalog.sort(by: ChapterDraftMetadata.sortDescending)
     }
 
     private static func normalizedChapterTitle(_ title: String) -> String {
