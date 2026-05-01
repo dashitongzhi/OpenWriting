@@ -757,6 +757,12 @@ struct NovelProject: Identifiable, Codable {
     private var globalMemoryUpdatedAtTimestamp: Date?
     var referenceDocuments: [ReferenceDocument]
     var chapterDrafts: [ChapterDraft]
+    /// 题材模板 ID（可选，关联 GenreTemplate）
+    var genreTemplateId: String?
+    /// Strand Weave 节奏追踪器
+    var strandWeaveTracker: StrandWeaveTracker
+    /// 质量审查报告历史
+    var qualityReviewReports: [QualityReviewReport]
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -789,6 +795,9 @@ struct NovelProject: Identifiable, Codable {
         case referenceDocuments
         case chapterDrafts
         case chapters
+        case genreTemplateId
+        case strandWeaveTracker
+        case qualityReviewReports
     }
 
     init(
@@ -820,7 +829,10 @@ struct NovelProject: Identifiable, Codable {
         globalMemorySnapshot: GlobalMemorySnapshot = .empty,
         globalMemoryUpdatedAt: String = "",
         referenceDocuments: [ReferenceDocument],
-        chapterDrafts: [ChapterDraft] = []
+        chapterDrafts: [ChapterDraft] = [],
+        genreTemplateId: String? = nil,
+        strandWeaveTracker: StrandWeaveTracker? = nil,
+        qualityReviewReports: [QualityReviewReport]? = nil
     ) {
         self.id = id
         self.title = title
@@ -854,6 +866,9 @@ struct NovelProject: Identifiable, Codable {
         self.globalMemoryUpdatedAtTimestamp = PersistedTimestampCodec.parseOptional(globalMemoryUpdatedAt)
         self.referenceDocuments = referenceDocuments
         self.chapterDrafts = chapterDrafts
+        self.genreTemplateId = genreTemplateId
+        self.strandWeaveTracker = strandWeaveTracker ?? StrandWeaveTracker()
+        self.qualityReviewReports = qualityReviewReports ?? []
     }
 
     init(from decoder: Decoder) throws {
@@ -891,6 +906,9 @@ struct NovelProject: Identifiable, Codable {
         globalMemoryUpdatedAtTimestamp = PersistedTimestampCodec.decodeOptional(container, forKey: .globalMemoryUpdatedAt)
         referenceDocuments = try container.decodeIfPresent([ReferenceDocument].self, forKey: .referenceDocuments) ?? []
         chapterDrafts = try container.decodeIfPresent([ChapterDraft].self, forKey: .chapterDrafts) ?? []
+        genreTemplateId = try container.decodeIfPresent(String.self, forKey: .genreTemplateId)
+        strandWeaveTracker = try container.decodeIfPresent(StrandWeaveTracker.self, forKey: .strandWeaveTracker) ?? StrandWeaveTracker()
+        qualityReviewReports = try container.decodeIfPresent([QualityReviewReport].self, forKey: .qualityReviewReports) ?? []
     }
 
     func encode(to encoder: Encoder) throws {
@@ -924,6 +942,9 @@ struct NovelProject: Identifiable, Codable {
         try PersistedTimestampCodec.encodeIfPresent(globalMemoryUpdatedAtTimestamp, to: &container, forKey: .globalMemoryUpdatedAt)
         try container.encode(referenceDocuments, forKey: .referenceDocuments)
         try container.encode(chapterDrafts, forKey: .chapterDrafts)
+        try container.encodeIfPresent(genreTemplateId, forKey: .genreTemplateId)
+        try container.encode(strandWeaveTracker, forKey: .strandWeaveTracker)
+        try container.encode(qualityReviewReports, forKey: .qualityReviewReports)
     }
 
     var currentChapterLabel: String {

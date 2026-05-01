@@ -621,4 +621,59 @@ extension AIWritingService {
 
         return stripped
     }
+
+    // MARK: - Genre Template Integration
+
+    /// 为题材模板生成上下文注入
+    static func genreTemplateContext(_ template: GenreTemplate) -> String {
+        """
+        ## 题材模板：\(template.name)
+        
+        **类型**: \(template.category.rawValue)
+        **简介**: \(template.description)
+        
+        **世界观核心规则**:
+        \(template.worldRules.map { "- \($0)" }.joined(separator: "\n"))
+        
+        **典型角色原型**:
+        \(template.characterArchetypes.map { "- \($0)" }.joined(separator: "\n"))
+        
+        **节奏指导**: \(template.pacingGuide)
+        
+        **常见 Hook 模式**:
+        \(template.hookPatterns.map { "- \($0)" }.joined(separator: "\n"))
+        
+        **爽点类型**:
+        \(template.pleasurePointTypes.map { "- \($0)" }.joined(separator: "\n"))
+        """
+    }
+
+    // MARK: - Anti-Hallucination Prompts
+
+    /// 防幻觉三定律上下文
+    static func antiHallucinationContext(project: NovelProject) -> String {
+        """
+        ## 防幻觉铁律
+        
+        1. **大纲即法律** — 严格遵循大纲，不擅自发挥。当前章节大纲：
+        \(normalized(project.outlineText, fallback: "（未设置）"))
+        
+        2. **设定即物理** — 遵守世界观设定，不自相矛盾。当前设定：
+        \(normalized(project.referenceContextText, fallback: "（未设置）"))
+        
+        3. **发明需识别** — 如果需要引入新角色、新设定、新地点，必须在正文后单独标注，格式：
+        [新实体] 类型: xxx | 名称: xxx | 描述: xxx
+        """
+    }
+
+    /// 全局记忆上下文注入
+    static func memoryContext(memoryManager: MemoryManager) -> String {
+        let text = memoryManager.exportAsText()
+        if text.isEmpty { return "" }
+        return """
+        ## 全局记忆（长期语义事实）
+        
+        \(text)
+        """
+    }
 }

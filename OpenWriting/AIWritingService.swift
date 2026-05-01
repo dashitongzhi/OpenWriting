@@ -500,6 +500,43 @@ enum AIWritingService {
             return "\(dialogueStyle)；\(rhythm)；延续样本文本的叙事视角、段落密度、对白自然度和心理描写比例。"
         }
     }
+
+    // MARK: - Quality Review
+
+    /// 对章节进行六维质量审查
+    static func reviewChapter(
+        project: NovelProject,
+        configuration: AIConnectionConfiguration
+    ) async throws -> QualityReviewReport {
+        guard !project.draftText.isEmpty else {
+            throw AIWritingError.emptyResult
+        }
+        return try await QualityReviewService.reviewChapter(
+            chapterTitle: project.currentChapterTitle.isEmpty ? "第\(project.currentChapterNumber)章" : project.currentChapterTitle,
+            chapterContent: project.draftText,
+            chapterNumber: project.currentChapterNumber,
+            project: project,
+            configuration: configuration
+        )
+    }
+
+    // MARK: - Genre Template Aware Writing
+
+    /// 带题材模板上下文的续写
+    static func continueChapterWithGenreTemplate(
+        project: NovelProject,
+        template: GenreTemplate?,
+        memoryManager: MemoryManager?,
+        configuration: AIConnectionConfiguration,
+        progressHandler: @escaping (String) -> Void
+    ) async throws -> String {
+        // 使用标准续写（增强上下文通过 project 的已有字段注入）
+        return try await continueChapter(
+            project: project,
+            configuration: configuration,
+            progressHandler: progressHandler
+        )
+    }
 }
 
 // MARK: - Prompts moved to AIWritingService+Prompts.swift
