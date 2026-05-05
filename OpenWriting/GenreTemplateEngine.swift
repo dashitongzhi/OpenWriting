@@ -855,113 +855,113 @@ func detectNarrativeStage(
         return .fallingAction
     }
 }
-+
-+// MARK: - Legacy Template Migration Helpers
-+
-+private func mapLegacyCategory(_ cat: LegacyGenreCategory) -> GenreCategory {
-+    switch cat {
-+    case .xuanhuan: return .xuanhuan
-+    case .urban: return .urban
-+    case .romance: return .romance
-+    case .suspense: return .mystery
-+    }
-+}
-+
-+private func inferHookTypes(from patterns: [String]) -> [HookType] {
-+    var result: [HookType] = []
-+    let joined = patterns.joined(separator: " ")
-+    if joined.contains("危机") || joined.contains("生死") || joined.contains("来袭") || joined.contains("威胁") { result.append(.crisis) }
-+    if joined.contains("秘") || joined.contains("疑") || joined.contains("真相") || joined.contains("反转") || joined.contains("揭秘") || joined.contains("隐藏") { result.append(.mystery) }
-+    if joined.contains("突破") || joined.contains("升级") || joined.contains("获得") || joined.contains("奖励") || joined.contains("觉醒") || joined.contains("发现") || joined.contains("成功") { result.append(.desire) }
-+    if joined.contains("表白") || joined.contains("甜蜜") || joined.contains("互动") || joined.contains("心动") || joined.contains("感情") || joined.contains("虐") { result.append(.emotion) }
-+    if joined.contains("抉择") || joined.contains("选择") || joined.contains("背叛") { result.append(.choice) }
-+    if result.isEmpty { result = [.crisis, .desire] }
-+    return Array(Set(result))
-+}
-+
-+private func inferCoolPointPatterns(from types: [String]) -> [CoolPointPattern] {
-+    var result: [CoolPointPattern] = []
-+    let joined = types.joined(separator: " ")
-+    if joined.contains("打脸") || joined.contains("装逼") || joined.contains("霸气") { result.append(.flexAndCounter) }
-+    if joined.contains("扮猪") || joined.contains("低调") || joined.contains("隐藏身份") { result.append(.underdogReveal) }
-+    if joined.contains("以弱") || joined.contains("越级") || joined.contains("反杀") || joined.contains("碾压") { result.append(.underdogVictory) }
-+    if joined.contains("权威") || joined.contains("家族翻盘") || joined.contains("翻盘") { result.append(.authorityChallenge) }
-+    if joined.contains("反派") || joined.contains("真相大白") || joined.contains("因果") { result.append(.villainDownfall) }
-+    if joined.contains("甜蜜") || joined.contains("撒糖") || joined.contains("幸福") || joined.contains("心动") { result.append(.sweetSurprise) }
-+    if joined.contains("吐槽") || joined.contains("神反转") || joined.contains("笑") || joined.contains("沙雕") || joined.contains("脑洞") { result.append(.misinterpretation) }
-+    if joined.contains("身份") || joined.contains("揭秘") || joined.contains("身世") || joined.contains("掉马") { result.append(.identityReveal) }
-+    if result.isEmpty { result = [.flexAndCounter, .underdogVictory] }
-+    return Array(Set(result))
-+}
-+
-+private func buildStrandConfig(id: String, name: String, ratio: (quest: Double, fire: Double, constellation: Double)) -> GenreStrandConfig {
-+    GenreStrandConfig(
-+        genre: name,
-+        questTarget: ratio.quest,
-+        fireTarget: ratio.fire,
-+        constellationTarget: ratio.constellation,
-+        questMaxConsecutive: 5,
-+        fireMaxGap: 10,
-+        constellationMaxGap: 15
-+    )
-+}
-+
-+private func migrateLegacyTemplate(_ legacy: LegacyGenreTemplate) -> GenreTemplate {
-+    let category = mapLegacyCategory(legacy.category)
-+    let hookTypes = inferHookTypes(from: legacy.hookPatterns)
-+    let coolPatterns = inferCoolPointPatterns(from: legacy.pleasurePointTypes)
-+    let strandConfig = buildStrandConfig(id: legacy.id, name: legacy.name, ratio: legacy.strandRatio)
-+
-+    var directives: [String] = []
-+    for rule in legacy.worldRules.prefix(3) { directives.append(rule) }
-+    directives.append(legacy.pacingGuide)
-+    for hook in legacy.hookPatterns.prefix(2) { directives.append("章末钩子参考：\(hook)") }
-+
-+    let antiPatterns: [String] = [
-+        "不要让配角行为与人设不符（当前角色原型：\(legacy.characterArchetypes.joined(separator: "、"))）",
-+        "不要违反世界观核心规则"
-+    ]
-+
-+    return GenreTemplate(
-+        id: legacy.id,
-+        name: legacy.name,
-+        category: category,
-+        description: legacy.description,
-+        coreSellingPoint: legacy.pleasurePointTypes.prefix(3).joined(separator: " + "),
-+        preferredHookTypes: hookTypes,
-+        hookStrengthBaseline: .medium,
-+        preferredCoolPointPatterns: coolPatterns,
-+        coolPointDensity: coolPatterns.count >= 3 ? .high : (coolPatterns.count >= 2 ? .medium : .low),
-+        stagnationThreshold: 3,
-+        setupTolerance: category == .mystery ? .high : .medium,
-+        strandConfig: strandConfig,
-+        writingDirectives: directives,
-+        antiPatterns: antiPatterns
-+    )
-+}
 
-+/// Safely migrate all legacy templates — skips any missing keys instead of crashing.
-+private func migrateLegacyTemplates() -> [GenreTemplate] {
-+    let legacyNames = [
-+        "高武", "西幻", "无限流", "末世", "科幻",
-+        "都市日常", "都市脑洞", "电竞", "直播文", "现实题材",
-+        "宫斗宅斗", "豪门总裁", "职场婚恋", "幻想言情",
-+        "悬疑脑洞", "悬疑灵异", "克苏鲁", "狗血言情",
-+    ]
-+    return legacyNames.compactMap { name -> GenreTemplate? in
-+        guard let legacy = LegacyGenreTemplateLibrary.lookup(name) else {
-+            #if DEBUG
-+            print("[GenreTemplateEngine] Warning: legacy template '\(name)' not found, skipping")
-+            #endif
-+            return nil
-+        }
-+        return migrateLegacyTemplate(legacy)
-+    }
-+}
-+
-+// MARK: - Composite Genre Support
-+
-+extension GenreTemplateLibrary {
+// MARK: - Legacy Template Migration Helpers
+
+private func mapLegacyCategory(_ cat: LegacyGenreCategory) -> GenreCategory {
+    switch cat {
+    case .xuanhuan: return .xuanhuan
+    case .urban: return .urban
+    case .romance: return .romance
+    case .suspense: return .mystery
+    }
+}
+
+private func inferHookTypes(from patterns: [String]) -> [HookType] {
+    var result: [HookType] = []
+    let joined = patterns.joined(separator: " ")
+    if joined.contains("危机") || joined.contains("生死") || joined.contains("来袭") || joined.contains("威胁") { result.append(.crisis) }
+    if joined.contains("秘") || joined.contains("疑") || joined.contains("真相") || joined.contains("反转") || joined.contains("揭秘") || joined.contains("隐藏") { result.append(.mystery) }
+    if joined.contains("突破") || joined.contains("升级") || joined.contains("获得") || joined.contains("奖励") || joined.contains("觉醒") || joined.contains("发现") || joined.contains("成功") { result.append(.desire) }
+    if joined.contains("表白") || joined.contains("甜蜜") || joined.contains("互动") || joined.contains("心动") || joined.contains("感情") || joined.contains("虐") { result.append(.emotion) }
+    if joined.contains("抉择") || joined.contains("选择") || joined.contains("背叛") { result.append(.choice) }
+    if result.isEmpty { result = [.crisis, .desire] }
+    return Array(Set(result))
+}
+
+private func inferCoolPointPatterns(from types: [String]) -> [CoolPointPattern] {
+    var result: [CoolPointPattern] = []
+    let joined = types.joined(separator: " ")
+    if joined.contains("打脸") || joined.contains("装逼") || joined.contains("霸气") { result.append(.flexAndCounter) }
+    if joined.contains("扮猪") || joined.contains("低调") || joined.contains("隐藏身份") { result.append(.underdogReveal) }
+    if joined.contains("以弱") || joined.contains("越级") || joined.contains("反杀") || joined.contains("碾压") { result.append(.underdogVictory) }
+    if joined.contains("权威") || joined.contains("家族翻盘") || joined.contains("翻盘") { result.append(.authorityChallenge) }
+    if joined.contains("反派") || joined.contains("真相大白") || joined.contains("因果") { result.append(.villainDownfall) }
+    if joined.contains("甜蜜") || joined.contains("撒糖") || joined.contains("幸福") || joined.contains("心动") { result.append(.sweetSurprise) }
+    if joined.contains("吐槽") || joined.contains("神反转") || joined.contains("笑") || joined.contains("沙雕") || joined.contains("脑洞") { result.append(.misinterpretation) }
+    if joined.contains("身份") || joined.contains("揭秘") || joined.contains("身世") || joined.contains("掉马") { result.append(.identityReveal) }
+    if result.isEmpty { result = [.flexAndCounter, .underdogVictory] }
+    return Array(Set(result))
+}
+
+private func buildStrandConfig(id: String, name: String, ratio: (quest: Double, fire: Double, constellation: Double)) -> GenreStrandConfig {
+    GenreStrandConfig(
+        genre: name,
+        questTarget: ratio.quest,
+        fireTarget: ratio.fire,
+        constellationTarget: ratio.constellation,
+        questMaxConsecutive: 5,
+        fireMaxGap: 10,
+        constellationMaxGap: 15
+    )
+}
+
+private func migrateLegacyTemplate(_ legacy: LegacyGenreTemplate) -> GenreTemplate {
+    let category = mapLegacyCategory(legacy.category)
+    let hookTypes = inferHookTypes(from: legacy.hookPatterns)
+    let coolPatterns = inferCoolPointPatterns(from: legacy.pleasurePointTypes)
+    let strandConfig = buildStrandConfig(id: legacy.id, name: legacy.name, ratio: legacy.strandRatio)
+
+    var directives: [String] = []
+    for rule in legacy.worldRules.prefix(3) { directives.append(rule) }
+    directives.append(legacy.pacingGuide)
+    for hook in legacy.hookPatterns.prefix(2) { directives.append("章末钩子参考：\(hook)") }
+
+    let antiPatterns: [String] = [
+        "不要让配角行为与人设不符（当前角色原型：\(legacy.characterArchetypes.joined(separator: "、"))）",
+        "不要违反世界观核心规则"
+    ]
+
+    return GenreTemplate(
+        id: legacy.id,
+        name: legacy.name,
+        category: category,
+        description: legacy.description,
+        coreSellingPoint: legacy.pleasurePointTypes.prefix(3).joined(separator: " + "),
+        preferredHookTypes: hookTypes,
+        hookStrengthBaseline: .medium,
+        preferredCoolPointPatterns: coolPatterns,
+        coolPointDensity: coolPatterns.count >= 3 ? .high : (coolPatterns.count >= 2 ? .medium : .low),
+        stagnationThreshold: 3,
+        setupTolerance: category == .mystery ? .high : .medium,
+        strandConfig: strandConfig,
+        writingDirectives: directives,
+        antiPatterns: antiPatterns
+    )
+}
+
+/// Safely migrate all legacy templates — skips any missing keys instead of crashing.
+private func migrateLegacyTemplates() -> [GenreTemplate] {
+    let legacyNames = [
+        "高武", "西幻", "无限流", "末世", "科幻",
+        "都市日常", "都市脑洞", "电竞", "直播文", "现实题材",
+        "宫斗宅斗", "豪门总裁", "职场婚恋", "幻想言情",
+        "悬疑脑洞", "悬疑灵异", "克苏鲁", "狗血言情",
+    ]
+    return legacyNames.compactMap { name -> GenreTemplate? in
+        guard let legacy = LegacyGenreTemplateLibrary.lookup(name) else {
+            #if DEBUG
+            print("[GenreTemplateEngine] Warning: legacy template '\(name)' not found, skipping")
+            #endif
+            return nil
+        }
+        return migrateLegacyTemplate(legacy)
+    }
+}
+
+// MARK: - Composite Genre Support
+
+extension GenreTemplateLibrary {
     /// Check if "与" is used as a genre separator (short strings on each side, max 6 chars).
     /// Avoids splitting natural text like "奇幻与冒险的旅程".
     private static func hasYuSeparator(_ text: String) -> Bool {
@@ -1020,58 +1020,58 @@ func detectNarrativeStage(
     /// Resolve a composite genre string like "都市异能+规则怪谈" into a merged template
     static func resolveComposite(_ input: String) -> GenreTemplate {
         let parts = splitCompositeGenre(input)
-+
-+        guard parts.count > 1 else { return template(for: input) }
-+
-+        let templates = parts.map { template(for: $0) }
-+        let primary = templates[0]
-+
-+        var allDirectives = primary.writingDirectives
-+        var allAntiPatterns = primary.antiPatterns
-+        var allHookTypes = primary.preferredHookTypes
-+        var allCoolPatterns = primary.preferredCoolPointPatterns
-+
-+        for secondary in templates.dropFirst() {
-+            for directive in secondary.writingDirectives where !allDirectives.contains(directive) {
-+                allDirectives.append(directive)
-+            }
-+            for pattern in secondary.antiPatterns where !allAntiPatterns.contains(pattern) {
-+                allAntiPatterns.append(pattern)
-+            }
-+            for hook in secondary.preferredHookTypes where !allHookTypes.contains(hook) {
-+                allHookTypes.append(hook)
-+            }
-+            for cool in secondary.preferredCoolPointPatterns where !allCoolPatterns.contains(cool) {
-+                allCoolPatterns.append(cool)
-+            }
-+        }
-+
-+        return GenreTemplate(
-+            id: "composite_\(primary.id)",
-+            name: parts.joined(separator: "+"),
-+            category: primary.category,
-+            description: "复合题材：\(templates.map { $0.name }.joined(separator: " + "))",
-+            coreSellingPoint: templates.map { $0.coreSellingPoint }.joined(separator: " | "),
-+            preferredHookTypes: allHookTypes,
-+            hookStrengthBaseline: primary.hookStrengthBaseline,
-+            preferredCoolPointPatterns: allCoolPatterns,
-+            coolPointDensity: primary.coolPointDensity,
-+            stagnationThreshold: primary.stagnationThreshold,
-+            setupTolerance: primary.setupTolerance,
-+            strandConfig: primary.strandConfig,
-+            writingDirectives: Array(allDirectives.prefix(8)),
-+            antiPatterns: Array(allAntiPatterns.prefix(8))
-+        )
-+    }
-+
-+    /// Auto-detect genre from project.genre, supporting composite genres
-+    static func autoDetect(from projectGenre: String) -> GenreTemplate {
-+        let trimmed = projectGenre.trimmingCharacters(in: .whitespacesAndNewlines)
-+        guard !trimmed.isEmpty else { return defaultTemplate }
-+
-+        let hasComposite = trimmed.contains("+") || trimmed.contains("/") || hasYuSeparator(trimmed)
-+        if hasComposite { return resolveComposite(trimmed) }
-+
-+        return template(for: trimmed)
-+    }
-+}
+
+        guard parts.count > 1 else { return template(for: input) }
+
+        let templates = parts.map { template(for: $0) }
+        let primary = templates[0]
+
+        var allDirectives = primary.writingDirectives
+        var allAntiPatterns = primary.antiPatterns
+        var allHookTypes = primary.preferredHookTypes
+        var allCoolPatterns = primary.preferredCoolPointPatterns
+
+        for secondary in templates.dropFirst() {
+            for directive in secondary.writingDirectives where !allDirectives.contains(directive) {
+                allDirectives.append(directive)
+            }
+            for pattern in secondary.antiPatterns where !allAntiPatterns.contains(pattern) {
+                allAntiPatterns.append(pattern)
+            }
+            for hook in secondary.preferredHookTypes where !allHookTypes.contains(hook) {
+                allHookTypes.append(hook)
+            }
+            for cool in secondary.preferredCoolPointPatterns where !allCoolPatterns.contains(cool) {
+                allCoolPatterns.append(cool)
+            }
+        }
+
+        return GenreTemplate(
+            id: "composite_\(primary.id)",
+            name: parts.joined(separator: "+"),
+            category: primary.category,
+            description: "复合题材：\(templates.map { $0.name }.joined(separator: " + "))",
+            coreSellingPoint: templates.map { $0.coreSellingPoint }.joined(separator: " | "),
+            preferredHookTypes: allHookTypes,
+            hookStrengthBaseline: primary.hookStrengthBaseline,
+            preferredCoolPointPatterns: allCoolPatterns,
+            coolPointDensity: primary.coolPointDensity,
+            stagnationThreshold: primary.stagnationThreshold,
+            setupTolerance: primary.setupTolerance,
+            strandConfig: primary.strandConfig,
+            writingDirectives: Array(allDirectives.prefix(8)),
+            antiPatterns: Array(allAntiPatterns.prefix(8))
+        )
+    }
+
+    /// Auto-detect genre from project.genre, supporting composite genres
+    static func autoDetect(from projectGenre: String) -> GenreTemplate {
+        let trimmed = projectGenre.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return defaultTemplate }
+
+        let hasComposite = trimmed.contains("+") || trimmed.contains("/") || hasYuSeparator(trimmed)
+        if hasComposite { return resolveComposite(trimmed) }
+
+        return template(for: trimmed)
+    }
+}

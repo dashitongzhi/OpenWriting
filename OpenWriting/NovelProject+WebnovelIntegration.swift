@@ -195,7 +195,7 @@ extension NovelProject {
            let selected = GenreTemplateLibrary.allTemplates.first(where: { $0.id == genreTemplateId }) {
             return selected
         }
-        GenreTemplateLibrary.autoDetect(from: genre)
+        return GenreTemplateLibrary.autoDetect(from: genre)
     }
 
     // MARK: - Narrative Stage Detection

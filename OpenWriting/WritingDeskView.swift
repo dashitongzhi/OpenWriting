@@ -2486,8 +2486,7 @@ private struct WritingDeskChapterNavigator: View {
     }
 
     private func volumeTitle(for volumeNumber: Int) -> String {
-        project.volumes.first(where: { $0.volumeNumber == volumeNumber })?.displayTitle
-            ?? "第 \(volumeNumber) 卷"
+        "第 \(volumeNumber) 卷"
     }
 
     private func chapterAscending(_ lhs: ChapterDraftMetadata, _ rhs: ChapterDraftMetadata) -> Bool {

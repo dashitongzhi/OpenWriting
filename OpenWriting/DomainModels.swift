@@ -1,11 +1,11 @@
 import Foundation
 
-enum PersistedTimestampDisplayStyle {
+nonisolated enum PersistedTimestampDisplayStyle {
     case project
     case compact
 }
 
-enum PersistedTimestampCodec {
+nonisolated enum PersistedTimestampCodec {
     static func now() -> Date {
         Date()
     }
@@ -357,7 +357,7 @@ enum ChapterDraftSaveResult {
     }
 }
 
-struct ChapterDraftVersion: Identifiable, Codable, Hashable {
+nonisolated struct ChapterDraftVersion: Identifiable, Codable, Hashable {
     let id: String
     var chapterTitle: String
     var content: String
@@ -426,7 +426,7 @@ struct ChapterDraftVersion: Identifiable, Codable, Hashable {
     }
 }
 
-struct ChapterDraft: Identifiable, Codable, Hashable {
+nonisolated struct ChapterDraft: Identifiable, Codable, Hashable {
     let id: String
     var volumeNumber: Int
     var chapterNumber: Int
@@ -539,7 +539,7 @@ struct ChapterDraft: Identifiable, Codable, Hashable {
     }
 }
 
-struct ChapterDraftMetadata: Identifiable, Codable, Hashable {
+nonisolated struct ChapterDraftMetadata: Identifiable, Codable, Hashable {
     let id: String
     var volumeNumber: Int
     var chapterNumber: Int
@@ -560,6 +560,10 @@ struct ChapterDraftMetadata: Identifiable, Codable, Hashable {
         previewText = chapterDraft.previewText
     }
 
+    var savedAtDate: Date {
+        PersistedTimestampCodec.parse(savedAt) ?? .distantPast
+    }
+
     nonisolated static func sortDescending(_ lhs: ChapterDraftMetadata, _ rhs: ChapterDraftMetadata) -> Bool {
         if lhs.volumeNumber != rhs.volumeNumber {
             return lhs.volumeNumber > rhs.volumeNumber
@@ -567,7 +571,7 @@ struct ChapterDraftMetadata: Identifiable, Codable, Hashable {
         if lhs.chapterNumber != rhs.chapterNumber {
             return lhs.chapterNumber > rhs.chapterNumber
         }
-        return lhs.savedAt.localizedStandardCompare(rhs.savedAt) == .orderedDescending
+        return lhs.savedAtDate > rhs.savedAtDate
     }
 }
 
@@ -1168,11 +1172,21 @@ struct NovelProject: Identifiable, Codable {
     }
 
     var savedChapterCount: Int {
-        chapterDrafts.count
+        sortedChapterCatalog.count
+    }
+
+    var sortedChapterCatalog: [ChapterDraftMetadata] {
+        if chapterCatalog.isEmpty {
+            return chapterDrafts
+                .map(ChapterDraftMetadata.init)
+                .sorted(by: ChapterDraftMetadata.sortDescending)
+        }
+
+        return chapterCatalog.sorted(by: ChapterDraftMetadata.sortDescending)
     }
 
     var duplicateChapterNumbers: [Int] {
-        let grouped = Dictionary(grouping: chapterDrafts, by: \.chapterNumber)
+        let grouped = Dictionary(grouping: sortedChapterCatalog, by: \.chapterNumber)
         return grouped
             .filter { $0.value.count > 1 }
             .map(\.key)
@@ -1180,7 +1194,7 @@ struct NovelProject: Identifiable, Codable {
     }
 
     var missingChapterNumbers: [Int] {
-        let chapterNumbers = Set(chapterDrafts.map(\.chapterNumber))
+        let chapterNumbers = Set(sortedChapterCatalog.map(\.chapterNumber))
         guard let highest = chapterNumbers.max(), highest > 1 else { return [] }
         return (1...highest).filter { !chapterNumbers.contains($0) }
     }

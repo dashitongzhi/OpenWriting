@@ -430,11 +430,7 @@ enum AIWritingService {
                         flushLatin(&latinBuffer, into: &tokens)
                     }
                     cjkBuffer.append(scalar)
-                } else if scalar.properties.isWhitespace
-                    || scalar.properties.isPunctuation
-                    || scalar.properties.isSymbol
-                    || scalar.value == 0x0A || scalar.value == 0x0D
-                {
+                } else if isTokenSeparator(scalar) {
                     if !cjkBuffer.isEmpty {
                         flushCJK(&cjkBuffer, into: &tokens)
                     }
@@ -458,7 +454,7 @@ enum AIWritingService {
         }
 
         private static func flushLatin(_ buffer: inout [Unicode.Scalar], into tokens: inout [String]) {
-            let word = String(Unicode.ScalarView(buffer)).lowercased()
+            let word = buffer.map(String.init).joined().lowercased()
             if !word.isEmpty { tokens.append(word) }
             buffer.removeAll()
         }
@@ -475,6 +471,27 @@ enum AIWritingService {
                 || (v >= 0xF900 && v <= 0xFAFF)       // CJK Compatibility
                 || (v >= 0x20000 && v <= 0x2A6DF)     // CJK Extension B
                 || (v >= 0x2A700 && v <= 0x2CEAF)     // CJK Extensions C–F
+        }
+
+        private static func isTokenSeparator(_ scalar: Unicode.Scalar) -> Bool {
+            if scalar.properties.isWhitespace { return true }
+
+            switch scalar.properties.generalCategory {
+            case .connectorPunctuation,
+                .dashPunctuation,
+                .openPunctuation,
+                .closePunctuation,
+                .initialPunctuation,
+                .finalPunctuation,
+                .otherPunctuation,
+                .mathSymbol,
+                .currencySymbol,
+                .modifierSymbol,
+                .otherSymbol:
+                return true
+            default:
+                return false
+            }
         }
 
         /// Extract unigrams, bigrams, and trigrams from a run of CJK characters.

@@ -1139,7 +1139,6 @@ final class AppState {
             let nsText = text as NSString
             for match in regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)) {
                 if match.numberOfRanges >= 2 {
-                    let dialogue = nsText.substring(with: match.range(at: 1))
                     let contextStart = max(0, match.range.location - 10)
                     let contextLength = min(match.range.location - contextStart, 20)
                     let context = nsText.substring(with: NSRange(location: contextStart, length: contextLength))
@@ -1206,7 +1205,6 @@ final class AppState {
             .filter { $0.value >= 1 }
             .prefix(10)
             .map { (pair, count) -> MemoryItem in
-                let names = pair.components(separatedBy: "↔")
                 return MemoryItem(
                     category: .relationship,
                     subject: pair,

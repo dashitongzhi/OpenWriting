@@ -207,13 +207,13 @@ struct ContextRanker {
             return
         }
         // Emit the full run and all 2-char sub-windows for better recall
-        let full = String(Unicode.ScalarView(buffer))
+        let full = buffer.map(String.init).joined()
         if full.count >= 2 && full.count <= 8 {
             entities.insert(full)
         }
         if buffer.count >= 4 {
             for i in 0...(buffer.count - 2) {
-                let bigram = String(Unicode.ScalarView([buffer[i], buffer[i + 1]]))
+                let bigram = String(buffer[i]) + String(buffer[i + 1])
                 entities.insert(bigram)
             }
         }
