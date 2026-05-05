@@ -1,9 +1,25 @@
 import Foundation
 
-// MARK: - Genre Template System
-// Inspired by webnovel-writer's 37 built-in genre templates
+// MARK: - Legacy Genre Template System (Codable Data Layer)
+//
+// This file contains the LEGACY genre template types used for persistent
+// Codable serialization (e.g. stored in NovelProject and file-based persistence).
+//
+// The NEW genre template system lives in GenreTemplateEngine.swift (GenreTemplate,
+// GenreCategory, GenreTemplateLibrary) and provides richer configuration:
+// HookType, CoolPointPattern, StrandConfig, WritingDirectives, AntiPatterns, etc.
+//
+// Both systems coexist intentionally:
+// - Legacy types (LegacyGenreTemplate, LegacyGenreCategory) handle Codable backward
+//   compatibility with existing persisted data.
+// - New types (GenreTemplate, GenreCategory) are used at runtime for AI prompt
+//   generation and genre-aware writing behavior.
+// - GenreTemplateLibrary.migrateLegacyTemplates() bridges legacy → new.
+//
+// If you're adding a new genre, add it to GenreTemplateEngine.swift (new system).
+// Only modify this file for Codable migration or backward-compatibility fixes.
 
-/// 题材分类
+/// 题材分类（Legacy — 仅供 Codable 兼容，运行时请使用 GenreCategory）
 enum LegacyGenreCategory: String, Codable, CaseIterable, Identifiable {
     case xuanhuan = "玄幻修仙"
     case urban = "都市现代"

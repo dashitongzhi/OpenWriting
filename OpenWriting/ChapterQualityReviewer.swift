@@ -436,6 +436,25 @@ enum UnifiedQualityReviewer {
 
     // MARK: - Parse Review Result (JSON → ChapterReviewResult)
 
+    /// Codable intermediate for the AI review JSON response.
+    /// Uses snake_case keys matching the AI prompt output format.
+    private struct AIReviewResponse: Decodable {
+        let overall_score: Int
+        let dimension_scores: [String: Int]
+        let issues: [AIReviewIssue]
+        let anti_patterns: [String]?
+        let overall_summary: String?
+    }
+
+    private struct AIReviewIssue: Decodable {
+        let dimension: String
+        let severity: String
+        let description: String
+        let evidence: String?
+        let fix_hint: String?
+        let location: String?
+    }
+
     static func parseReviewResult(from jsonString: String) -> ChapterReviewResult {
         let cleaned = jsonString
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -444,52 +463,41 @@ enum UnifiedQualityReviewer {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard let data = cleaned.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+              let response = try? JSONDecoder().decode(AIReviewResponse.self, from: data) else {
             return fallbackParse(from: cleaned)
         }
 
-        // Parse dimension scores
+        // Map dimension scores
         var dimensionScores: [ReviewDimension: Int] = [:]
-        if let scores = json["dimension_scores"] as? [String: Int] {
-            for dim in ReviewDimension.allCases {
-                dimensionScores[dim] = scores[dim.rawValue] ?? 80
-            }
+        for dim in ReviewDimension.allCases {
+            dimensionScores[dim] = response.dimension_scores[dim.rawValue] ?? 80
         }
 
-        // Parse issues
-        var issues: [ReviewIssue] = []
-        if let issueList = json["issues"] as? [[String: Any]] {
-            for issueDict in issueList {
-                guard let dimStr = issueDict["dimension"] as? String,
-                      let dimension = ReviewDimension(rawValue: dimStr),
-                      let sevStr = issueDict["severity"] as? String,
-                      let severity = ReviewSeverity(rawValue: sevStr),
-                      let description = issueDict["description"] as? String else {
-                    continue
-                }
-                issues.append(ReviewIssue(
-                    dimension: dimension,
-                    severity: severity,
-                    description: description,
-                    evidence: issueDict["evidence"] as? String ?? "",
-                    fixHint: issueDict["fix_hint"] as? String ?? "",
-                    location: issueDict["location"] as? String ?? ""
-                ))
+        // Map issues
+        let issues: [ReviewIssue] = response.issues.compactMap { issue in
+            guard let dimension = ReviewDimension(rawValue: issue.dimension),
+                  let severity = ReviewSeverity(rawValue: issue.severity) else {
+                return nil
             }
+            return ReviewIssue(
+                dimension: dimension,
+                severity: severity,
+                description: issue.description,
+                evidence: issue.evidence ?? "",
+                fixHint: issue.fix_hint ?? "",
+                location: issue.location ?? ""
+            )
         }
 
-        // Parse anti-patterns and summary
-        let antiPatterns = json["anti_patterns"] as? [String] ?? []
-        let overallSummary = json["overall_summary"] as? String ?? ""
+        let antiPatterns = response.anti_patterns ?? []
+        let overallSummary = response.overall_summary ?? ""
 
         // Compute overall score using webnovel-writer penalty methodology:
         // 100 - sum(penalties for all issues), clamped to 0...100.
         // If the AI provided an overall_score, use it as an upper-bound hint,
         // but the penalty-based calculation takes precedence for consistency.
-        let aiScore = json["overall_score"] as? Int ?? 100
         let penaltyScore = computePenaltyScore(issues: issues)
-        // Use the lower of AI score and penalty score (penalty model is authoritative).
-        let finalScore = min(aiScore, penaltyScore)
+        let finalScore = min(response.overall_score, penaltyScore)
 
         let hasBlocking = issues.contains { $0.isBlocking }
 

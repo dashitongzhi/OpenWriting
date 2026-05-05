@@ -270,8 +270,21 @@ enum GenreTemplateLibrary {
     // MARK: - Build Templates
 
     private static func buildTemplates() -> [GenreTemplate] {
+        buildCoreTemplates() + migrateLegacyTemplates() + buildAdditionalTemplates()
+    }
+
+    /// Core templates defined in the new system (hand-authored, not migrated from legacy).
+    private static func buildCoreTemplates() -> [GenreTemplate] {
+        buildXuanhuanCoreTemplates()
+        + buildUrbanCoreTemplates()
+        + buildRomanceCoreTemplates()
+        + buildMysteryCoreTemplates()
+    }
+
+    // MARK: Xuanhuan (玄幻) — Core
+
+    private static func buildXuanhuanCoreTemplates() -> [GenreTemplate] {
         [
-            // === 修仙 ===
             GenreTemplate(
                 id: "xianxia",
                 name: "修仙",
@@ -302,7 +315,6 @@ enum GenreTemplateLibrary {
                 ]
             ),
 
-            // === 系统流 ===
             GenreTemplate(
                 id: "system",
                 name: "系统流",
@@ -328,8 +340,13 @@ enum GenreTemplateLibrary {
                     "不要跳过任务直接给结果",
                 ]
             ),
+        ]
+    }
 
-            // === 都市异能 ===
+    // MARK: Urban (都市) — Core
+
+    private static func buildUrbanCoreTemplates() -> [GenreTemplate] {
+        [
             GenreTemplate(
                 id: "urban_power",
                 name: "都市异能",
@@ -359,39 +376,13 @@ enum GenreTemplateLibrary {
                     "不要让配角智商下线",
                 ]
             ),
+        ]
+    }
 
-            // === 规则怪谈 ===
-            GenreTemplate(
-                id: "rules_horror",
-                name: "规则怪谈",
-                category: .mystery,
-                description: "规则驱动的恐怖悬疑，强调规则发现、推理、生存",
-                coreSellingPoint: "规则发现 + 推理博弈 + 生存压力",
-                preferredHookTypes: [.mystery, .crisis, .choice],
-                hookStrengthBaseline: .strong,
-                preferredCoolPointPatterns: [.misinterpretation, .underdogVictory, .identityReveal],
-                coolPointDensity: .medium,
-                stagnationThreshold: 2,
-                setupTolerance: .high,
-                strandConfig: GenreStrandConfig(
-                    genre: "规则怪谈", questTarget: 0.55, fireTarget: 0.15,
-                    constellationTarget: 0.30, questMaxConsecutive: 4,
-                    fireMaxGap: 15, constellationMaxGap: 10
-                ),
-                writingDirectives: [
-                    "规则要清晰、可推理、有漏洞",
-                    "恐怖氛围靠细节堆砌而非直接描述",
-                    "每章至少发现或验证一条规则",
-                    "信息不对称是核心驱动力",
-                ],
-                antiPatterns: [
-                    "不要让角色无条件相信规则",
-                    "不要跳过推理过程直接给结论",
-                    "不要用突然惊吓替代氛围恐怖",
-                ]
-            ),
+    // MARK: Romance (言情) — Core
 
-            // === 青春甜宠 ===
+    private static func buildRomanceCoreTemplates() -> [GenreTemplate] {
+        [
             GenreTemplate(
                 id: "sweet_romance",
                 name: "青春甜宠",
@@ -422,7 +413,6 @@ enum GenreTemplateLibrary {
                 ]
             ),
 
-            // === 古言 ===
             GenreTemplate(
                 id: "period_drama",
                 name: "古言",
@@ -452,11 +442,49 @@ enum GenreTemplateLibrary {
                     "不要跳过礼仪细节",
                 ]
             ),
+        ]
+    }
 
-        ] + migrateLegacyTemplates() + [
-            // MARK: Additional romance/mystery genres (no legacy source)
+    // MARK: Mystery (悬疑) — Core
 
-            // === 民国言情 ===
+    private static func buildMysteryCoreTemplates() -> [GenreTemplate] {
+        [
+            GenreTemplate(
+                id: "rules_horror",
+                name: "规则怪谈",
+                category: .mystery,
+                description: "规则驱动的恐怖悬疑，强调规则发现、推理、生存",
+                coreSellingPoint: "规则发现 + 推理博弈 + 生存压力",
+                preferredHookTypes: [.mystery, .crisis, .choice],
+                hookStrengthBaseline: .strong,
+                preferredCoolPointPatterns: [.misinterpretation, .underdogVictory, .identityReveal],
+                coolPointDensity: .medium,
+                stagnationThreshold: 2,
+                setupTolerance: .high,
+                strandConfig: GenreStrandConfig(
+                    genre: "规则怪谈", questTarget: 0.55, fireTarget: 0.15,
+                    constellationTarget: 0.30, questMaxConsecutive: 4,
+                    fireMaxGap: 15, constellationMaxGap: 10
+                ),
+                writingDirectives: [
+                    "规则要清晰、可推理、有漏洞",
+                    "恐怖氛围靠细节堆砌而非直接描述",
+                    "每章至少发现或验证一条规则",
+                    "信息不对称是核心驱动力",
+                ],
+                antiPatterns: [
+                    "不要让角色无条件相信规则",
+                    "不要跳过推理过程直接给结论",
+                    "不要用突然惊吓替代氛围恐怖",
+                ]
+            ),
+        ]
+    }
+
+    // MARK: Additional Romance/Mystery (no legacy source)
+
+    private static func buildAdditionalTemplates() -> [GenreTemplate] {
+        [
             GenreTemplate(
                 id: "republic_romance",
                 name: "民国言情",
@@ -487,7 +515,6 @@ enum GenreTemplateLibrary {
                 ]
             ),
 
-            // === 现言脑洞 ===
             GenreTemplate(
                 id: "modern_brainhole",
                 name: "现言脑洞",
@@ -518,7 +545,6 @@ enum GenreTemplateLibrary {
                 ]
             ),
 
-            // === 女频悬疑 ===
             GenreTemplate(
                 id: "female_mystery",
                 name: "女频悬疑",
@@ -549,7 +575,6 @@ enum GenreTemplateLibrary {
                 ]
             ),
 
-            // === 种田 ===
             GenreTemplate(
                 id: "farming_life",
                 name: "种田",
@@ -580,7 +605,6 @@ enum GenreTemplateLibrary {
                 ]
             ),
 
-            // === 年代 ===
             GenreTemplate(
                 id: "period_era",
                 name: "年代",
