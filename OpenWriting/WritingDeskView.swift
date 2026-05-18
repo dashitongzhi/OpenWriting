@@ -913,12 +913,6 @@ struct WritingDeskView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isSavingChapter || isGenerating || project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                Button("保存并下一章") {
-                    saveCurrentChapterDraft(for: project, advanceToNextChapter: true)
-                }
-                .buttonStyle(.bordered)
-                .disabled(isSavingChapter || isGenerating || project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
 
             VStack(alignment: .leading, spacing: 10) {
@@ -941,12 +935,6 @@ struct WritingDeskView: View {
                         saveCurrentChapterDraft(for: project)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(isSavingChapter || isGenerating || project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                    Button("保存并下一章") {
-                        saveCurrentChapterDraft(for: project, advanceToNextChapter: true)
-                    }
-                    .buttonStyle(.bordered)
                     .disabled(isSavingChapter || isGenerating || project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
 
