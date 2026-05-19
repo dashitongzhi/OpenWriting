@@ -894,6 +894,238 @@ struct GlobalMemorySnapshot: Codable, Hashable {
     }
 }
 
+// MARK: - ForeshadowEntry (结构化伏笔追踪)
+
+/// 结构化伏笔条目，追踪每条伏笔的状态和生命周期
+struct ForeshadowEntry: Codable, Identifiable, Hashable {
+    let id: String
+    var title: String                      // 伏笔标题/描述
+    var description: String                // 详细描述
+    var firstChapter: Int                 // 首次出现章节
+    var volumeNumber: Int                // 所属卷
+    var status: ForeshadowStatus          // 当前状态
+    var importance: ForeshadowImportance  // 重要程度
+    var threads: [String]                // 关联的叙事线/线程
+    var lastAdvancedChapter: Int         // 最后推进的章节
+    var plantedChapter: Int             // 埋下的章节
+    var resolutionChapter: Int?         // 回收的章节（resolved时填充）
+    var expectedResolutionChapter: Int?  // 预期回收章节
+    var createdAt: Date                 // 创建时间
+    var updatedAt: Date                // 更新时间
+    var notes: String                 // 额外备注
+
+    init(
+        id: String = UUID().uuidString,
+        title: String,
+        description: String = "",
+        firstChapter: Int,
+        volumeNumber: Int = 1,
+        status: ForeshadowStatus = .active,
+        importance: ForeshadowImportance = .minor,
+        threads: [String] = [],
+        lastAdvancedChapter: Int = 0,
+        plantedChapter: Int = 0,
+        resolutionChapter: Int? = nil,
+        expectedResolutionChapter: Int? = nil,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date(),
+        notes: String = ""
+    ) {
+        self.id = id
+        self.title = title
+        self.description = description
+        self.firstChapter = firstChapter
+        self.volumeNumber = volumeNumber
+        self.status = status
+        self.importance = importance
+        self.threads = threads
+        self.lastAdvancedChapter = lastAdvancedChapter
+        self.plantedChapter = plantedChapter
+        self.resolutionChapter = resolutionChapter
+        self.expectedResolutionChapter = expectedResolutionChapter
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.notes = notes
+    }
+
+    /// 推进伏笔到下一状态
+    mutating func advance(to chapter: Int) {
+        lastAdvancedChapter = chapter
+        updatedAt = Date()
+
+        switch status {
+        case .active:
+            status = .advanced
+        case .advanced:
+            // 保持 advanced 状态，可以多次推进
+            break
+        case .resolved, .retconned, .overdue:
+            // 已解决或过期的伏笔不再推进
+            break
+        }
+    }
+
+    /// 标记伏笔为已回收
+    mutating func resolve(at chapter: Int) {
+        status = .resolved
+        resolutionChapter = chapter
+        updatedAt = Date()
+    }
+
+    /// 标记伏笔为已废弃（retcon）
+    mutating func markRetconned() {
+        status = .retconned
+        updatedAt = Date()
+    }
+
+    /// 检查伏笔是否超时（超过预期章节仍未回收）
+    var isOverdue: Bool {
+        guard let expected = expectedResolutionChapter else { return false }
+        return status != .resolved && lastAdvancedChapter > expected
+    }
+
+    /// 伏笔活跃天数
+    var activeDays: Int {
+        Calendar.current.dateComponents([.day], from: createdAt, to: Date()).day ?? 0
+    }
+
+    /// 是否在近N章内被推进
+    func wasRecent(chaptersAgo: Int, currentChapter: Int) -> Bool {
+        currentChapter - lastAdvancedChapter <= chaptersAgo
+    }
+}
+
+/// 伏笔状态
+enum ForeshadowStatus: String, Codable, CaseIterable {
+    case active      // 活跃，未推进
+    case advanced    // 已推进
+    case resolved    // 已回收
+    case retconned   // 已废弃/取消
+    case overdue     // 超时未回收
+
+    var displayName: String {
+        switch self {
+        case .active: return "活跃"
+        case .advanced: return "推进中"
+        case .resolved: return "已回收"
+        case .retconned: return "已废弃"
+        case .overdue: return "超时"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .active: return "flag.fill"
+        case .advanced: return "flag.fill"
+        case .resolved: return "checkmark.circle.fill"
+        case .retconned: return "xmark.circle.fill"
+        case .overdue: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    var colorHex: String {
+        switch self {
+        case .active: return "#4A90D9"
+        case .advanced: return "#50C878"
+        case .resolved: return "#808080"
+        case .retconned: return "#FF6B6B"
+        case .overdue: return "#FFA500"
+        }
+    }
+}
+
+/// 伏笔重要程度
+enum ForeshadowImportance: String, Codable, CaseIterable {
+    case major   // 重要伏笔（主线相关）
+    case minor   // 次要伏笔（支线/装饰性）
+
+    var displayName: String {
+        switch self {
+        case .major: return "重要"
+        case .minor: return "次要"
+        }
+    }
+}
+
+/// 伏笔列表（用于NovelProject中）
+struct ForeshadowList: Codable, Hashable {
+    var entries: [ForeshadowEntry]
+
+    init(entries: [ForeshadowEntry] = []) {
+        self.entries = entries
+    }
+
+    // MARK: - 查询方法
+
+    var activeEntries: [ForeshadowEntry] {
+        entries.filter { $0.status == .active || $0.status == .advanced }
+    }
+
+    var resolvedEntries: [ForeshadowEntry] {
+        entries.filter { $0.status == .resolved }
+    }
+
+    var overdueEntries: [ForeshadowEntry] {
+        entries.filter { $0.isOverdue }
+    }
+
+    func entries(forVolume volume: Int) -> [ForeshadowEntry] {
+        entries.filter { $0.volumeNumber == volume }
+    }
+
+    func entries(forThread thread: String) -> [ForeshadowEntry] {
+        entries.filter { $0.threads.contains(thread) }
+    }
+
+    // MARK: - 状态统计
+
+    var totalCount: Int { entries.count }
+    var activeCount: Int { activeEntries.count }
+    var resolvedCount: Int { resolvedEntries.count }
+    var overdueCount: Int { overdueEntries.count }
+
+    var resolutionRate: Double {
+        guard totalCount > 0 else { return 0 }
+        return Double(resolvedCount) / Double(totalCount)
+    }
+
+    // MARK: - 操作方法
+
+    mutating func add(_ entry: ForeshadowEntry) {
+        entries.append(entry)
+    }
+
+    mutating func remove(id: String) {
+        entries.removeAll { $0.id == id }
+    }
+
+    mutating func update(_ entry: ForeshadowEntry) {
+        if let index = entries.firstIndex(where: { $0.id == entry.id }) {
+            entries[index] = entry
+        }
+    }
+
+    mutating func advanceForeshadow(id: String, to chapter: Int) {
+        if let index = entries.firstIndex(where: { $0.id == id }) {
+            entries[index].advance(to: chapter)
+        }
+    }
+
+    mutating func resolveForeshadow(id: String, at chapter: Int) {
+        if let index = entries.firstIndex(where: { $0.id == id }) {
+            entries[index].resolve(at: chapter)
+        }
+    }
+
+    /// 清理已解决的旧伏笔（保留最近N条）
+    mutating func pruneResolved(keeping last: Int = 50) {
+        let resolved = entries.filter { $0.status == .resolved }
+        let other = entries.filter { $0.status != .resolved }
+        let toKeep = resolved.suffix(last)
+        entries = other + Array(toKeep)
+    }
+}
+
 struct NovelProject: Identifiable, Codable {
     let id: String
     let title: String
@@ -932,6 +1164,8 @@ struct NovelProject: Identifiable, Codable {
     var strandWeaveTracker: StrandWeaveTracker
     /// 质量审查报告历史
     var qualityReviewReports: [QualityReviewReport]
+    /// 结构化伏笔列表
+    var foreshadowList: ForeshadowList
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -969,6 +1203,7 @@ struct NovelProject: Identifiable, Codable {
         case genreTemplateId
         case strandWeaveTracker
         case qualityReviewReports
+        case foreshadowList
     }
 
     init(
@@ -1046,6 +1281,7 @@ struct NovelProject: Identifiable, Codable {
         self.genreTemplateId = genreTemplateId
         self.strandWeaveTracker = strandWeaveTracker ?? StrandWeaveTracker()
         self.qualityReviewReports = qualityReviewReports ?? []
+        self.foreshadowList = ForeshadowList()
     }
 
     init(from decoder: Decoder) throws {
@@ -1089,6 +1325,7 @@ struct NovelProject: Identifiable, Codable {
         genreTemplateId = try container.decodeIfPresent(String.self, forKey: .genreTemplateId)
         strandWeaveTracker = try container.decodeIfPresent(StrandWeaveTracker.self, forKey: .strandWeaveTracker) ?? StrandWeaveTracker()
         qualityReviewReports = try container.decodeIfPresent([QualityReviewReport].self, forKey: .qualityReviewReports) ?? []
+        foreshadowList = try container.decodeIfPresent(ForeshadowList.self, forKey: .foreshadowList) ?? ForeshadowList()
     }
 
     func encode(to encoder: Encoder) throws {
@@ -1292,6 +1529,32 @@ struct NovelProject: Identifiable, Codable {
 
     var foreshadowStatusLabel: String {
         hasForeshadowNotes ? "\(foreshadowNodeCount) 条" : "待标记"
+    }
+
+    // MARK: - 结构化伏笔列表计算属性
+
+    var foreshadowListActiveCount: Int {
+        foreshadowList.activeCount
+    }
+
+    var foreshadowListResolvedCount: Int {
+        foreshadowList.resolvedCount
+    }
+
+    var foreshadowListOverdueCount: Int {
+        foreshadowList.overdueCount
+    }
+
+    var foreshadowListResolutionRate: String {
+        String(format: "%.0f%%", foreshadowList.resolutionRate * 100)
+    }
+
+    var hasForeshadowList: Bool {
+        !foreshadowList.entries.isEmpty
+    }
+
+    var foreshadowListStatusLabel: String {
+        "\(foreshadowList.activeCount) 活跃 / \(foreshadowList.resolvedCount) 已回收"
     }
 
     var volumePlanStatusLabel: String {

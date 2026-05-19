@@ -495,6 +495,123 @@ final class AppState {
         }
     }
 
+    // MARK: - 结构化伏笔管理
+
+    func addForeshadowEntry(_ entry: ForeshadowEntry, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.foreshadowList.add(entry)
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func removeForeshadowEntry(id: String, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.foreshadowList.remove(id: id)
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func updateForeshadowEntry(_ entry: ForeshadowEntry, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.foreshadowList.update(entry)
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func advanceForeshadow(id: String, to chapter: Int, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.foreshadowList.advanceForeshadow(id: id, to: chapter)
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    func resolveForeshadow(id: String, at chapter: Int, for projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            project.foreshadowList.resolveForeshadow(id: id, at: chapter)
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
+    /// 基于文本foreshadowNotes创建结构化伏笔条目
+    func migrateForeshadowNotesToStructured(projectID: NovelProject.ID) {
+        updateProject(projectID) { project in
+            let text = project.foreshadowNotes
+            guard !text.isEmpty else { return }
+
+            var newEntries: [ForeshadowEntry] = []
+            let lines = text.components(separatedBy: .newlines)
+
+            for line in lines {
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { continue }
+
+                // 解析格式：[状态] 标题 — 章节
+                var title = trimmed
+                var status: ForeshadowStatus = .active
+                var chapterNum = project.currentChapterNumber
+
+                // 检测状态前缀
+                if trimmed.hasPrefix("[") {
+                    let statusEnd = trimmed.firstIndex(of: "]")
+                    if let end = statusEnd {
+                        let startIndex = trimmed.index(after: trimmed.startIndex)
+                        let statusStr = String(trimmed[startIndex..<end])
+                        switch statusStr {
+                        case "新增": status = .active
+                        case "推进": status = .advanced
+                        case "待回收": status = .active
+                        case "已回收": status = .resolved
+                        case "废弃": status = .retconned
+                        default: status = .active
+                        }
+                        let afterBracket = trimmed[trimmed.index(after: end)...].trimmingCharacters(in: .whitespaces)
+                        if afterBracket.hasPrefix("-") || afterBracket.hasPrefix(" ") {
+                            title = String(afterBracket.dropFirst()).trimmingCharacters(in: .whitespaces)
+                        } else {
+                            title = afterBracket
+                        }
+                    }
+                }
+
+                // 检测章节引用
+                let chapterPatterns = ["第", "章", "卷"]
+                for pattern in chapterPatterns {
+                    if let range = trimmed.range(of: pattern) {
+                        let afterPattern = trimmed[range.upperBound...]
+                        let digits = afterPattern.prefix(while: { $0.isNumber })
+                        if !digits.isEmpty, let num = Int(digits) {
+                            chapterNum = num
+                            break
+                        }
+                    }
+                }
+
+                if !title.isEmpty {
+                    let entry = ForeshadowEntry(
+                        title: title,
+                        description: "",
+                        firstChapter: chapterNum,
+                        volumeNumber: project.currentVolumeNumber,
+                        status: status,
+                        importance: .minor,
+                        threads: [],
+                        lastAdvancedChapter: status == .advanced ? chapterNum : 0,
+                        plantedChapter: chapterNum
+                    )
+                    newEntries.append(entry)
+                }
+            }
+
+            if !newEntries.isEmpty {
+                for entry in newEntries {
+                    project.foreshadowList.add(entry)
+                }
+            }
+
+            project.updatedAt = Self.currentTimestampLabel()
+        }
+    }
+
     func updateVolumePlanNotes(_ text: String, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.volumePlanNotes = text
