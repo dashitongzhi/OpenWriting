@@ -1,204 +1,12 @@
 import Foundation
 
 // MARK: - Genre Template Engine
+//
+// Core logic and library for genre templates.
+// Data types are in GenreTemplateData.swift.
 
 /// Provides parameterized genre configurations that tune the AI writing behavior.
 /// Inspired by webnovel-writer's genre profiles and template system.
-
-struct GenreTemplate: Identifiable, Codable, Hashable {
-    let id: String
-    let name: String
-    let category: GenreCategory
-    let description: String
-    let coreSellingPoint: String
-
-    // Hook configuration
-    let preferredHookTypes: [HookType]
-    let hookStrengthBaseline: HookStrength
-
-    // Cool-point configuration
-    let preferredCoolPointPatterns: [CoolPointPattern]
-    let coolPointDensity: CoolPointDensity
-
-    // Pacing configuration
-    let stagnationThreshold: Int   // chapters with zero progress before warning
-    let setupTolerance: SetupTolerance
-
-    // Strand configuration
-    let strandConfig: GenreStrandConfig
-
-    // Writing directives
-    let writingDirectives: [String]
-    let antiPatterns: [String]
-
-    var displayName: String { name }
-}
-
-// MARK: - Genre Category
-
-enum GenreCategory: String, CaseIterable, Codable, Identifiable {
-    case xuanhuan = "玄幻修仙"
-    case urban = "都市现代"
-    case romance = "言情"
-    case mystery = "悬疑"
-
-    var id: Self { self }
-
-    var genres: [String] {
-        switch self {
-        case .xuanhuan:
-            return ["修仙", "系统流", "高武", "西幻", "无限流", "末世", "科幻"]
-        case .urban:
-            return ["都市异能", "都市日常", "都市脑洞", "现实题材", "电竞", "直播文"]
-        case .romance:
-            return ["古言", "宫斗宅斗", "青春甜宠", "豪门总裁", "职场婚恋", "民国言情",
-                    "幻想言情", "现言脑洞", "女频悬疑", "种田", "年代"]
-        case .mystery:
-            return ["规则怪谈", "悬疑脑洞", "悬疑灵异", "克苏鲁"]
-        }
-    }
-}
-
-// MARK: - Hook Types
-
-enum HookType: String, CaseIterable, Codable {
-    case crisis = "crisis"         // 危机钩
-    case mystery = "mystery"       // 悬念钩
-    case desire = "desire"         // 渴望钩
-    case emotion = "emotion"       // 情绪钩
-    case choice = "choice"         // 选择钩
-
-    var displayName: String {
-        switch self {
-        case .crisis: return "危机钩"
-        case .mystery: return "悬念钩"
-        case .desire: return "渴望钩"
-        case .emotion: return "情绪钩"
-        case .choice: return "选择钩"
-        }
-    }
-
-    var description: String {
-        switch self {
-        case .crisis: return "危险逼近，读者想知道主角如何脱险"
-        case .mystery: return "信息缺口，读者想知道答案"
-        case .desire: return "奖赏预期，读者想看主角获得成长/复仇/收获"
-        case .emotion: return "触发愤怒/心碎/共情/羞耻/心动"
-        case .choice: return "两难抉择，高风险决策"
-        }
-    }
-}
-
-enum HookStrength: String, Codable {
-    case strong, medium, weak
-
-    var displayName: String {
-        switch self {
-        case .strong: return "强"
-        case .medium: return "中"
-        case .weak: return "弱"
-        }
-    }
-}
-
-// MARK: - Cool-Point Patterns
-
-enum CoolPointPattern: String, CaseIterable, Codable {
-    case flexAndCounter = "flex_counter"         // 装逼打脸
-    case underdogReveal = "underdog_reveal"       // 扮猪吃虎
-    case underdogVictory = "underdog_victory"     // 越级反杀
-    case authorityChallenge = "authority_challenge" // 打脸权威
-    case villainDownfall = "villain_downfall"     // 反派翻车
-    case sweetSurprise = "sweet_surprise"         // 甜蜜超预期
-    case misinterpretation = "misinterpretation"  // 迪化误解
-    case identityReveal = "identity_reveal"       // 身份掉马
-
-    var displayName: String {
-        switch self {
-        case .flexAndCounter: return "装逼打脸"
-        case .underdogReveal: return "扮猪吃虎"
-        case .underdogVictory: return "越级反杀"
-        case .authorityChallenge: return "打脸权威"
-        case .villainDownfall: return "反派翻车"
-        case .sweetSurprise: return "甜蜜超预期"
-        case .misinterpretation: return "迪化误解"
-        case .identityReveal: return "身份掉马"
-        }
-    }
-
-    var threePhaseStructure: String {
-        """
-        三段式爽点结构（30/40/30）：
-        - 铺垫（30%）：建立信息不对称 + 压力
-        - 释放（40%）：执行爽点
-        - 余波（30%）：反应、收获、新期待
-        """
-    }
-}
-
-enum CoolPointDensity: String, Codable {
-    case high, medium, low
-
-    var displayName: String {
-        switch self {
-        case .high: return "高密度"
-        case .medium: return "中密度"
-        case .low: return "低密度"
-        }
-    }
-
-    var chaptersPerCoolPoint: Int {
-        switch self {
-        case .high: return 3
-        case .medium: return 5
-        case .low: return 8
-        }
-    }
-}
-
-enum SetupTolerance: String, Codable {
-    case veryLow, low, medium, high
-
-    var displayName: String {
-        switch self {
-        case .veryLow: return "极低"
-        case .low: return "低"
-        case .medium: return "中"
-        case .high: return "高"
-        }
-    }
-
-    var maxSetupChapters: Int {
-        switch self {
-        case .veryLow: return 1
-        case .low: return 2
-        case .medium: return 3
-        case .high: return 5
-        }
-    }
-}
-
-// MARK: - Strand Configuration
-
-struct GenreStrandConfig: Codable, Hashable {
-    let genre: String
-    let questTarget: Double
-    let fireTarget: Double
-    let constellationTarget: Double
-    let questMaxConsecutive: Int
-    let fireMaxGap: Int
-    let constellationMaxGap: Int
-
-    static let defaultConfig = GenreStrandConfig(
-        genre: "通用",
-        questTarget: 0.60,
-        fireTarget: 0.20,
-        constellationTarget: 0.20,
-        questMaxConsecutive: 5,
-        fireMaxGap: 10,
-        constellationMaxGap: 15
-    )
-}
 
 // MARK: - Genre Template Library
 
@@ -348,14 +156,14 @@ enum GenreTemplateLibrary {
     private static func buildUrbanCoreTemplates() -> [GenreTemplate] {
         [
             GenreTemplate(
-                id: "urban_power",
+                id: "urban异能",
                 name: "都市异能",
                 category: .urban,
-                description: "现代都市背景 + 超自然能力",
-                coreSellingPoint: "低调装逼 + 都市冒险 + 能力升级",
-                preferredHookTypes: [.crisis, .mystery, .emotion],
+                description: "都市背景下的异能/超能力题材，强调都市风云和身份冲突",
+                coreSellingPoint: "异能展示 + 都市风云 + 身份张力",
+                preferredHookTypes: [.crisis, .desire, .mystery],
                 hookStrengthBaseline: .medium,
-                preferredCoolPointPatterns: [.underdogReveal, .authorityChallenge, .flexAndCounter],
+                preferredCoolPointPatterns: [.flexAndCounter, .identityReveal, .underdogVictory],
                 coolPointDensity: .high,
                 stagnationThreshold: 3,
                 setupTolerance: .low,
@@ -365,15 +173,42 @@ enum GenreTemplateLibrary {
                     fireMaxGap: 8, constellationMaxGap: 12
                 ),
                 writingDirectives: [
-                    "能力使用要有代价和限制",
-                    "日常生活与异能世界的切换要自然",
-                    "装逼要有充分铺垫",
-                    "都市背景要接地气",
+                    "异能不能随意扩展，必须有代价或限制",
+                    "都市背景要有真实细节",
+                    "身份冲突要贯穿主线",
+                    "每次异能使用要有代价反馈",
                 ],
                 antiPatterns: [
-                    "不要让主角在公共场合随意使用异能",
-                    "不要跳过能力代价",
-                    "不要让配角智商下线",
+                    "不要让异能无代价使用",
+                    "不要跳过代价直接写结果",
+                ]
+            ),
+
+            GenreTemplate(
+                id: "都市日常",
+                name: "都市日常",
+                category: .urban,
+                description: "轻松都市题材，节奏舒缓，强调人际和温情",
+                coreSellingPoint: "人际温馨 + 日常感 + 角色成长",
+                preferredHookTypes: [.emotion, .desire],
+                hookStrengthBaseline: .weak,
+                preferredCoolPointPatterns: [.sweetSurprise, .misinterpretation],
+                coolPointDensity: .low,
+                stagnationThreshold: 5,
+                setupTolerance: .high,
+                strandConfig: GenreStrandConfig(
+                    genre: "都市日常", questTarget: 0.30, fireTarget: 0.40,
+                    constellationTarget: 0.30, questMaxConsecutive: 4,
+                    fireMaxGap: 15, constellationMaxGap: 20
+                ),
+                writingDirectives: [
+                    "节奏舒缓，但每章至少一个小高潮或温馨点",
+                    "角色互动要有细节和个性",
+                    "避免大段背景介绍，用对话和行为带出",
+                ],
+                antiPatterns: [
+                    "不要节奏拖沓无推进",
+                    "不要全是流水账日常",
                 ]
             ),
         ]
@@ -384,62 +219,60 @@ enum GenreTemplateLibrary {
     private static func buildRomanceCoreTemplates() -> [GenreTemplate] {
         [
             GenreTemplate(
-                id: "sweet_romance",
+                id: "青春甜宠",
                 name: "青春甜宠",
                 category: .romance,
-                description: "甜蜜恋爱，强调心动瞬间、误会化解、双向奔赴",
-                coreSellingPoint: "甜蜜互动 + 心动瞬间 + 误会升级",
-                preferredHookTypes: [.emotion, .desire, .mystery],
+                description: "轻松甜蜜的言情题材，感情线甜宠为主",
+                coreSellingPoint: "甜蜜互动 + 心动瞬间 + 关系升温",
+                preferredHookTypes: [.emotion, .desire, .choice],
                 hookStrengthBaseline: .medium,
-                preferredCoolPointPatterns: [.sweetSurprise, .identityReveal, .misinterpretation],
-                coolPointDensity: .medium,
-                stagnationThreshold: 4,
-                setupTolerance: .medium,
+                preferredCoolPointPatterns: [.sweetSurprise, .misinterpretation],
+                coolPointDensity: .high,
+                stagnationThreshold: 3,
+                setupTolerance: .low,
                 strandConfig: GenreStrandConfig(
-                    genre: "青春甜宠", questTarget: 0.40, fireTarget: 0.40,
-                    constellationTarget: 0.20, questMaxConsecutive: 3,
-                    fireMaxGap: 3, constellationMaxGap: 15
+                    genre: "青春甜宠", questTarget: 0.40, fireTarget: 0.35,
+                    constellationTarget: 0.25, questMaxConsecutive: 4,
+                    fireMaxGap: 10, constellationMaxGap: 12
                 ),
                 writingDirectives: [
-                    "甜度要循序渐进",
-                    "误会要合理，化解要有仪式感",
-                    "配角要服务于主线感情",
-                    "心动瞬间要有具体细节支撑",
+                    "每章至少一个甜蜜或心动瞬间",
+                    "互动要有拉扯感，不要一步到位",
+                    "误会和吃醋是推进感情的好工具",
+                    "章末留钩引导读者期待下一章",
                 ],
                 antiPatterns: [
-                    "不要让误会太低级",
-                    "不要跳过暧昧直接在一起",
-                    "不要让配角抢戏",
+                    "不要一上来就互表心意",
+                    "不要缺少拉扯和误会",
+                    "不要感情线推进过慢或过快",
                 ]
             ),
 
             GenreTemplate(
-                id: "period_drama",
+                id: "古言",
                 name: "古言",
                 category: .romance,
-                description: "古代背景言情，强调权谋、家族、身份",
-                coreSellingPoint: "权谋博弈 + 身份秘密 + 家国情怀",
-                preferredHookTypes: [.mystery, .crisis, .emotion],
+                description: "古代背景言情，强调古风氛围和情感纠葛",
+                coreSellingPoint: "古风美感 + 情感纠葛 + 身份冲突",
+                preferredHookTypes: [.emotion, .crisis, .mystery],
                 hookStrengthBaseline: .medium,
-                preferredCoolPointPatterns: [.identityReveal, .authorityChallenge, .villainDownfall],
+                preferredCoolPointPatterns: [.sweetSurprise, .identityReveal, .villainDownfall],
                 coolPointDensity: .medium,
                 stagnationThreshold: 4,
                 setupTolerance: .medium,
                 strandConfig: GenreStrandConfig(
-                    genre: "古言", questTarget: 0.45, fireTarget: 0.35,
-                    constellationTarget: 0.20, questMaxConsecutive: 4,
-                    fireMaxGap: 5, constellationMaxGap: 15
+                    genre: "古言", questTarget: 0.50, fireTarget: 0.25,
+                    constellationTarget: 0.25, questMaxConsecutive: 5,
+                    fireMaxGap: 12, constellationMaxGap: 15
                 ),
                 writingDirectives: [
-                    "对白要符合古代语境但不过度文言",
-                    "权谋要有逻辑链条",
-                    "身份秘密要有伏笔铺垫",
-                    "场景描写要有古韵",
+                    "语言风格要统一在古风氛围内",
+                    "情感纠葛要有层次",
+                    "章末留悬念引导期待",
                 ],
                 antiPatterns: [
-                    "不要用现代网络用语",
-                    "不要让角色行为不符合时代背景",
-                    "不要跳过礼仪细节",
+                    "不要语言风格混杂古今",
+                    "不要情感推进过于平淡",
                 ]
             ),
         ]
@@ -450,233 +283,247 @@ enum GenreTemplateLibrary {
     private static func buildMysteryCoreTemplates() -> [GenreTemplate] {
         [
             GenreTemplate(
-                id: "rules_horror",
+                id: "规则怪谈",
                 name: "规则怪谈",
                 category: .mystery,
-                description: "规则驱动的恐怖悬疑，强调规则发现、推理、生存",
-                coreSellingPoint: "规则发现 + 推理博弈 + 生存压力",
-                preferredHookTypes: [.mystery, .crisis, .choice],
+                description: "规则类怪谈，强调悬疑氛围和规则逻辑",
+                coreSellingPoint: "悬疑氛围 + 规则逻辑 + 生存压力",
+                preferredHookTypes: [.mystery, .crisis],
                 hookStrengthBaseline: .strong,
-                preferredCoolPointPatterns: [.misinterpretation, .underdogVictory, .identityReveal],
+                preferredCoolPointPatterns: [.misinterpretation, .villainDownfall],
                 coolPointDensity: .medium,
                 stagnationThreshold: 2,
-                setupTolerance: .high,
+                setupTolerance: .veryLow,
                 strandConfig: GenreStrandConfig(
-                    genre: "规则怪谈", questTarget: 0.55, fireTarget: 0.15,
-                    constellationTarget: 0.30, questMaxConsecutive: 4,
-                    fireMaxGap: 15, constellationMaxGap: 10
+                    genre: "规则怪谈", questTarget: 0.70, fireTarget: 0.15,
+                    constellationTarget: 0.15, questMaxConsecutive: 4,
+                    fireMaxGap: 8, constellationMaxGap: 10
                 ),
                 writingDirectives: [
-                    "规则要清晰、可推理、有漏洞",
-                    "恐怖氛围靠细节堆砌而非直接描述",
-                    "每章至少发现或验证一条规则",
-                    "信息不对称是核心驱动力",
+                    "规则必须前后一致，不得随意更改",
+                    "悬疑氛围要贯穿始终",
+                    "每章至少一个悬念或反转",
+                    "章末必须留有未解之谜",
                 ],
                 antiPatterns: [
-                    "不要让角色无条件相信规则",
-                    "不要跳过推理过程直接给结论",
-                    "不要用突然惊吓替代氛围恐怖",
+                    "不要规则自相矛盾",
+                    "不要悬疑解决过于轻易",
+                    "不要缺少生存压力",
                 ]
             ),
         ]
     }
 
-    // MARK: Additional Romance/Mystery (no legacy source)
+    // MARK: - Additional Templates
 
     private static func buildAdditionalTemplates() -> [GenreTemplate] {
         [
             GenreTemplate(
-                id: "republic_romance",
-                name: "民国言情",
-                category: .romance,
-                description: "民国时期背景的言情故事，新旧文化碰撞下的爱情",
-                coreSellingPoint: "时代碰撞 + 身份纠葛 + 家国情怀",
-                preferredHookTypes: [.emotion, .crisis, .mystery],
-                hookStrengthBaseline: .medium,
-                preferredCoolPointPatterns: [.identityReveal, .villainDownfall, .sweetSurprise],
-                coolPointDensity: .medium,
-                stagnationThreshold: 4,
-                setupTolerance: .medium,
-                strandConfig: GenreStrandConfig(
-                    genre: "民国言情", questTarget: 0.40, fireTarget: 0.35,
-                    constellationTarget: 0.25, questMaxConsecutive: 4,
-                    fireMaxGap: 5, constellationMaxGap: 12
-                ),
-                writingDirectives: [
-                    "民国背景要考据：服饰、称谓、社会风气要有时代感",
-                    "新旧思想冲突是核心张力来源",
-                    "战争/革命是推动情节的外部压力",
-                    "家族兴衰与个人命运交织",
-                ],
-                antiPatterns: [
-                    "不要用现代网络用语",
-                    "不要忽略时代背景对角色行为的约束",
-                    "不要让感情线脱离家国大背景",
-                ]
-            ),
-
-            GenreTemplate(
-                id: "modern_brainhole",
-                name: "现言脑洞",
-                category: .romance,
-                description: "现代背景、脑洞大开的言情故事，设定新奇有趣",
-                coreSellingPoint: "新奇设定 + 甜蜜互动 + 反转解构",
-                preferredHookTypes: [.mystery, .emotion, .desire],
-                hookStrengthBaseline: .medium,
-                preferredCoolPointPatterns: [.misinterpretation, .sweetSurprise, .identityReveal],
+                id: "高武",
+                name: "高武",
+                category: .xuanhuan,
+                description: "高端武力体系，强调战斗力和越级挑战",
+                coreSellingPoint: "武力压制 + 越级战斗 + 尊严对决",
+                preferredHookTypes: [.crisis, .desire],
+                hookStrengthBaseline: .strong,
+                preferredCoolPointPatterns: [.underdogVictory, .flexAndCounter, .authorityChallenge],
                 coolPointDensity: .high,
                 stagnationThreshold: 3,
-                setupTolerance: .low,
+                setupTolerance: .veryLow,
                 strandConfig: GenreStrandConfig(
-                    genre: "现言脑洞", questTarget: 0.35, fireTarget: 0.40,
-                    constellationTarget: 0.25, questMaxConsecutive: 3,
-                    fireMaxGap: 3, constellationMaxGap: 12
+                    genre: "高武", questTarget: 0.65, fireTarget: 0.20,
+                    constellationTarget: 0.15, questMaxConsecutive: 5,
+                    fireMaxGap: 10, constellationMaxGap: 12
                 ),
                 writingDirectives: [
-                    "核心脑洞设定要在前三章充分展开",
-                    "感情线与脑洞设定要互相服务",
-                    "反转要出人意料但逻辑自洽",
-                    "节奏轻快，避免沉重",
+                    "战斗场面要精彩，不能跳过过程",
+                    "越级挑战要有策略和智慧",
+                    "每次战斗后要有收获和成长",
                 ],
                 antiPatterns: [
-                    "不要让脑洞设定喧宾夺主压过感情线",
-                    "不要用过于沉重的冲突破坏轻快基调",
-                    "不要让配角智商下线",
-                ]
-            ),
-
-            GenreTemplate(
-                id: "female_mystery",
-                name: "女频悬疑",
-                category: .mystery,
-                description: "女性视角的悬疑故事，情感与推理并重",
-                coreSellingPoint: "情感推理 + 身份迷局 + 女性成长",
-                preferredHookTypes: [.mystery, .emotion, .crisis],
-                hookStrengthBaseline: .strong,
-                preferredCoolPointPatterns: [.identityReveal, .villainDownfall, .underdogVictory],
-                coolPointDensity: .medium,
-                stagnationThreshold: 3,
-                setupTolerance: .medium,
-                strandConfig: GenreStrandConfig(
-                    genre: "女频悬疑", questTarget: 0.50, fireTarget: 0.25,
-                    constellationTarget: 0.25, questMaxConsecutive: 4,
-                    fireMaxGap: 8, constellationMaxGap: 10
-                ),
-                writingDirectives: [
-                    "悬疑线与感情线要双线并进",
-                    "女性主角的成长弧线要完整",
-                    "线索公平呈现，每章至少推进一个疑点",
-                    "情感描写要有细腻层次",
-                ],
-                antiPatterns: [
-                    "不要让女主沦为工具人只推动悬疑线",
-                    "不要跳过情感细节直接写推理结论",
-                    "不要让反派动机过于单薄",
-                ]
-            ),
-
-            GenreTemplate(
-                id: "farming_life",
-                name: "种田",
-                category: .romance,
-                description: "古代/穿越背景下经营建设、日常生活的慢节奏故事",
-                coreSellingPoint: "经营成长 + 家庭温暖 + 慢热致富",
-                preferredHookTypes: [.desire, .emotion, .choice],
-                hookStrengthBaseline: .weak,
-                preferredCoolPointPatterns: [.sweetSurprise, .underdogVictory, .villainDownfall],
-                coolPointDensity: .low,
-                stagnationThreshold: 5,
-                setupTolerance: .high,
-                strandConfig: GenreStrandConfig(
-                    genre: "种田", questTarget: 0.50, fireTarget: 0.30,
-                    constellationTarget: 0.20, questMaxConsecutive: 5,
-                    fireMaxGap: 8, constellationMaxGap: 15
-                ),
-                writingDirectives: [
-                    "经营细节要有真实感和代入感",
-                    "日常生活描写要有烟火气",
-                    "人物关系缓慢推进，不急于冲突",
-                    "致富/成长线要有阶段性里程碑",
-                ],
-                antiPatterns: [
-                    "不要突然引入高强度冲突破坏节奏",
-                    "不要跳过经营细节直接写结果",
-                    "不要让配角过于脸谱化",
-                ]
-            ),
-
-            GenreTemplate(
-                id: "period_era",
-                name: "年代",
-                category: .romance,
-                description: "特定年代背景（如六七十年代）的生活与情感故事",
-                coreSellingPoint: "时代印记 + 逆袭成长 + 家庭温情",
-                preferredHookTypes: [.emotion, .desire, .crisis],
-                hookStrengthBaseline: .medium,
-                preferredCoolPointPatterns: [.underdogVictory, .villainDownfall, .sweetSurprise],
-                coolPointDensity: .medium,
-                stagnationThreshold: 4,
-                setupTolerance: .high,
-                strandConfig: GenreStrandConfig(
-                    genre: "年代", questTarget: 0.45, fireTarget: 0.30,
-                    constellationTarget: 0.25, questMaxConsecutive: 5,
-                    fireMaxGap: 8, constellationMaxGap: 15
-                ),
-                writingDirectives: [
-                    "年代细节要有考据：票证、知青、单位、粮票等",
-                    "人物命运要与时代大事件交织",
-                    "家庭关系和邻里互动是重要剧情线",
-                    "主角要有凭本事改变命运的成长弧线",
-                ],
-                antiPatterns: [
-                    "不要用现代思维直接套用年代背景",
-                    "不要忽略时代限制让主角行为过于超前",
-                    "不要让背景设定流于表面装饰",
+                    "不要让越级挑战过于简单",
+                    "不要跳过战斗细节",
                 ]
             ),
         ]
     }
-}
 
-// MARK: - Genre Template Formatting
+    // MARK: - Legacy Template Migration
 
-extension GenreTemplate {
-    /// Format template for injection into AI writing prompt
-    var formattedForPrompt: String {
-        var sections: [String] = []
+    /// Look up a legacy genre template by name
+    private static func lookupLegacy(_ name: String) -> LegacyGenreTemplate? {
+        LegacyGenreTemplateLibrary.lookup(name)
+    }
 
-        sections.append("题材配置: \(name)")
-        sections.append("核心卖点: \(coreSellingPoint)")
+    private static func migrateLegacyTemplates() -> [GenreTemplate] {
+        let legacyNames = [
+            "高武", "西幻", "无限流", "末世", "科幻",
+            "都市日常", "都市脑洞", "电竞", "直播文", "现实题材",
+            "宫斗宅斗", "豪门总裁", "职场婚恋", "幻想言情",
+            "悬疑脑洞", "悬疑灵异", "克苏鲁", "狗血言情",
+        ]
+        return legacyNames.compactMap { name -> GenreTemplate? in
+            guard let legacy = lookupLegacy(name) else {
+                #if DEBUG
+                print("[GenreTemplateEngine] Warning: legacy template '\(name)' not found, skipping")
+                #endif
+                return nil
+            }
+            return migrateLegacyTemplate(legacy)
+        }
+    }
 
-        sections.append("偏好钩子类型: \(preferredHookTypes.map { $0.displayName }.joined(separator: "、"))")
-        sections.append("钩子强度基线: \(hookStrengthBaseline.displayName)")
+    private func migrateLegacyTemplate(_ legacy: LegacyGenreTemplate) -> GenreTemplate {
+        let category = mapLegacyCategory(legacy.category)
+        let hookTypes = inferHookTypes(from: legacy.hookPatterns)
+        let coolPatterns = inferCoolPointPatterns(from: legacy.pleasurePointTypes)
+        let strandConfig = buildStrandConfig(id: legacy.id, name: legacy.name, ratio: legacy.strandRatio)
 
-        sections.append("偏好爽点模式: \(preferredCoolPointPatterns.map { $0.displayName }.joined(separator: "、"))")
-        sections.append("爽点密度: \(coolPointDensity.displayName)（每\(coolPointDensity.chaptersPerCoolPoint)章至少1个）")
+        var directives: [String] = []
+        for rule in legacy.worldRules.prefix(3) { directives.append(rule) }
+        directives.append(legacy.pacingGuide)
+        for hook in legacy.hookPatterns.prefix(2) { directives.append("章末钩子参考：\(hook)") }
 
-        sections.append("节奏红线:")
-        sections.append("  · 停滞阈值: \(stagnationThreshold) 章无进展则告警")
-        sections.append("  · 铺垫容忍: 最多 \(setupTolerance.maxSetupChapters) 章铺垫")
+        let antiPatterns: [String] = [
+            "不要让配角行为与人设不符（当前角色原型：\(legacy.characterArchetypes.joined(separator: "、"))）",
+            "不要违反世界观核心规则"
+        ]
 
-        if !writingDirectives.isEmpty {
-            sections.append("写作指引:")
-            for directive in writingDirectives {
-                sections.append("  · \(directive)")
+        return GenreTemplate(
+            id: legacy.id,
+            name: legacy.name,
+            category: category,
+            description: legacy.description,
+            coreSellingPoint: legacy.pleasurePointTypes.prefix(3).joined(separator: " + "),
+            preferredHookTypes: hookTypes,
+            hookStrengthBaseline: .medium,
+            preferredCoolPointPatterns: coolPatterns,
+            coolPointDensity: coolPatterns.count >= 3 ? .high : (coolPatterns.count >= 2 ? .medium : .low),
+            stagnationThreshold: 3,
+            setupTolerance: category == .mystery ? .high : .medium,
+            strandConfig: strandConfig,
+            writingDirectives: directives,
+            antiPatterns: antiPatterns
+        )
+    }
+
+    // MARK: - Composite Genre Support
+
+    /// Check if "与" is used as a genre separator (short strings on each side, max 6 chars).
+    /// Avoids splitting natural text like "奇幻与冒险的旅程".
+    private static func hasYuSeparator(_ text: String) -> Bool {
+        guard let range = text.range(of: "与") else { return false }
+        let leftPart = String(text[text.startIndex..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        var rightPart = ""
+        var i = range.upperBound
+        while i < text.endIndex {
+            let char = text[i]
+            if char == "+" || char == "/" || char == "、" || char == "与" { break }
+            rightPart.append(char)
+            i = text.index(after: i)
+        }
+        let rightTrimmed = rightPart.trimmingCharacters(in: .whitespacesAndNewlines)
+        return leftPart.count <= 6 && rightTrimmed.count <= 6
+    }
+
+    /// Split composite genre string, treating "与" as separator only when both sides are short (≤6 chars).
+    private static func splitCompositeGenre(_ input: String) -> [String] {
+        var parts: [String] = []
+        var current = ""
+        var i = input.startIndex
+        while i < input.endIndex {
+            let char = input[i]
+            if char == "+" || char == "/" || char == "、" {
+                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { parts.append(trimmed) }
+                current = ""
+            } else if char == "与" {
+                let leftTrimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                var rightPart = ""
+                var j = input.index(after: i)
+                while j < input.endIndex {
+                    let rChar = input[j]
+                    if rChar == "+" || rChar == "/" || rChar == "、" || rChar == "与" { break }
+                    rightPart.append(rChar)
+                    j = input.index(after: j)
+                }
+                let rightTrimmed = rightPart.trimmingCharacters(in: .whitespacesAndNewlines)
+                if leftTrimmed.count <= 6 && rightTrimmed.count <= 6 {
+                    if !leftTrimmed.isEmpty { parts.append(leftTrimmed) }
+                    current = ""
+                } else {
+                    current.append(char)
+                }
+            } else {
+                current.append(char)
+            }
+            i = input.index(after: i)
+        }
+        let lastTrimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !lastTrimmed.isEmpty { parts.append(lastTrimmed) }
+        return parts
+    }
+
+    /// Resolve a composite genre string like "都市异能+规则怪谈" into a merged template
+    static func resolveComposite(_ input: String) -> GenreTemplate {
+        let parts = splitCompositeGenre(input)
+
+        guard parts.count > 1 else { return template(for: input) }
+
+        let templates = parts.map { template(for: $0) }
+        let primary = templates[0]
+
+        var allDirectives = primary.writingDirectives
+        var allAntiPatterns = primary.antiPatterns
+        var allHookTypes = primary.preferredHookTypes
+        var allCoolPatterns = primary.preferredCoolPointPatterns
+
+        for secondary in templates.dropFirst() {
+            for directive in secondary.writingDirectives where !allDirectives.contains(directive) {
+                allDirectives.append(directive)
+            }
+            for pattern in secondary.antiPatterns where !allAntiPatterns.contains(pattern) {
+                allAntiPatterns.append(pattern)
+            }
+            for hook in secondary.preferredHookTypes where !allHookTypes.contains(hook) {
+                allHookTypes.append(hook)
+            }
+            for cool in secondary.preferredCoolPointPatterns where !allCoolPatterns.contains(cool) {
+                allCoolPatterns.append(cool)
             }
         }
 
-        if !antiPatterns.isEmpty {
-            sections.append("避让模式:")
-            for pattern in antiPatterns {
-                sections.append("  · \(pattern)")
-            }
-        }
+        return GenreTemplate(
+            id: "composite_\(primary.id)",
+            name: parts.joined(separator: "+"),
+            category: primary.category,
+            description: "复合题材：\(templates.map { $0.name }.joined(separator: " + "))",
+            coreSellingPoint: templates.map { $0.coreSellingPoint }.joined(separator: " | "),
+            preferredHookTypes: allHookTypes,
+            hookStrengthBaseline: primary.hookStrengthBaseline,
+            preferredCoolPointPatterns: allCoolPatterns,
+            coolPointDensity: primary.coolPointDensity,
+            stagnationThreshold: primary.stagnationThreshold,
+            setupTolerance: primary.setupTolerance,
+            strandConfig: primary.strandConfig,
+            writingDirectives: Array(allDirectives.prefix(8)),
+            antiPatterns: Array(allAntiPatterns.prefix(8))
+        )
+    }
 
-        return sections.joined(separator: "\n")
+    /// Auto-detect genre from project.genre, supporting composite genres
+    static func autoDetect(from projectGenre: String) -> GenreTemplate {
+        let trimmed = projectGenre.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return defaultTemplate }
+
+        let hasComposite = trimmed.contains("+") || trimmed.contains("/") || hasYuSeparator(trimmed)
+        if hasComposite { return resolveComposite(trimmed) }
+
+        return template(for: trimmed)
     }
 }
 
-// MARK: - Anti-AI Writing Guide (8 LLM Tendencies)
+// MARK: - Anti-AI Writing Guide
 
 enum AntiAIWritingGuide {
     /// The 8 most common LLM writing tendencies that break immersion
@@ -928,174 +775,4 @@ private func buildStrandConfig(id: String, name: String, ratio: (quest: Double, 
         fireMaxGap: 10,
         constellationMaxGap: 15
     )
-}
-
-private func migrateLegacyTemplate(_ legacy: LegacyGenreTemplate) -> GenreTemplate {
-    let category = mapLegacyCategory(legacy.category)
-    let hookTypes = inferHookTypes(from: legacy.hookPatterns)
-    let coolPatterns = inferCoolPointPatterns(from: legacy.pleasurePointTypes)
-    let strandConfig = buildStrandConfig(id: legacy.id, name: legacy.name, ratio: legacy.strandRatio)
-
-    var directives: [String] = []
-    for rule in legacy.worldRules.prefix(3) { directives.append(rule) }
-    directives.append(legacy.pacingGuide)
-    for hook in legacy.hookPatterns.prefix(2) { directives.append("章末钩子参考：\(hook)") }
-
-    let antiPatterns: [String] = [
-        "不要让配角行为与人设不符（当前角色原型：\(legacy.characterArchetypes.joined(separator: "、"))）",
-        "不要违反世界观核心规则"
-    ]
-
-    return GenreTemplate(
-        id: legacy.id,
-        name: legacy.name,
-        category: category,
-        description: legacy.description,
-        coreSellingPoint: legacy.pleasurePointTypes.prefix(3).joined(separator: " + "),
-        preferredHookTypes: hookTypes,
-        hookStrengthBaseline: .medium,
-        preferredCoolPointPatterns: coolPatterns,
-        coolPointDensity: coolPatterns.count >= 3 ? .high : (coolPatterns.count >= 2 ? .medium : .low),
-        stagnationThreshold: 3,
-        setupTolerance: category == .mystery ? .high : .medium,
-        strandConfig: strandConfig,
-        writingDirectives: directives,
-        antiPatterns: antiPatterns
-    )
-}
-
-/// Safely migrate all legacy templates — skips any missing keys instead of crashing.
-private func migrateLegacyTemplates() -> [GenreTemplate] {
-    let legacyNames = [
-        "高武", "西幻", "无限流", "末世", "科幻",
-        "都市日常", "都市脑洞", "电竞", "直播文", "现实题材",
-        "宫斗宅斗", "豪门总裁", "职场婚恋", "幻想言情",
-        "悬疑脑洞", "悬疑灵异", "克苏鲁", "狗血言情",
-    ]
-    return legacyNames.compactMap { name -> GenreTemplate? in
-        guard let legacy = LegacyGenreTemplateLibrary.lookup(name) else {
-            #if DEBUG
-            print("[GenreTemplateEngine] Warning: legacy template '\(name)' not found, skipping")
-            #endif
-            return nil
-        }
-        return migrateLegacyTemplate(legacy)
-    }
-}
-
-// MARK: - Composite Genre Support
-
-extension GenreTemplateLibrary {
-    /// Check if "与" is used as a genre separator (short strings on each side, max 6 chars).
-    /// Avoids splitting natural text like "奇幻与冒险的旅程".
-    private static func hasYuSeparator(_ text: String) -> Bool {
-        guard let range = text.range(of: "与") else { return false }
-        let leftPart = String(text[text.startIndex..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-        var rightPart = ""
-        var i = range.upperBound
-        while i < text.endIndex {
-            let char = text[i]
-            if char == "+" || char == "/" || char == "、" || char == "与" { break }
-            rightPart.append(char)
-            i = text.index(after: i)
-        }
-        let rightTrimmed = rightPart.trimmingCharacters(in: .whitespacesAndNewlines)
-        return leftPart.count <= 6 && rightTrimmed.count <= 6
-    }
-
-    /// Split composite genre string, treating "与" as separator only when both sides are short (≤6 chars).
-    private static func splitCompositeGenre(_ input: String) -> [String] {
-        var parts: [String] = []
-        var current = ""
-        var i = input.startIndex
-        while i < input.endIndex {
-            let char = input[i]
-            if char == "+" || char == "/" || char == "、" {
-                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty { parts.append(trimmed) }
-                current = ""
-            } else if char == "与" {
-                let leftTrimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
-                var rightPart = ""
-                var j = input.index(after: i)
-                while j < input.endIndex {
-                    let rChar = input[j]
-                    if rChar == "+" || rChar == "/" || rChar == "、" || rChar == "与" { break }
-                    rightPart.append(rChar)
-                    j = input.index(after: j)
-                }
-                let rightTrimmed = rightPart.trimmingCharacters(in: .whitespacesAndNewlines)
-                if leftTrimmed.count <= 6 && rightTrimmed.count <= 6 {
-                    if !leftTrimmed.isEmpty { parts.append(leftTrimmed) }
-                    current = ""
-                } else {
-                    current.append(char)
-                }
-            } else {
-                current.append(char)
-            }
-            i = input.index(after: i)
-        }
-        let lastTrimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !lastTrimmed.isEmpty { parts.append(lastTrimmed) }
-        return parts
-    }
-
-    /// Resolve a composite genre string like "都市异能+规则怪谈" into a merged template
-    static func resolveComposite(_ input: String) -> GenreTemplate {
-        let parts = splitCompositeGenre(input)
-
-        guard parts.count > 1 else { return template(for: input) }
-
-        let templates = parts.map { template(for: $0) }
-        let primary = templates[0]
-
-        var allDirectives = primary.writingDirectives
-        var allAntiPatterns = primary.antiPatterns
-        var allHookTypes = primary.preferredHookTypes
-        var allCoolPatterns = primary.preferredCoolPointPatterns
-
-        for secondary in templates.dropFirst() {
-            for directive in secondary.writingDirectives where !allDirectives.contains(directive) {
-                allDirectives.append(directive)
-            }
-            for pattern in secondary.antiPatterns where !allAntiPatterns.contains(pattern) {
-                allAntiPatterns.append(pattern)
-            }
-            for hook in secondary.preferredHookTypes where !allHookTypes.contains(hook) {
-                allHookTypes.append(hook)
-            }
-            for cool in secondary.preferredCoolPointPatterns where !allCoolPatterns.contains(cool) {
-                allCoolPatterns.append(cool)
-            }
-        }
-
-        return GenreTemplate(
-            id: "composite_\(primary.id)",
-            name: parts.joined(separator: "+"),
-            category: primary.category,
-            description: "复合题材：\(templates.map { $0.name }.joined(separator: " + "))",
-            coreSellingPoint: templates.map { $0.coreSellingPoint }.joined(separator: " | "),
-            preferredHookTypes: allHookTypes,
-            hookStrengthBaseline: primary.hookStrengthBaseline,
-            preferredCoolPointPatterns: allCoolPatterns,
-            coolPointDensity: primary.coolPointDensity,
-            stagnationThreshold: primary.stagnationThreshold,
-            setupTolerance: primary.setupTolerance,
-            strandConfig: primary.strandConfig,
-            writingDirectives: Array(allDirectives.prefix(8)),
-            antiPatterns: Array(allAntiPatterns.prefix(8))
-        )
-    }
-
-    /// Auto-detect genre from project.genre, supporting composite genres
-    static func autoDetect(from projectGenre: String) -> GenreTemplate {
-        let trimmed = projectGenre.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return defaultTemplate }
-
-        let hasComposite = trimmed.contains("+") || trimmed.contains("/") || hasYuSeparator(trimmed)
-        if hasComposite { return resolveComposite(trimmed) }
-
-        return template(for: trimmed)
-    }
 }
