@@ -34,6 +34,35 @@ struct GenreTemplate: Identifiable, Codable, Hashable {
     let antiPatterns: [String]
 
     var displayName: String { name }
+
+    var formattedForPrompt: String {
+        """
+        ## 题材模板：\(name)
+
+        **类型**: \(category.rawValue)
+        **简介**: \(description)
+        **核心卖点**: \(coreSellingPoint)
+
+        **节奏配置**:
+        - Hook 强度：\(hookStrengthBaseline.displayName)
+        - 爽点密度：\(coolPointDensity.displayName)，约每 \(coolPointDensity.chaptersPerCoolPoint) 章一次
+        - 停滞阈值：\(stagnationThreshold) 章
+        - 铺垫容忍：\(setupTolerance.displayName)
+        - Strand 比例：Quest \(Int(strandConfig.questTarget * 100))% / Fire \(Int(strandConfig.fireTarget * 100))% / Constellation \(Int(strandConfig.constellationTarget * 100))%
+
+        **常见 Hook 模式**:
+        \(preferredHookTypes.map { "- \($0.displayName)：\($0.description)" }.joined(separator: "\n"))
+
+        **爽点类型**:
+        \(preferredCoolPointPatterns.map { "- \($0.displayName)" }.joined(separator: "\n"))
+
+        **写作指引**:
+        \(writingDirectives.map { "- \($0)" }.joined(separator: "\n"))
+
+        **避让模式**:
+        \(antiPatterns.map { "- \($0)" }.joined(separator: "\n"))
+        """
+    }
 }
 
 // MARK: - Genre Category

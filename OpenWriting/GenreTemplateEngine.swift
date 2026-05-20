@@ -373,7 +373,7 @@ enum GenreTemplateLibrary {
         }
     }
 
-    private func migrateLegacyTemplate(_ legacy: LegacyGenreTemplate) -> GenreTemplate {
+    private static func migrateLegacyTemplate(_ legacy: LegacyGenreTemplate) -> GenreTemplate {
         let category = mapLegacyCategory(legacy.category)
         let hookTypes = inferHookTypes(from: legacy.hookPatterns)
         let coolPatterns = inferCoolPointPatterns(from: legacy.pleasurePointTypes)
