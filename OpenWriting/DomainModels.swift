@@ -1143,6 +1143,14 @@ struct PlotThread: Codable, Identifiable, Hashable {
     var createdAt: Date
     var updatedAt: Date
 
+    // Custom Codable for ClosedRange<Int>
+    enum CodingKeys: String, CodingKey {
+        case id, title, description, threadType, status
+        case startChapter, lastActiveChapter
+        case volumeRangeLower, volumeRangeUpper
+        case relatedForeshadowIDs, keyEvents, createdAt, updatedAt
+    }
+
     init(
         id: String = UUID().uuidString,
         title: String,
@@ -1190,6 +1198,48 @@ struct PlotThread: Codable, Identifiable, Hashable {
 
     var durationChapters: Int {
         lastActiveChapter - startChapter + 1
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        description = try container.decodeIfPresent(String.self, forKey: .description) ?? ""
+        threadType = try container.decode(ThreadType.self, forKey: .threadType)
+        status = try container.decode(ThreadStatus.self, forKey: .status)
+        startChapter = try container.decode(Int.self, forKey: .startChapter)
+        lastActiveChapter = try container.decode(Int.self, forKey: .lastActiveChapter)
+        relatedForeshadowIDs = try container.decodeIfPresent([String].self, forKey: .relatedForeshadowIDs) ?? []
+        keyEvents = try container.decodeIfPresent([ThreadEvent].self, forKey: .keyEvents) ?? []
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+
+        if let lower = try container.decodeIfPresent(Int.self, forKey: .volumeRangeLower),
+           let upper = try container.decodeIfPresent(Int.self, forKey: .volumeRangeUpper) {
+            volumeRange = lower...upper
+        } else {
+            volumeRange = nil
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(description, forKey: .description)
+        try container.encode(threadType, forKey: .threadType)
+        try container.encode(status, forKey: .status)
+        try container.encode(startChapter, forKey: .startChapter)
+        try container.encode(lastActiveChapter, forKey: .lastActiveChapter)
+        try container.encode(relatedForeshadowIDs, forKey: .relatedForeshadowIDs)
+        try container.encode(keyEvents, forKey: .keyEvents)
+        try container.encodeIfPresent(createdAt, forKey: .createdAt)
+        try container.encodeIfPresent(updatedAt, forKey: .updatedAt)
+
+        if let range = volumeRange {
+            try container.encode(range.lowerBound, forKey: .volumeRangeLower)
+            try container.encode(range.upperBound, forKey: .volumeRangeUpper)
+        }
     }
 }
 

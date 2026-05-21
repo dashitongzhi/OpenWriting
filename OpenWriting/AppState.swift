@@ -1215,13 +1215,13 @@ final class AppState {
         chapterNumber: Int,
         projectID: NovelProject.ID
     ) {
-        Task.detached { [weak self] in
-            guard let self = self else { return }
-            let configuration = await self.aiConfiguration
+        Task { [weak self] in
+            guard let self else { return }
+            let configuration = self.aiConfiguration
 
             // Capture project context before the async call
             let projectSnapshot: (title: String, genre: String, summary: String)?
-            if let project = await self.project(for: projectID) {
+            if let project = self.project(for: projectID) {
                 projectSnapshot = (project.title, project.genre, project.summary)
             } else {
                 projectSnapshot = nil
@@ -1249,7 +1249,7 @@ final class AppState {
                     let aiItems = extractionResult.allItems
                     guard !aiItems.isEmpty else { return }
 
-                    await self.updateProjectOnMain(projectID) { project in
+                    self.updateProject(projectID) { project in
                         var buckets = project.memoryBuckets
                         for item in aiItems {
                             buckets.upsert(item)
@@ -1274,11 +1274,6 @@ final class AppState {
                 // Silently fail - keyword extraction already ran
             }
         }
-    }
-
-    @MainActor
-    private func updateProjectOnMain(_ projectID: NovelProject.ID, mutate: @escaping (inout NovelProject) -> Void) {
-        updateProject(projectID, mutate: mutate)
     }
 
     /// Append locally-detected AI-flavor anti-patterns from a chapter draft.
