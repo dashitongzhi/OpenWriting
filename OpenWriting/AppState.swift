@@ -1184,20 +1184,101 @@ final class AppState {
         chapterNumber: Int,
         for projectID: NovelProject.ID
     ) {
-        let (characters, relationships, locations, foreshadowing, timeline, storyFacts) =
-            extractStructuredMemory(from: chapterContent, chapterNumber: chapterNumber)
-
-        let allItems = characters + relationships + locations + foreshadowing + timeline + storyFacts
-        guard !allItems.isEmpty else { return }
+        let allItems = extractedStructuredMemoryItems(from: chapterContent, chapterNumber: chapterNumber)
 
         updateProject(projectID) { project in
-            var buckets = project.memoryBuckets
-            for item in allItems {
-                buckets.upsert(item)
-            }
-            buckets.compact(currentChapter: chapterNumber)
-            project.memoryBuckets = buckets
+            let contract = LongformStorySystem.buildRuntimeContract(for: project)
+            let chapterDraft = ChapterDraft(
+                volumeNumber: project.currentVolumeNumber,
+                chapterNumber: chapterNumber,
+                chapterTitle: project.currentChapterTitle,
+                content: chapterContent,
+                savedAt: Self.currentTimestampLabel()
+            )
+            let commit = LongformStorySystem.buildCommit(
+                project: project,
+                chapterDraft: chapterDraft,
+                review: project.lastReviewResult,
+                extractedMemoryItems: allItems,
+                contract: contract
+            )
+            LongformStorySystem.apply(commit: commit, contract: contract, to: &project)
+            project.updatedAt = Self.currentTimestampLabel()
         }
+    }
+
+    /// AI-powered memory extraction - runs after chapter save.
+    /// Sends chapter text to LLM to extract structured memory items across all 6 buckets.
+    /// Merges with keyword-based extraction for completeness.
+    func runAIMemoryExtraction(
+        from chapterContent: String,
+        chapterNumber: Int,
+        projectID: NovelProject.ID
+    ) {
+        Task.detached { [weak self] in
+            guard let self = self else { return }
+            let configuration = await self.aiConfiguration
+
+            // Capture project context before the async call
+            let projectSnapshot: (title: String, genre: String, summary: String)?
+            if let project = await self.project(for: projectID) {
+                projectSnapshot = (project.title, project.genre, project.summary)
+            } else {
+                projectSnapshot = nil
+            }
+
+            guard let config = configuration, let context = projectSnapshot else { return }
+
+            let systemPrompt = MemoryExtractionService.extractionSystemPrompt
+            let userPrompt = MemoryExtractionService.extractionUserPrompt(
+                chapterText: String(chapterContent.prefix(8000)),
+                chapterNumber: chapterNumber,
+                projectContext: "作品名：\(context.title)\n题材：\(context.genre)\n简介：\(context.summary)"
+            )
+
+            do {
+                let response = try await AIWritingService.generateText(
+                    configuration: config,
+                    systemPrompt: systemPrompt,
+                    userPrompt: userPrompt,
+                    temperature: 0.2,
+                    maxTokens: 3000
+                )
+
+                if let extractionResult = MemoryExtractionService.parseExtractionResult(from: response) {
+                    let aiItems = extractionResult.allItems
+                    guard !aiItems.isEmpty else { return }
+
+                    await self.updateProjectOnMain(projectID) { project in
+                        var buckets = project.memoryBuckets
+                        for item in aiItems {
+                            buckets.upsert(item)
+                        }
+                        buckets.compact(currentChapter: chapterNumber)
+                        project.memoryBuckets = buckets
+
+                        var runtime = project.longformRuntimeState
+                        if var latestCommit = runtime.latestCommit,
+                           latestCommit.chapterNumber == chapterNumber,
+                           latestCommit.isAccepted {
+                            let existingIDs = Set(latestCommit.extractedMemoryItems.map(\.id))
+                            let newItems = aiItems.filter { !existingIDs.contains($0.id) }
+                            latestCommit.extractedMemoryItems.append(contentsOf: newItems)
+                            latestCommit.projectionStatus["ai_memory"] = "done"
+                            runtime.record(commit: latestCommit)
+                            project.longformRuntimeState = runtime
+                        }
+                    }
+                }
+            } catch {
+                // Silently fail - keyword extraction already ran
+            }
+        }
+    }
+
+    @MainActor
+    private func updateProjectOnMain(_ projectID: NovelProject.ID, mutate: @escaping (inout NovelProject) -> Void) {
+        updateProject(projectID, mutate: mutate)
     }
 
     /// Append locally-detected AI-flavor anti-patterns from a chapter draft.
@@ -1212,6 +1293,13 @@ final class AppState {
         updateProject(projectID) { project in
             project.appendAntiPatterns(from: localPatterns)
         }
+    }
+
+    private func extractedStructuredMemoryItems(from text: String, chapterNumber: Int) -> [MemoryItem] {
+        let (characters, relationships, locations, foreshadowing, timeline, storyFacts) =
+            extractStructuredMemory(from: text, chapterNumber: chapterNumber)
+
+        return characters + relationships + locations + foreshadowing + timeline + storyFacts
     }
 
     /// Keyword-based extraction of structured memory items from Chinese chapter text.

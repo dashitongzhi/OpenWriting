@@ -236,6 +236,11 @@ extension AIWritingService {
             category: .enhancedMemory
         ))
         sections.append(ContextSection(
+            label: "后台长篇合同",
+            content: support.longformStorySystemContext,
+            category: .chapterTree
+        ))
+        sections.append(ContextSection(
             label: "作品大纲",
             content: normalized(project.outlineText, fallback: "暂无大纲，请依据项目摘要和当前章节目标稳步推进。"),
             category: .outline
@@ -379,6 +384,9 @@ extension AIWritingService {
         增强记忆：
         \(support.enhancedMemoryContext)
 
+        后台长篇合同：
+        \(support.longformStorySystemContext)
+
         章节树关键约束：
         \(support.chapterTreeFocus)
 
@@ -518,6 +526,7 @@ struct EnhancedWritingSupport {
     let chapterTreeFocus: String
     let styleFingerprint: String
     let enhancedMemoryContext: String
+    let longformStorySystemContext: String
     let strandContext: String
     let genreTemplateContext: String
 
@@ -528,6 +537,7 @@ struct EnhancedWritingSupport {
         chapterTreeFocus = baseSupport.chapterTreeFocus
         styleFingerprint = baseSupport.styleFingerprint
         enhancedMemoryContext = project.enhancedMemoryContext
+        longformStorySystemContext = project.longformStorySystemContext
         strandContext = project.strandContext
         genreTemplateContext = project.genreTemplateContext
     }

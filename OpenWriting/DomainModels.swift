@@ -1126,6 +1126,238 @@ struct ForeshadowList: Codable, Hashable {
     }
 }
 
+// MARK: - PlotThread (结构化叙事线追踪)
+
+/// 结构化叙事线/情节线追踪，替代 raw activeThreadsNotes 字符串
+struct PlotThread: Codable, Identifiable, Hashable {
+    let id: String
+    var title: String                    // 叙事线标题，如"主角修炼线"、"感情线"
+    var description: String             // 叙事线描述
+    var threadType: ThreadType          // 叙事线类型
+    var status: ThreadStatus            // 当前状态
+    var startChapter: Int              // 起始章节
+    var lastActiveChapter: Int         // 最后活跃章节
+    var volumeRange: ClosedRange<Int>? // 卷范围（可选）
+    var relatedForeshadowIDs: [String] // 关联的伏笔ID
+    var keyEvents: [ThreadEvent]       // 关键事件节点
+    var createdAt: Date
+    var updatedAt: Date
+
+    init(
+        id: String = UUID().uuidString,
+        title: String,
+        description: String = "",
+        threadType: ThreadType = .quest,
+        status: ThreadStatus = .active,
+        startChapter: Int = 1,
+        lastActiveChapter: Int = 1,
+        volumeRange: ClosedRange<Int>? = nil,
+        relatedForeshadowIDs: [String] = [],
+        keyEvents: [ThreadEvent] = [],
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.title = title
+        self.description = description
+        self.threadType = threadType
+        self.status = status
+        self.startChapter = startChapter
+        self.lastActiveChapter = lastActiveChapter
+        self.volumeRange = volumeRange
+        self.relatedForeshadowIDs = relatedForeshadowIDs
+        self.keyEvents = keyEvents
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    /// 推进叙事线到新章节
+    mutating func advance(to chapter: Int) {
+        lastActiveChapter = chapter
+        updatedAt = Date()
+    }
+
+    /// 添加关键事件
+    mutating func addEvent(_ event: ThreadEvent) {
+        keyEvents.append(event)
+        lastActiveChapter = max(lastActiveChapter, event.chapter)
+        updatedAt = Date()
+    }
+
+    var isActive: Bool {
+        status == .active || status == .advancing
+    }
+
+    var durationChapters: Int {
+        lastActiveChapter - startChapter + 1
+    }
+}
+
+/// 叙事线类型
+enum ThreadType: String, Codable, CaseIterable {
+    case quest = "quest"          // 主线剧情
+    case fire = "fire"            // 感情线
+    case constellation = "constellation"  // 世界观线
+    case subplot = "subplot"      // 支线
+    case character = "character"   // 人物线
+
+    var displayName: String {
+        switch self {
+        case .quest: return "主线"
+        case .fire: return "感情线"
+        case .constellation: return "世界观线"
+        case .subplot: return "支线"
+        case .character: return "人物线"
+        }
+    }
+}
+
+/// 叙事线状态
+enum ThreadStatus: String, Codable, CaseIterable {
+    case active      // 活跃
+    case advancing   // 推进中
+    case paused      // 暂停
+    case completed   // 已完成
+    case abandoned   // 已废弃
+
+    var displayName: String {
+        switch self {
+        case .active: return "活跃"
+        case .advancing: return "推进中"
+        case .paused: return "暂停"
+        case .completed: return "已完成"
+        case .abandoned: return "已废弃"
+        }
+    }
+}
+
+/// 叙事线关键事件
+struct ThreadEvent: Codable, Identifiable, Hashable {
+    let id: String
+    var chapter: Int            // 发生章节
+    var title: String           // 事件标题
+    var description: String     // 事件描述
+    var eventType: ThreadEventType  // 事件类型
+
+    init(
+        id: String = UUID().uuidString,
+        chapter: Int,
+        title: String,
+        description: String = "",
+        eventType: ThreadEventType = .development
+    ) {
+        self.id = id
+        self.chapter = chapter
+        self.title = title
+        self.description = description
+        self.eventType = eventType
+    }
+}
+
+enum ThreadEventType: String, Codable, CaseIterable {
+    case start        // 开启
+    case development  // 发展
+    case climax       // 高潮
+    case resolution   // 解决
+    case transition   // 转折
+
+    var displayName: String {
+        switch self {
+        case .start: return "开启"
+        case .development: return "发展"
+        case .climax: return "高潮"
+        case .resolution: return "解决"
+        case .transition: return "转折"
+        }
+    }
+}
+
+/// 叙事线列表（用于NovelProject中）
+struct PlotThreadList: Codable, Hashable {
+    var threads: [PlotThread]
+
+    init(threads: [PlotThread] = []) {
+        self.threads = threads
+    }
+
+    // MARK: - 查询方法
+
+    var activeThreads: [PlotThread] {
+        threads.filter { $0.isActive }
+    }
+
+    var questThreads: [PlotThread] {
+        threads.filter { $0.threadType == .quest && $0.isActive }
+    }
+
+    var fireThreads: [PlotThread] {
+        threads.filter { $0.threadType == .fire && $0.isActive }
+    }
+
+    var constellationThreads: [PlotThread] {
+        threads.filter { $0.threadType == .constellation && $0.isActive }
+    }
+
+    func threads(forChapter chapter: Int) -> [PlotThread] {
+        threads.filter { $0.isActive && $0.lastActiveChapter >= chapter - 5 }
+    }
+
+    func threads(forVolume volume: Int) -> [PlotThread] {
+        threads.filter {
+            guard let range = $0.volumeRange else { return true }
+            return range.contains(volume)
+        }
+    }
+
+    // MARK: - 状态统计
+
+    var totalCount: Int { threads.count }
+    var activeCount: Int { activeThreads.count }
+
+    // MARK: - 操作方法
+
+    mutating func add(_ thread: PlotThread) {
+        threads.append(thread)
+    }
+
+    mutating func remove(id: String) {
+        threads.removeAll { $0.id == id }
+    }
+
+    mutating func update(_ thread: PlotThread) {
+        if let index = threads.firstIndex(where: { $0.id == thread.id }) {
+            threads[index] = thread
+        }
+    }
+
+    mutating func advanceThread(id: String, to chapter: Int) {
+        if let index = threads.firstIndex(where: { $0.id == id }) {
+            threads[index].advance(to: chapter)
+        }
+    }
+
+    mutating func addEventToThread(threadID: String, event: ThreadEvent) {
+        if let index = threads.firstIndex(where: { $0.id == threadID }) {
+            threads[index].addEvent(event)
+        }
+    }
+
+    mutating func completeThread(id: String) {
+        if let index = threads.firstIndex(where: { $0.id == id }) {
+            threads[index].status = .completed
+            threads[index].updatedAt = Date()
+        }
+    }
+
+    /// 清理已完成的旧叙事线（保留最近N条）
+    mutating func pruneCompleted(keeping last: Int = 20) {
+        let completed = threads.filter { $0.status == .completed }
+        let active = threads.filter { $0.status != .completed }
+        let toKeep = completed.suffix(last)
+        threads = active + Array(toKeep)
+    }
+}
+
 struct NovelProject: Identifiable, Codable {
     let id: String
     let title: String
@@ -1166,6 +1398,8 @@ struct NovelProject: Identifiable, Codable {
     var qualityReviewReports: [QualityReviewReport]
     /// 结构化伏笔列表
     var foreshadowList: ForeshadowList
+    /// 结构化叙事线列表（替代 activeThreadsNotes）
+    var plotThreadList: PlotThreadList
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -1204,6 +1438,7 @@ struct NovelProject: Identifiable, Codable {
         case strandWeaveTracker
         case qualityReviewReports
         case foreshadowList
+        case plotThreadList
     }
 
     init(
@@ -1282,6 +1517,7 @@ struct NovelProject: Identifiable, Codable {
         self.strandWeaveTracker = strandWeaveTracker ?? StrandWeaveTracker()
         self.qualityReviewReports = qualityReviewReports ?? []
         self.foreshadowList = ForeshadowList()
+        self.plotThreadList = PlotThreadList()
     }
 
     init(from decoder: Decoder) throws {
@@ -1326,6 +1562,7 @@ struct NovelProject: Identifiable, Codable {
         strandWeaveTracker = try container.decodeIfPresent(StrandWeaveTracker.self, forKey: .strandWeaveTracker) ?? StrandWeaveTracker()
         qualityReviewReports = try container.decodeIfPresent([QualityReviewReport].self, forKey: .qualityReviewReports) ?? []
         foreshadowList = try container.decodeIfPresent(ForeshadowList.self, forKey: .foreshadowList) ?? ForeshadowList()
+        plotThreadList = try container.decodeIfPresent(PlotThreadList.self, forKey: .plotThreadList) ?? PlotThreadList()
     }
 
     func encode(to encoder: Encoder) throws {
@@ -1364,6 +1601,8 @@ struct NovelProject: Identifiable, Codable {
         try container.encodeIfPresent(genreTemplateId, forKey: .genreTemplateId)
         try container.encode(strandWeaveTracker, forKey: .strandWeaveTracker)
         try container.encode(qualityReviewReports, forKey: .qualityReviewReports)
+        try container.encode(foreshadowList, forKey: .foreshadowList)
+        try container.encode(plotThreadList, forKey: .plotThreadList)
     }
 
     var currentChapterLabel: String {
@@ -1564,7 +1803,28 @@ struct NovelProject: Identifiable, Codable {
 
     var activeThreadsStatusLabel: String {
         guard storyLength.supportsThreadTracking else { return "单篇闭环" }
+        if !plotThreadList.threads.isEmpty {
+            return "\(plotThreadList.activeCount) 活跃 / \(plotThreadList.totalCount) 总计"
+        }
         return hasActiveThreadsNotes ? "\(activeThreadNodeCount) 条" : "待记录"
+    }
+
+    // MARK: - PlotThread List computed properties
+
+    var plotThreadListActiveCount: Int {
+        plotThreadList.activeCount
+    }
+
+    var plotThreadListTotalCount: Int {
+        plotThreadList.totalCount
+    }
+
+    var hasPlotThreadList: Bool {
+        !plotThreadList.threads.isEmpty
+    }
+
+    var plotThreadListStatusLabel: String {
+        "\(plotThreadList.activeCount) 活跃 / \(plotThreadList.totalCount) 总计"
     }
 
     var continuityStatusLabel: String {

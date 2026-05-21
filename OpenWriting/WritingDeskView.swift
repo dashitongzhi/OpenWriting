@@ -1842,11 +1842,7 @@ struct WritingDeskView: View {
                     )
                 }
 
-                if advanceToNextChapter {
-                    appState.beginNextChapter(after: chapterDraft, for: project.id)
-                }
-
-                // Auto-populate MemoryBuckets from the saved chapter content
+                // Auto-populate the background longform chain before moving the UI to the next chapter.
                 let chapterContent = chapterDraft.content
                 let chapterNum = chapterDraft.chapterNumber
                 appState.extractAndStoreMemoryItems(
@@ -1854,6 +1850,17 @@ struct WritingDeskView: View {
                     chapterNumber: chapterNum,
                     for: project.id
                 )
+
+                // Also run AI-powered extraction for deeper memory extraction
+                appState.runAIMemoryExtraction(
+                    from: chapterContent,
+                    chapterNumber: chapterNum,
+                    projectID: project.id
+                )
+
+                if advanceToNextChapter {
+                    appState.beginNextChapter(after: chapterDraft, for: project.id)
+                }
 
                 // Accumulate locally-detected AI anti-patterns
                 appState.appendLocalAntiPatterns(
