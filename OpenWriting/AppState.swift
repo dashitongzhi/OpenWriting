@@ -397,6 +397,7 @@ final class AppState {
             "strandWeave_\(projectID)",
             "lastReview_\(projectID)",
             "antiPatterns_\(projectID)",
+            "longformRuntime_\(projectID)",
         ]
         for key in keysToRemove {
             userDefaults.removeObject(forKey: key)
@@ -1179,32 +1180,58 @@ final class AppState {
     /// Extract structured memory items from a chapter draft and upsert them
     /// into the project's MemoryBuckets. Runs keyword-based extraction
     /// for characters, relationships, locations, foreshadowing, and timeline.
+    @discardableResult
     func extractAndStoreMemoryItems(
         from chapterContent: String,
         chapterNumber: Int,
-        for projectID: NovelProject.ID
-    ) {
-        let allItems = extractedStructuredMemoryItems(from: chapterContent, chapterNumber: chapterNumber)
+        for projectID: NovelProject.ID,
+        review: ChapterReviewResult? = nil,
+        reviewFailureReason: String? = nil
+    ) -> LongformChapterCommit? {
+        let chapterDraft = ChapterDraft(
+            volumeNumber: max(project(for: projectID)?.currentVolumeNumber ?? 1, 1),
+            chapterNumber: chapterNumber,
+            chapterTitle: project(for: projectID)?.currentChapterTitle ?? "未命名章节",
+            content: chapterContent,
+            savedAt: Self.currentTimestampLabel()
+        )
+        return extractAndStoreMemoryItems(
+            from: chapterDraft,
+            for: projectID,
+            review: review,
+            reviewFailureReason: reviewFailureReason
+        )
+    }
+
+    @discardableResult
+    func extractAndStoreMemoryItems(
+        from chapterDraft: ChapterDraft,
+        for projectID: NovelProject.ID,
+        review: ChapterReviewResult? = nil,
+        reviewFailureReason: String? = nil
+    ) -> LongformChapterCommit? {
+        let allItems = extractedStructuredMemoryItems(
+            from: chapterDraft.content,
+            chapterNumber: chapterDraft.chapterNumber
+        )
+        var builtCommit: LongformChapterCommit?
 
         updateProject(projectID) { project in
             let contract = LongformStorySystem.buildRuntimeContract(for: project)
-            let chapterDraft = ChapterDraft(
-                volumeNumber: project.currentVolumeNumber,
-                chapterNumber: chapterNumber,
-                chapterTitle: project.currentChapterTitle,
-                content: chapterContent,
-                savedAt: Self.currentTimestampLabel()
-            )
             let commit = LongformStorySystem.buildCommit(
                 project: project,
                 chapterDraft: chapterDraft,
-                review: project.lastReviewResult,
+                review: review,
+                reviewFailureReason: reviewFailureReason,
                 extractedMemoryItems: allItems,
                 contract: contract
             )
             LongformStorySystem.apply(commit: commit, contract: contract, to: &project)
+            builtCommit = project.longformRuntimeState.latestCommit ?? commit
             project.updatedAt = Self.currentTimestampLabel()
         }
+
+        return builtCommit
     }
 
     /// AI-powered memory extraction - runs after chapter save.

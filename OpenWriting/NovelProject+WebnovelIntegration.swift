@@ -32,34 +32,21 @@ extension NovelProject {
     /// Structured memory buckets, replacing/supplementing the flat continuityNotes.
     var memoryBuckets: MemoryBuckets {
         get {
-            let pid = id
-            Self.cacheLock.lock()
-            if let cached = Self.memoryBucketsCache[pid] {
-                Self.cacheLock.unlock()
-                return cached
+            if let persistedMemoryBuckets {
+                return persistedMemoryBuckets
             }
-            Self.cacheLock.unlock()
 
-            let decoded: MemoryBuckets
-            if let data = UserDefaults.standard.data(forKey: "memoryBuckets_\(pid)"),
+            if let data = UserDefaults.standard.data(forKey: "memoryBuckets_\(id)"),
                let buckets = try? JSONDecoder().decode(MemoryBuckets.self, from: data) {
-                decoded = buckets
-            } else {
-                decoded = MemoryBuckets.migrate(from: globalMemorySnapshot, currentChapter: writtenChapters)
+                return buckets
             }
 
-            Self.cacheLock.lock()
-            Self.memoryBucketsCache[pid] = decoded
-            Self.cacheLock.unlock()
-            return decoded
+            return MemoryBuckets.migrate(from: globalMemorySnapshot, currentChapter: writtenChapters)
         }
         set {
-            let pid = id
-            Self.cacheLock.lock()
-            Self.memoryBucketsCache[pid] = newValue
-            Self.cacheLock.unlock()
+            persistedMemoryBuckets = newValue
             if let data = try? JSONEncoder().encode(newValue) {
-                UserDefaults.standard.set(data, forKey: "memoryBuckets_\(pid)")
+                UserDefaults.standard.set(data, forKey: "memoryBuckets_\(id)")
             }
         }
     }
@@ -68,34 +55,21 @@ extension NovelProject {
 
     var strandWeaveState: StrandWeaveState {
         get {
-            let pid = id
-            Self.cacheLock.lock()
-            if let cached = Self.strandWeaveCache[pid] {
-                Self.cacheLock.unlock()
-                return cached
+            if let persistedStrandWeaveState {
+                return persistedStrandWeaveState
             }
-            Self.cacheLock.unlock()
 
-            let decoded: StrandWeaveState
-            if let data = UserDefaults.standard.data(forKey: "strandWeave_\(pid)"),
+            if let data = UserDefaults.standard.data(forKey: "strandWeave_\(id)"),
                let state = try? JSONDecoder().decode(StrandWeaveState.self, from: data) {
-                decoded = state
-            } else {
-                decoded = .empty
+                return state
             }
 
-            Self.cacheLock.lock()
-            Self.strandWeaveCache[pid] = decoded
-            Self.cacheLock.unlock()
-            return decoded
+            return .empty
         }
         set {
-            let pid = id
-            Self.cacheLock.lock()
-            Self.strandWeaveCache[pid] = newValue
-            Self.cacheLock.unlock()
+            persistedStrandWeaveState = newValue
             if let data = try? JSONEncoder().encode(newValue) {
-                UserDefaults.standard.set(data, forKey: "strandWeave_\(pid)")
+                UserDefaults.standard.set(data, forKey: "strandWeave_\(id)")
             }
         }
     }
@@ -104,39 +78,23 @@ extension NovelProject {
 
     var lastReviewResult: ChapterReviewResult? {
         get {
-            let pid = id
-            Self.cacheLock.lock()
-            if Self.lastReviewCacheLoaded.contains(pid) {
-                let cached = Self.lastReviewCache[pid]
-                Self.cacheLock.unlock()
-                return cached ?? nil
+            if let persistedLastReviewResult {
+                return persistedLastReviewResult
             }
-            Self.cacheLock.unlock()
 
-            let decoded: ChapterReviewResult?
-            if let data = UserDefaults.standard.data(forKey: "lastReview_\(pid)"),
+            if let data = UserDefaults.standard.data(forKey: "lastReview_\(id)"),
                let result = try? JSONDecoder().decode(ChapterReviewResult.self, from: data) {
-                decoded = result
-            } else {
-                decoded = nil
+                return result
             }
 
-            Self.cacheLock.lock()
-            Self.lastReviewCache[pid] = decoded
-            Self.lastReviewCacheLoaded.insert(pid)
-            Self.cacheLock.unlock()
-            return decoded
+            return nil
         }
         set {
-            let pid = id
-            Self.cacheLock.lock()
-            Self.lastReviewCache[pid] = newValue
-            Self.lastReviewCacheLoaded.insert(pid)
-            Self.cacheLock.unlock()
+            persistedLastReviewResult = newValue
             if let value = newValue, let data = try? JSONEncoder().encode(value) {
-                UserDefaults.standard.set(data, forKey: "lastReview_\(pid)")
+                UserDefaults.standard.set(data, forKey: "lastReview_\(id)")
             } else {
-                UserDefaults.standard.removeObject(forKey: "lastReview_\(pid)")
+                UserDefaults.standard.removeObject(forKey: "lastReview_\(id)")
             }
         }
     }
@@ -145,27 +103,15 @@ extension NovelProject {
 
     var accumulatedAntiPatterns: [String] {
         get {
-            let pid = id
-            Self.cacheLock.lock()
-            if let cached = Self.antiPatternsCache[pid] {
-                Self.cacheLock.unlock()
-                return cached
+            if let persistedAntiPatterns {
+                return persistedAntiPatterns
             }
-            Self.cacheLock.unlock()
 
-            let decoded = UserDefaults.standard.stringArray(forKey: "antiPatterns_\(pid)") ?? []
-
-            Self.cacheLock.lock()
-            Self.antiPatternsCache[pid] = decoded
-            Self.cacheLock.unlock()
-            return decoded
+            return UserDefaults.standard.stringArray(forKey: "antiPatterns_\(id)") ?? []
         }
         set {
-            let pid = id
-            Self.cacheLock.lock()
-            Self.antiPatternsCache[pid] = newValue
-            Self.cacheLock.unlock()
-            UserDefaults.standard.set(newValue, forKey: "antiPatterns_\(pid)")
+            persistedAntiPatterns = newValue
+            UserDefaults.standard.set(newValue, forKey: "antiPatterns_\(id)")
         }
     }
 

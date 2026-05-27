@@ -46,6 +46,7 @@ struct LongformStoryContractBundle: Codable, Hashable {
         var chapterTitle: String
         var chapterGoal: String
         var mandatoryNodes: [String]
+        var requiresMandatoryNodeCoverage: Bool?
         var sceneDirectives: [String]
         var characterDirectives: [String]
         var activeForeshadowing: [String]
@@ -77,6 +78,7 @@ struct LongformChapterCommit: Codable, Hashable, Identifiable {
     var plannedNodes: [String]
     var coveredNodes: [String]
     var missedNodes: [String]
+    var rejectionReasons: [String]?
     var acceptedEvents: [LongformStoryEvent]
     var extractedMemoryItems: [MemoryItem]
     var dominantThreadType: ThreadType
@@ -136,17 +138,17 @@ enum LongformStorySystem {
         }
         let strand = project.strandWeaveState
         let activeThreadLines = activeThreadSummaries(for: project)
-        let chapterNodes = chapterRelevantLines(
+        let chapterNodePlan = chapterRelevantLines(
             from: [project.outlineText, project.structureNotes],
             chapter: project.currentChapterNumber,
             fallback: project.chapterFocus
         )
-        let sceneNodes = chapterRelevantLines(
+        let sceneNodePlan = chapterRelevantLines(
             from: [project.sceneProgressNotes],
             chapter: project.currentChapterNumber,
             fallback: ""
         )
-        let characterNodes = chapterRelevantLines(
+        let characterNodePlan = chapterRelevantLines(
             from: [project.characterArcNotes],
             chapter: project.currentChapterNumber,
             fallback: ""
@@ -196,9 +198,10 @@ enum LongformStorySystem {
                 chapterNumber: max(project.currentChapterNumber, 1),
                 chapterTitle: project.currentChapterTitle,
                 chapterGoal: firstUsefulText([project.chapterFocus, project.currentChapterSummary]),
-                mandatoryNodes: chapterNodes,
-                sceneDirectives: sceneNodes,
-                characterDirectives: characterNodes,
+                mandatoryNodes: chapterNodePlan.lines,
+                requiresMandatoryNodeCoverage: chapterNodePlan.requiresCoverage,
+                sceneDirectives: sceneNodePlan.lines,
+                characterDirectives: characterNodePlan.lines,
                 activeForeshadowing: foreshadowLines,
                 forbiddenZones: forbiddenZones
             ),
@@ -222,14 +225,29 @@ enum LongformStorySystem {
         project: NovelProject,
         chapterDraft: ChapterDraft,
         review: ChapterReviewResult?,
+        reviewFailureReason: String? = nil,
         extractedMemoryItems: [MemoryItem],
         contract: LongformStoryContractBundle
     ) -> LongformChapterCommit {
         let plannedNodes = contract.chapter.mandatoryNodes
-        let coveredNodes = plannedNodes.filter { chapterDraft.content.localizedCaseInsensitiveContains($0.keyPhraseForMatching) }
+        let coveredNodes = plannedNodes.filter { nodeIsCovered($0, by: chapterDraft.content) }
         let missedNodes = plannedNodes.filter { !coveredNodes.contains($0) }
         let hasBlockingReview = review?.hasBlockingIssues ?? false
-        let status: LongformCommitStatus = hasBlockingReview ? .rejected : .accepted
+        let belowMinimumScore = review.map { $0.overallScore < contract.review.minimumAcceptedScore } ?? false
+        var rejectionReasons: [String] = []
+        if hasBlockingReview {
+            rejectionReasons.append("写后审查存在阻断问题")
+        }
+        if belowMinimumScore {
+            rejectionReasons.append("审查分数低于最低通过线 \(contract.review.minimumAcceptedScore)")
+        }
+        if let reviewFailureReason {
+            rejectionReasons.append("当前章审查失败：\(reviewFailureReason)")
+        }
+        if contract.chapter.requiresMandatoryNodeCoverage == true && !missedNodes.isEmpty {
+            rejectionReasons.append("未覆盖本章明确节点：\(missedNodes.prefix(3).joined(separator: "；"))")
+        }
+        let status: LongformCommitStatus = rejectionReasons.isEmpty ? .accepted : .rejected
         let events = extractedMemoryItems.map {
             LongformStoryEvent(
                 id: stableID(parts: ["event", String(chapterDraft.chapterNumber), $0.category.rawValue, $0.subject, $0.field, $0.value]),
@@ -251,6 +269,7 @@ enum LongformStorySystem {
             plannedNodes: plannedNodes,
             coveredNodes: coveredNodes,
             missedNodes: missedNodes,
+            rejectionReasons: rejectionReasons,
             acceptedEvents: status == .accepted ? events : [],
             extractedMemoryItems: status == .accepted ? extractedMemoryItems : [],
             dominantThreadType: dominantThread,
@@ -275,6 +294,7 @@ enum LongformStorySystem {
         var updatedCommit = commit
         guard commit.isAccepted else {
             updatedCommit.projectionStatus["runtime"] = "done"
+            updatedCommit.projectionStatus["quality_gate"] = "rejected"
             runtime.record(commit: updatedCommit)
             project.longformRuntimeState = runtime
             return
@@ -295,6 +315,7 @@ enum LongformStorySystem {
         updatedCommit.projectionStatus["threads"] = "done"
 
         updatedCommit.projectionStatus["runtime"] = "done"
+        updatedCommit.projectionStatus["quality_gate"] = "passed"
         runtime.record(commit: updatedCommit)
         project.longformRuntimeState = runtime
     }
@@ -480,7 +501,7 @@ enum LongformStorySystem {
         from texts: [String],
         chapter: Int,
         fallback: String
-    ) -> [String] {
+    ) -> (lines: [String], requiresCoverage: Bool) {
         let markers = [
             "第\(chapter)章",
             "第 \(chapter) 章",
@@ -494,10 +515,13 @@ enum LongformStorySystem {
             .filter { line in markers.contains { line.contains($0) } }
             .map { $0.cleanedListLine }
         if !lines.isEmpty {
-            return Array(lines.prefix(10))
+            return (Array(lines.prefix(10)), true)
         }
         let fallbackLine = fallback.trimmingCharacters(in: .whitespacesAndNewlines)
-        return fallbackLine.isEmpty ? [] : [fallbackLine]
+        guard !fallbackLine.isEmpty else {
+            return ([], false)
+        }
+        return ([fallbackLine], fallbackLine != "继续补齐当前章节的目标、冲突和场景节奏。")
     }
 
     private static func forbiddenZones(for project: NovelProject) -> [String] {
@@ -534,6 +558,18 @@ enum LongformStorySystem {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first { !$0.isEmpty }
             ?? "暂无明确记录。"
+    }
+
+    private static func nodeIsCovered(_ node: String, by content: String) -> Bool {
+        let keyPhrase = node.keyPhraseForMatching
+        if keyPhrase.count >= 2, content.localizedCaseInsensitiveContains(keyPhrase) {
+            return true
+        }
+
+        let tokens = node.coverageTokens
+        guard !tokens.isEmpty else { return false }
+        let hitCount = tokens.filter { content.localizedCaseInsensitiveContains($0) }.count
+        return hitCount >= min(2, tokens.count)
     }
 
     private static func formatList(_ items: [String], fallback: String) -> String {
@@ -599,34 +635,21 @@ extension NovelProject {
 
     var longformRuntimeState: LongformStoryRuntimeState {
         get {
-            let pid = id
-            Self.longformRuntimeLock.lock()
-            if let cached = Self.longformRuntimeCache[pid] {
-                Self.longformRuntimeLock.unlock()
-                return cached
+            if let persistedLongformRuntimeState {
+                return persistedLongformRuntimeState
             }
-            Self.longformRuntimeLock.unlock()
 
-            let decoded: LongformStoryRuntimeState
-            if let data = UserDefaults.standard.data(forKey: "longformRuntime_\(pid)"),
+            if let data = UserDefaults.standard.data(forKey: "longformRuntime_\(id)"),
                let state = try? JSONDecoder().decode(LongformStoryRuntimeState.self, from: data) {
-                decoded = state
-            } else {
-                decoded = .empty
+                return state
             }
 
-            Self.longformRuntimeLock.lock()
-            Self.longformRuntimeCache[pid] = decoded
-            Self.longformRuntimeLock.unlock()
-            return decoded
+            return .empty
         }
         set {
-            let pid = id
-            Self.longformRuntimeLock.lock()
-            Self.longformRuntimeCache[pid] = newValue
-            Self.longformRuntimeLock.unlock()
+            persistedLongformRuntimeState = newValue
             if let data = try? JSONEncoder().encode(newValue) {
-                UserDefaults.standard.set(data, forKey: "longformRuntime_\(pid)")
+                UserDefaults.standard.set(data, forKey: "longformRuntime_\(id)")
             }
         }
     }
@@ -650,6 +673,17 @@ private extension String {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first { $0.count >= 2 }
             ?? cleaned
+    }
+
+    var coverageTokens: [String] {
+        let separators = CharacterSet(charactersIn: "：:，,。.;；、-—（）()[]【】《》\"“”‘’ \t")
+        let rawTokens = cleanedListLine.components(separatedBy: separators)
+        let trimmedTokens = rawTokens.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let ignoredTokens = Set(["第", "本章", "章节", "目标", "推进"])
+        let meaningfulTokens = trimmedTokens.filter { token in
+            token.count >= 2 && !ignoredTokens.contains(token)
+        }
+        return meaningfulTokens.prefix(8).map { String($0) }
     }
 
     func nonEmptyLines(limit: Int) -> [String] {

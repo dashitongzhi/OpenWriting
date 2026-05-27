@@ -574,6 +574,7 @@ struct WritingDeskView: View {
 
             genreTemplateSelector(for: project)
             strandWeaveIndicator(for: project)
+            longformRuntimePanel(for: project)
 
             Text(aiStatusMessage)
                 .font(.subheadline)
@@ -747,6 +748,84 @@ struct WritingDeskView: View {
 
     private func strandPercent(_ value: Double?) -> String {
         "\(Int(((value ?? 0) * 100).rounded()))%"
+    }
+
+    private func longformRuntimePanel(for project: NovelProject) -> some View {
+        let runtime = project.longformRuntimeState
+        let commit = runtime.latestCommit
+        let contract = runtime.latestContract
+        let statusText: String
+        let statusColor: Color
+        if let commit {
+            statusText = commit.isAccepted ? "已通过" : "需修订"
+            statusColor = commit.isAccepted ? .green : .orange
+        } else {
+            statusText = contract == nil ? "待生成" : "合同就绪"
+            statusColor = contract == nil ? .secondary : .blue
+        }
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Label("长篇后台", systemImage: commit?.isAccepted == false ? "exclamationmark.triangle.fill" : "point.3.connected.trianglepath.dotted")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Text(statusText)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(statusColor)
+            }
+
+            if let commit {
+                Text("\(commit.volumeNumber > 1 ? "第 \(commit.volumeNumber) 卷 · " : "")第 \(commit.chapterNumber) 章《\(commit.chapterTitle)》")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                let rejectionReasons = commit.rejectionReasons ?? []
+                if !rejectionReasons.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(rejectionReasons.prefix(3)), id: \.self) { reason in
+                            Text("· \(reason)")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                                .lineLimit(2)
+                        }
+                    }
+                } else if !commit.missedNodes.isEmpty {
+                    Text("漏写节点：\(commit.missedNodes.prefix(2).joined(separator: "；"))")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .lineLimit(2)
+                } else {
+                    Text("节点 \(commit.coveredNodes.count)/\(commit.plannedNodes.count) · 事件 \(commit.acceptedEvents.count) · 记忆 \(commit.extractedMemoryItems.count)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                let projectionSummary = commit.projectionStatus
+                    .sorted { $0.key < $1.key }
+                    .map { "\($0.key): \($0.value)" }
+                    .joined(separator: " · ")
+                if !projectionSummary.isEmpty {
+                    Text(projectionSummary)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(2)
+                }
+            } else {
+                Text("保存章节后会自动形成合同、提交、记忆和节奏投影。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.secondary.opacity(0.07))
+        )
     }
 
     private var emptyState: some View {
@@ -1231,11 +1310,6 @@ struct WritingDeskView: View {
                     aiSuggestion = enhancedResult.text
                     latestChapterReview = enhancedResult.review
                     latestStrandWarning = enhancedResult.strandWarning
-                    appState.applyEnhancedWritingUpdate(
-                        enhancedResult.memoryUpdate,
-                        review: enhancedResult.review,
-                        for: project.id
-                    )
                     clearWritingGenerationRequest(token: requestToken)
                     isGenerating = false
                     writingRunState = .idle
@@ -1482,11 +1556,27 @@ struct WritingDeskView: View {
             }
 
             guard let configuration = appState.aiConfiguration else {
+                let longformCommit = applyLocalLongformUpdates(after: result, for: project.id)
+                let canAdvance = advanceToNextChapter && (longformCommit?.isAccepted ?? true)
                 if advanceToNextChapter {
-                    appState.beginNextChapter(after: result.chapterDraft, for: project.id)
-                    aiStatusMessage = "已按当前标题更新 \(result.chapterDraft.chapterSummary)，并进入下一章。未配置模型，暂未刷新全局记忆和章节树。"
+                    if canAdvance {
+                        appState.beginNextChapter(after: result.chapterDraft, for: project.id)
+                    }
+                    aiStatusMessage = longformSaveMessage(
+                        prefix: "已按当前标题更新",
+                        chapterSummary: result.chapterDraft.chapterSummary,
+                        commit: longformCommit,
+                        advancedToNextChapter: canAdvance,
+                        suffix: "未配置模型，暂未刷新全局记忆和章节树。"
+                    )
                 } else {
-                    aiStatusMessage = "已按当前标题更新 \(result.chapterDraft.chapterSummary)。未配置模型，暂未刷新全局记忆和章节树。"
+                    aiStatusMessage = longformSaveMessage(
+                        prefix: "已按当前标题更新",
+                        chapterSummary: result.chapterDraft.chapterSummary,
+                        commit: longformCommit,
+                        advancedToNextChapter: false,
+                        suffix: "未配置模型，暂未刷新全局记忆和章节树。"
+                    )
                 }
                 isSavingChapter = false
                 return
@@ -1506,11 +1596,27 @@ struct WritingDeskView: View {
             let fallbackTitle = fallbackChapterTitle(for: latestProject)
             appState.updateCurrentChapterTitle(fallbackTitle, for: project.id)
             if let result = completeChapterDraftSave(for: project, statusPrefix: "模型未配置，已按当前标题保存") {
+                let longformCommit = applyLocalLongformUpdates(after: result, for: project.id)
+                let canAdvance = advanceToNextChapter && (longformCommit?.isAccepted ?? true)
                 if advanceToNextChapter {
-                    appState.beginNextChapter(after: result.chapterDraft, for: project.id)
-                    aiStatusMessage = "模型未配置，已按当前标题保存 \(result.chapterDraft.chapterSummary)，并进入下一章。暂未刷新全局记忆和章节树。"
+                    if canAdvance {
+                        appState.beginNextChapter(after: result.chapterDraft, for: project.id)
+                    }
+                    aiStatusMessage = longformSaveMessage(
+                        prefix: "模型未配置，已按当前标题保存",
+                        chapterSummary: result.chapterDraft.chapterSummary,
+                        commit: longformCommit,
+                        advancedToNextChapter: canAdvance,
+                        suffix: "暂未刷新全局记忆和章节树。"
+                    )
                 } else {
-                    aiStatusMessage = "模型未配置，已按当前标题保存 \(result.chapterDraft.chapterSummary)。暂未刷新全局记忆和章节树。"
+                    aiStatusMessage = longformSaveMessage(
+                        prefix: "模型未配置，已按当前标题保存",
+                        chapterSummary: result.chapterDraft.chapterSummary,
+                        commit: longformCommit,
+                        advancedToNextChapter: false,
+                        suffix: "暂未刷新全局记忆和章节树。"
+                    )
                 }
             }
             isSavingChapter = false
@@ -1765,6 +1871,48 @@ struct WritingDeskView: View {
         return result
     }
 
+    private func applyLocalLongformUpdates(after saveResult: ChapterDraftSaveResult, for projectID: NovelProject.ID) -> LongformChapterCommit? {
+        let chapterDraft = saveResult.chapterDraft
+        let commit = appState.extractAndStoreMemoryItems(
+            from: chapterDraft,
+            for: projectID
+        )
+        appState.appendLocalAntiPatterns(
+            from: chapterDraft.content,
+            for: projectID
+        )
+        return commit
+    }
+
+    private func longformSaveMessage(
+        prefix: String,
+        chapterSummary: String,
+        commit: LongformChapterCommit?,
+        advancedToNextChapter: Bool,
+        suffix: String
+    ) -> String {
+        var notes: [String] = []
+        if let commit, !commit.isAccepted {
+            let reasons = (commit.rejectionReasons ?? commit.missedNodes)
+                .prefix(2)
+                .joined(separator: "；")
+            let reasonText = reasons.isEmpty ? "请检查长篇后台提示" : reasons
+            notes.append("长篇后台未通过：\(reasonText)")
+            if advancedToNextChapter {
+                notes.append("已进入下一章")
+            } else {
+                notes.append("已停留在本章，建议修订后再进入下一章")
+            }
+        } else {
+            notes.append("已完成本地长篇记忆提交")
+            if advancedToNextChapter {
+                notes.append("已进入下一章")
+            }
+        }
+        notes.append(suffix)
+        return "\(prefix) \(chapterSummary)。\(notes.joined(separator: "；"))"
+    }
+
     private func refreshProjectContextAfterChapterSave(
         for project: NovelProject,
         saveResult: ChapterDraftSaveResult,
@@ -1807,8 +1955,22 @@ struct WritingDeskView: View {
                 }
             }()
 
+            async let reviewTask: Result<ChapterReviewResult, Error> = {
+                do {
+                    return .success(try await ChapterQualityReviewer.reviewChapter(
+                        project: latestProject,
+                        chapterDraft: chapterDraft.content,
+                        memoryContext: latestProject.enhancedMemoryContext,
+                        configuration: configuration
+                    ))
+                } catch {
+                    return .failure(error)
+                }
+            }()
+
             let globalMemoryResult = await globalMemoryTask
             let chapterTreeResult = await chapterTreeTask
+            let reviewResult = await reviewTask
 
             await MainActor.run {
                 guard projectContextRefreshTokens[project.id] == refreshToken else {
@@ -1842,23 +2004,42 @@ struct WritingDeskView: View {
                     )
                 }
 
+                let currentChapterReview: ChapterReviewResult?
+                if case let .success(review) = reviewResult {
+                    currentChapterReview = review
+                    latestChapterReview = review
+                    appState.applyEnhancedWritingUpdate(nil, review: review, for: project.id)
+                } else {
+                    currentChapterReview = nil
+                }
+                let reviewFailureReason: String?
+                if case let .failure(error) = reviewResult {
+                    reviewFailureReason = error.localizedDescription
+                } else {
+                    reviewFailureReason = nil
+                }
+
                 // Auto-populate the background longform chain before moving the UI to the next chapter.
                 let chapterContent = chapterDraft.content
                 let chapterNum = chapterDraft.chapterNumber
-                appState.extractAndStoreMemoryItems(
-                    from: chapterContent,
-                    chapterNumber: chapterNum,
-                    for: project.id
+                let longformCommit = appState.extractAndStoreMemoryItems(
+                    from: chapterDraft,
+                    for: project.id,
+                    review: currentChapterReview,
+                    reviewFailureReason: reviewFailureReason
                 )
 
                 // Also run AI-powered extraction for deeper memory extraction
-                appState.runAIMemoryExtraction(
-                    from: chapterContent,
-                    chapterNumber: chapterNum,
-                    projectID: project.id
-                )
+                if longformCommit?.isAccepted ?? true {
+                    appState.runAIMemoryExtraction(
+                        from: chapterContent,
+                        chapterNumber: chapterNum,
+                        projectID: project.id
+                    )
+                }
 
-                if advanceToNextChapter {
+                let canAdvance = advanceToNextChapter && (longformCommit?.isAccepted ?? true)
+                if canAdvance {
                     appState.beginNextChapter(after: chapterDraft, for: project.id)
                 }
 
@@ -1878,7 +2059,9 @@ struct WritingDeskView: View {
                     preservedLocalGlobalMemory: preservedLocalGlobalMemory,
                     chapterTreeResult: chapterTreeResult,
                     chapterTreeApplyOutcome: chapterTreeApplyOutcome,
-                    advancedToNextChapter: advanceToNextChapter
+                    reviewResult: reviewResult,
+                    longformCommit: longformCommit,
+                    advancedToNextChapter: canAdvance
                 )
                 revealWritingDeskWindow(for: project.id)
             }
@@ -1893,6 +2076,8 @@ struct WritingDeskView: View {
         preservedLocalGlobalMemory: Bool,
         chapterTreeResult: Result<ChapterTreeRefresh, Error>,
         chapterTreeApplyOutcome: ChapterTreeRefreshApplyOutcome,
+        reviewResult: Result<ChapterReviewResult, Error>,
+        longformCommit: LongformChapterCommit?,
         advancedToNextChapter: Bool = false
     ) -> String {
         let detailPrefix = detailMessage.map { "\($0) " } ?? ""
@@ -1924,7 +2109,21 @@ struct WritingDeskView: View {
             refreshNotes.append("章节树更新失败：\(error.localizedDescription)")
         }
 
-        if advancedToNextChapter {
+        switch reviewResult {
+        case let .success(review):
+            refreshNotes.append("当前章审查 \(review.overallScore)/100")
+        case let .failure(error):
+            refreshNotes.append("当前章审查失败：\(error.localizedDescription)")
+        }
+
+        if let longformCommit, !longformCommit.isAccepted {
+            let reasons = (longformCommit.rejectionReasons ?? longformCommit.missedNodes)
+                .prefix(2)
+                .joined(separator: "；")
+            let reasonText = reasons.isEmpty ? "请检查长篇后台提示" : reasons
+            refreshNotes.append("长篇后台未通过：\(reasonText)")
+            refreshNotes.append("已停留在本章，建议修订后再进入下一章")
+        } else if advancedToNextChapter {
             refreshNotes.append("已进入下一章")
         }
 

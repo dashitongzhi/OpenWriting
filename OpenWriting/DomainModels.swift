@@ -1450,6 +1450,16 @@ struct NovelProject: Identifiable, Codable {
     var foreshadowList: ForeshadowList
     /// 结构化叙事线列表（替代 activeThreadsNotes）
     var plotThreadList: PlotThreadList
+    /// 长篇写作结构化记忆，随项目文件持久化。
+    var persistedMemoryBuckets: MemoryBuckets?
+    /// 轻量 Strand Weave 节奏状态，随项目文件持久化。
+    var persistedStrandWeaveState: StrandWeaveState?
+    /// 写作审查沉淀出的反模式，随项目文件持久化。
+    var persistedAntiPatterns: [String]?
+    /// 最近一次章节质量审查结果，随项目文件持久化。
+    var persistedLastReviewResult: ChapterReviewResult?
+    /// 后台长篇合同与章节提交运行时，随项目文件持久化。
+    var persistedLongformRuntimeState: LongformStoryRuntimeState?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -1489,6 +1499,11 @@ struct NovelProject: Identifiable, Codable {
         case qualityReviewReports
         case foreshadowList
         case plotThreadList
+        case persistedMemoryBuckets
+        case persistedStrandWeaveState
+        case persistedAntiPatterns
+        case persistedLastReviewResult
+        case persistedLongformRuntimeState
     }
 
     init(
@@ -1525,7 +1540,12 @@ struct NovelProject: Identifiable, Codable {
         chapterCatalog: [ChapterDraftMetadata] = [],
         genreTemplateId: String? = nil,
         strandWeaveTracker: StrandWeaveTracker? = nil,
-        qualityReviewReports: [QualityReviewReport]? = nil
+        qualityReviewReports: [QualityReviewReport]? = nil,
+        persistedMemoryBuckets: MemoryBuckets? = nil,
+        persistedStrandWeaveState: StrandWeaveState? = nil,
+        persistedAntiPatterns: [String]? = nil,
+        persistedLastReviewResult: ChapterReviewResult? = nil,
+        persistedLongformRuntimeState: LongformStoryRuntimeState? = nil
     ) {
         self.id = id
         self.title = title
@@ -1568,6 +1588,11 @@ struct NovelProject: Identifiable, Codable {
         self.qualityReviewReports = qualityReviewReports ?? []
         self.foreshadowList = ForeshadowList()
         self.plotThreadList = PlotThreadList()
+        self.persistedMemoryBuckets = persistedMemoryBuckets
+        self.persistedStrandWeaveState = persistedStrandWeaveState
+        self.persistedAntiPatterns = persistedAntiPatterns
+        self.persistedLastReviewResult = persistedLastReviewResult
+        self.persistedLongformRuntimeState = persistedLongformRuntimeState
     }
 
     init(from decoder: Decoder) throws {
@@ -1613,6 +1638,11 @@ struct NovelProject: Identifiable, Codable {
         qualityReviewReports = try container.decodeIfPresent([QualityReviewReport].self, forKey: .qualityReviewReports) ?? []
         foreshadowList = try container.decodeIfPresent(ForeshadowList.self, forKey: .foreshadowList) ?? ForeshadowList()
         plotThreadList = try container.decodeIfPresent(PlotThreadList.self, forKey: .plotThreadList) ?? PlotThreadList()
+        persistedMemoryBuckets = try container.decodeIfPresent(MemoryBuckets.self, forKey: .persistedMemoryBuckets)
+        persistedStrandWeaveState = try container.decodeIfPresent(StrandWeaveState.self, forKey: .persistedStrandWeaveState)
+        persistedAntiPatterns = try container.decodeIfPresent([String].self, forKey: .persistedAntiPatterns)
+        persistedLastReviewResult = try container.decodeIfPresent(ChapterReviewResult.self, forKey: .persistedLastReviewResult)
+        persistedLongformRuntimeState = try container.decodeIfPresent(LongformStoryRuntimeState.self, forKey: .persistedLongformRuntimeState)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -1653,6 +1683,11 @@ struct NovelProject: Identifiable, Codable {
         try container.encode(qualityReviewReports, forKey: .qualityReviewReports)
         try container.encode(foreshadowList, forKey: .foreshadowList)
         try container.encode(plotThreadList, forKey: .plotThreadList)
+        try container.encodeIfPresent(persistedMemoryBuckets, forKey: .persistedMemoryBuckets)
+        try container.encodeIfPresent(persistedStrandWeaveState, forKey: .persistedStrandWeaveState)
+        try container.encodeIfPresent(persistedAntiPatterns, forKey: .persistedAntiPatterns)
+        try container.encodeIfPresent(persistedLastReviewResult, forKey: .persistedLastReviewResult)
+        try container.encodeIfPresent(persistedLongformRuntimeState, forKey: .persistedLongformRuntimeState)
     }
 
     var currentChapterLabel: String {
