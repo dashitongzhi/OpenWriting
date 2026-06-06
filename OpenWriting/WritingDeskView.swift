@@ -46,6 +46,9 @@ struct WritingDeskView: View {
     @State private var pendingDraftPolishReview: DraftPolishReview?
     @State private var pendingDraftPolishReviewAnchorPoint: CGPoint?
     @State private var latestChapterReview: ChapterReviewResult?
+    @State private var latestChapterReviewDraftContext: ChapterSaveValidationContext?
+    @State private var latestReviewedAISuggestionText = ""
+    @State private var latestAISuggestionAcceptanceContext: AISuggestionAcceptanceContext?
     @State private var latestStrandWarning: StrandWeaveState.PacingWarning?
 
     private var palette: DashboardPalette {
@@ -85,7 +88,7 @@ struct WritingDeskView: View {
                 writingDeskViewport(in: geometry.size)
             }
         }
-        .task(id: activeProject?.id) {
+        .task(id: activeProject.map { writingSessionKey(for: $0) }) {
             resetSessionState()
         }
         .fileImporter(
@@ -627,6 +630,14 @@ struct WritingDeskView: View {
                 .pickerStyle(.segmented)
             }
 
+            if let blockingMessage = blockedAISuggestionAcceptanceMessage(for: project) {
+                Text(blockingMessage)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.red)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) {
                     Button("接受放入草稿箱") {
@@ -634,7 +645,7 @@ struct WritingDeskView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.return, modifiers: [.command, .shift])
-                    .disabled(aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(!canAcceptAISuggestion(for: project))
 
                     Button("重写这一版") {
                         rewriteSuggestion(for: project)
@@ -644,6 +655,11 @@ struct WritingDeskView: View {
 
                     Button("清空结果") {
                         aiSuggestion = ""
+                        if latestChapterReviewDraftContext == nil {
+                            latestChapterReview = nil
+                        }
+                        latestReviewedAISuggestionText = ""
+                        latestAISuggestionAcceptanceContext = nil
                         aiStatusMessage = "AI 结果区已清空。"
                     }
                     .buttonStyle(.bordered)
@@ -656,7 +672,7 @@ struct WritingDeskView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.return, modifiers: [.command, .shift])
-                    .disabled(aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(!canAcceptAISuggestion(for: project))
 
                     Button("重写这一版") {
                         rewriteSuggestion(for: project)
@@ -666,6 +682,11 @@ struct WritingDeskView: View {
 
                     Button("清空结果") {
                         aiSuggestion = ""
+                        if latestChapterReviewDraftContext == nil {
+                            latestChapterReview = nil
+                        }
+                        latestReviewedAISuggestionText = ""
+                        latestAISuggestionAcceptanceContext = nil
                         aiStatusMessage = "AI 结果区已清空。"
                     }
                     .buttonStyle(.bordered)
@@ -673,8 +694,11 @@ struct WritingDeskView: View {
                 }
             }
 
-            if let review = latestChapterReview ?? project.lastReviewResult {
-                ChapterQualityReviewPanel(review: review)
+            if let review = displayedChapterReview(for: project) {
+                ChapterQualityReviewPanel(
+                    review: review,
+                    minimumAcceptedScore: LongformStorySystem.minimumAcceptedScore(for: project.storyLength)
+                )
             }
         }
         .frame(height: layout?.aiCardHeight, alignment: .top)
@@ -705,6 +729,38 @@ struct WritingDeskView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color.secondary.opacity(0.07))
         )
+    }
+
+    private func writingSessionKey(for project: NovelProject) -> WritingDeskSessionKey {
+        WritingDeskSessionKey(
+            projectID: project.id,
+            volumeNumber: max(project.currentVolumeNumber, 1),
+            chapterNumber: max(project.currentChapterNumber, 1)
+        )
+    }
+
+    private func displayedChapterReview(for project: NovelProject) -> ChapterReviewResult? {
+        if let latestChapterReview {
+            let normalizedSuggestion = aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines)
+            let reviewedSuggestion = latestReviewedAISuggestionText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !normalizedSuggestion.isEmpty, reviewedSuggestion == normalizedSuggestion {
+                return latestChapterReview
+            }
+
+            if latestChapterReviewDraftContext == chapterSaveValidationContext(for: project) {
+                return latestChapterReview
+            }
+        }
+
+        let currentVolume = max(project.currentVolumeNumber, 1)
+        let currentChapter = max(project.currentChapterNumber, 1)
+        return project.qualityReviewReports
+            .sorted { $0.reviewedAt > $1.reviewedAt }
+            .first {
+                $0.resolvedVolumeNumber == currentVolume
+                    && $0.chapterNumber == currentChapter
+            }?
+            .unifiedResult
     }
 
     private func strandWeaveIndicator(for project: NovelProject) -> some View {
@@ -754,19 +810,52 @@ struct WritingDeskView: View {
         let runtime = project.longformRuntimeState
         let commit = runtime.latestCommit
         let contract = runtime.latestContract
+        let writeGate = runtime.latestWriteGate
+        let health = project.longformRuntimeHealth
+        let qualityTrend = project.longformQualityTrend
         let statusText: String
         let statusColor: Color
-        if let commit {
-            statusText = commit.isAccepted ? "已通过" : "需修订"
-            statusColor = commit.isAccepted ? .green : .orange
+        let statusIcon: String
+        switch health.status {
+        case .passed:
+            statusText = "健康"
+            statusColor = .green
+            statusIcon = "checkmark.seal.fill"
+        case .warning:
+            statusText = "需关注"
+            statusColor = .orange
+            statusIcon = "exclamationmark.circle.fill"
+        case .blocked:
+            statusText = "被阻断"
+            statusColor = .red
+            statusIcon = "exclamationmark.triangle.fill"
+        }
+
+        let gateStatusText: String
+        let gateStatusColor: Color
+        if let writeGate {
+            switch writeGate.overallStatus {
+            case .passed:
+                gateStatusText = "门禁通过"
+                gateStatusColor = .green
+            case .warning:
+                gateStatusText = "门禁有提醒"
+                gateStatusColor = .orange
+            case .blocked:
+                gateStatusText = "门禁阻断"
+                gateStatusColor = .red
+            }
+        } else if let commit {
+            gateStatusText = commit.isAccepted ? "已通过" : "需修订"
+            gateStatusColor = commit.isAccepted ? .green : .orange
         } else {
-            statusText = contract == nil ? "待生成" : "合同就绪"
-            statusColor = contract == nil ? .secondary : .blue
+            gateStatusText = contract == nil ? "待生成" : "合同就绪"
+            gateStatusColor = contract == nil ? .secondary : .blue
         }
 
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Label("长篇后台", systemImage: commit?.isAccepted == false ? "exclamationmark.triangle.fill" : "point.3.connected.trianglepath.dotted")
+                Label("长篇后台", systemImage: statusIcon)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
 
@@ -777,11 +866,87 @@ struct WritingDeskView: View {
                     .foregroundStyle(statusColor)
             }
 
+            VStack(alignment: .leading, spacing: 4) {
+                Text("健康诊断：\(health.summary)")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(statusColor)
+
+                Text("下一步：\(health.nextAction)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+
+                let visibleHealthIssues = health.issues
+                    .filter { $0.status != .passed }
+                    .prefix(2)
+                ForEach(Array(visibleHealthIssues)) { issue in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("· \(issue.title)：\(issue.detail)")
+                            .font(.caption)
+                            .foregroundStyle(issue.status == .blocked ? .red : .orange)
+                            .lineLimit(2)
+                        Text("  \(issue.repairHint)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                }
+
+                let metricSummary = health.metrics
+                    .sorted { $0.key < $1.key }
+                    .map { "\($0.key): \($0.value)" }
+                    .joined(separator: " · ")
+                if !metricSummary.isEmpty {
+                    Text(metricSummary)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+
+                if qualityTrend.hasSignals {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("质量趋势")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        if let averageScore = qualityTrend.averageScore {
+                            Text("最近均分 \(averageScore)/100\(qualityTrend.lowScoreCount > 0 ? " · \(qualityTrend.lowScoreCount) 次偏低" : "")")
+                                .font(.caption)
+                                .foregroundStyle(averageScore >= qualityTrend.minimumAcceptedScore ? Color.secondary : Color.orange)
+                                .lineLimit(1)
+                        }
+
+                        let priorityItems = qualityTrend.priorityIssues.prefix(2)
+                        ForEach(Array(priorityItems), id: \.self) { issue in
+                            Text("· \(issue)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                    }
+                }
+            }
+
             if let commit {
                 Text("\(commit.volumeNumber > 1 ? "第 \(commit.volumeNumber) 卷 · " : "")第 \(commit.chapterNumber) 章《\(commit.chapterTitle)》")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+
+                if let writeGate {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\(gateStatusText)：\(writeGate.summary)")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(gateStatusColor)
+
+                        ForEach(Array(writeGate.checks.filter { $0.status != .passed }.prefix(3))) { check in
+                            Text("· \(check.stage.displayName)：\(check.message)")
+                                .font(.caption)
+                                .foregroundStyle(check.status == .blocked ? .red : .orange)
+                                .lineLimit(2)
+                        }
+                    }
+                }
 
                 let rejectionReasons = commit.rejectionReasons ?? []
                 if !rejectionReasons.isEmpty {
@@ -802,6 +967,22 @@ struct WritingDeskView: View {
                     Text("节点 \(commit.coveredNodes.count)/\(commit.plannedNodes.count) · 事件 \(commit.acceptedEvents.count) · 记忆 \(commit.extractedMemoryItems.count)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+
+                let revisionHints = commit.revisionHints ?? []
+                if !revisionHints.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("修订建议")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        ForEach(Array(revisionHints.prefix(3)), id: \.self) { hint in
+                            Text("· \(hint)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                    }
                 }
 
                 let projectionSummary = commit.projectionStatus
@@ -1241,13 +1422,23 @@ struct WritingDeskView: View {
             return
         }
 
+        appState.ensureContinuationChapterDraftsLoaded(for: project.id)
+        let latestProject = appState.project(for: project.id) ?? project
+        if let blockingMessage = writingPreflightBlockingMessage(
+            for: latestProject,
+            allowsCurrentChapterRepair: true
+        ) {
+            aiStatusMessage = blockingMessage
+            revealWritingDeskWindow(for: project.id)
+            return
+        }
+
         if let activeToken = writingGenerationToken {
             let task = writingGenerationTask
             clearWritingGenerationRequest(token: activeToken)
             task?.cancel()
         }
 
-        let latestProject = appState.project(for: project.id) ?? project
         let requestContext = draftGenerationContext(for: latestProject, rejectedSuggestion: rejectedSuggestion)
         writingStopTask?.cancel()
         writingStopTask = nil
@@ -1256,6 +1447,11 @@ struct WritingDeskView: View {
         thinkingMode = rejectedSuggestion == nil ? .writing : .rewriting
         thinkingStepIndex = 0
         aiSuggestion = ""
+        if latestChapterReviewDraftContext == nil {
+            latestChapterReview = nil
+        }
+        latestReviewedAISuggestionText = ""
+        latestAISuggestionAcceptanceContext = nil
         aiStatusMessage = rejectedSuggestion == nil
             ? "AI 正在根据大纲、参考文本、特殊要求和字数要求创作候选稿…"
             : "AI 正在重写这一版候选稿，会保留当前约束，但换一种写法重新生成…"
@@ -1309,6 +1505,9 @@ struct WritingDeskView: View {
 
                     aiSuggestion = enhancedResult.text
                     latestChapterReview = enhancedResult.review
+                    latestChapterReviewDraftContext = nil
+                    latestReviewedAISuggestionText = enhancedResult.review == nil ? "" : enhancedResult.text
+                    latestAISuggestionAcceptanceContext = acceptanceContext(for: latestProject)
                     latestStrandWarning = enhancedResult.strandWarning
                     clearWritingGenerationRequest(token: requestToken)
                     isGenerating = false
@@ -1348,6 +1547,152 @@ struct WritingDeskView: View {
                 }
             }
         }
+    }
+
+    private func writingPreflightBlockingMessage(
+        for project: NovelProject,
+        allowsCurrentChapterRepair: Bool = false
+    ) -> String? {
+        let validation = PrewriteValidator.validate(project: project)
+        var detailCandidates: [String] = []
+
+        let blockers = validation.isReady ? [] : validation.blockingReasons
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let failedChecks = validation.isReady ? [] : validation.checklistItems
+            .filter { !$0.passed && $0.isBlocking }
+            .map { "\($0.label)：\($0.detail)" }
+        detailCandidates.append(contentsOf: blockers + failedChecks)
+        detailCandidates.append(
+            contentsOf: longformRuntimeHealthBlockingDetails(
+                for: project,
+                allowsCurrentChapterRepair: allowsCurrentChapterRepair
+            )
+        )
+
+        guard !detailCandidates.isEmpty else { return nil }
+
+        var seenDetails = Set<String>()
+        let details = detailCandidates
+            .filter { detail in
+                let normalized = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !normalized.isEmpty, !seenDetails.contains(normalized) else {
+                    return false
+                }
+                seenDetails.insert(normalized)
+                return true
+            }
+            .prefix(4)
+            .map { "· \($0)" }
+            .joined(separator: "\n")
+
+        if details.isEmpty {
+            return "写前门禁未通过，暂不生成候选稿。请先补齐大纲、分卷计划、本章目标和记忆。"
+        }
+
+        let title = validation.isReady
+            ? "长篇后台健康阻断，暂不生成候选稿。"
+            : "写前门禁未通过，暂不生成候选稿。"
+        return "\(title)\n\(details)"
+    }
+
+    private func longformRuntimeHealthBlockingDetails(
+        for project: NovelProject,
+        allowsCurrentChapterRepair: Bool
+    ) -> [String] {
+        guard project.storyLength.supportsVolumePlanning else { return [] }
+
+        return project.longformRuntimeHealth.blockingIssues
+            .filter { $0.title != "写前门禁未通过" }
+            .filter { issue in
+                !canRepairCurrentChapter(issue, project: project, allowsCurrentChapterRepair: allowsCurrentChapterRepair)
+            }
+            .map { issue in
+                [issue.title, issue.detail]
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: "：")
+            }
+    }
+
+    private func canRepairCurrentChapter(
+        _ issue: LongformRuntimeHealthIssue,
+        project: NovelProject,
+        allowsCurrentChapterRepair: Bool
+    ) -> Bool {
+        guard allowsCurrentChapterRepair else { return false }
+
+        switch issue.title {
+        case "保存章节未进入提交链", "章节内容与提交链不一致":
+            let affectedChapters = issue.detail
+                .components(separatedBy: "；")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            return !affectedChapters.isEmpty && affectedChapters.allSatisfy {
+                textReferencesCurrentChapterPosition($0, project: project)
+            }
+        case "章节目录存在断章":
+            let missingChapters = issue.detail
+                .components(separatedBy: "；")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            return missingChapters.contains {
+                textReferencesCurrentChapterPosition($0, project: project)
+            }
+        case "分卷目录存在断卷":
+            let missingVolumes = issue.detail
+                .components(separatedBy: "；")
+                .compactMap { parsedVolumeNumber(in: $0) }
+            return missingVolumes.contains(max(project.currentVolumeNumber, 1))
+                && max(project.currentChapterNumber, 1) == 1
+        case "最新章节提交被拒":
+            guard let latestCommit = project.longformRuntimeState.latestCommit else { return false }
+            return latestCommit.status == .rejected
+                && latestCommit.volumeNumber == max(project.currentVolumeNumber, 1)
+                && latestCommit.chapterNumber == project.currentChapterNumber
+        default:
+            return false
+        }
+    }
+
+    private func textReferencesCurrentChapterPosition(_ text: String, project: NovelProject) -> Bool {
+        guard let position = parsedChapterPosition(in: text) else { return false }
+        return position.volumeNumber == max(project.currentVolumeNumber, 1)
+            && position.chapterNumber == max(project.currentChapterNumber, 1)
+    }
+
+    private func parsedChapterPosition(in text: String) -> (volumeNumber: Int, chapterNumber: Int)? {
+        let nsText = text as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+
+        if let expression = try? NSRegularExpression(pattern: #"第\s*(\d+)\s*卷.*?第\s*(\d+)\s*章"#),
+           let match = expression.firstMatch(in: text, range: fullRange),
+           match.numberOfRanges >= 3,
+           let volumeNumber = Int(nsText.substring(with: match.range(at: 1))),
+           let chapterNumber = Int(nsText.substring(with: match.range(at: 2))) {
+            return (max(volumeNumber, 1), max(chapterNumber, 1))
+        }
+
+        if let expression = try? NSRegularExpression(pattern: #"第\s*(\d+)\s*章"#),
+           let match = expression.firstMatch(in: text, range: fullRange),
+           match.numberOfRanges >= 2,
+           let chapterNumber = Int(nsText.substring(with: match.range(at: 1))) {
+            return (1, max(chapterNumber, 1))
+        }
+
+        return nil
+    }
+
+    private func parsedVolumeNumber(in text: String) -> Int? {
+        let nsText = text as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+        guard let expression = try? NSRegularExpression(pattern: #"第\s*(\d+)\s*卷"#),
+              let match = expression.firstMatch(in: text, range: fullRange),
+              match.numberOfRanges >= 2,
+              let volumeNumber = Int(nsText.substring(with: match.range(at: 1))) else {
+            return nil
+        }
+        return max(volumeNumber, 1)
     }
 
     private func stopWriting() {
@@ -1391,13 +1736,66 @@ struct WritingDeskView: View {
     private func acceptAISuggestionIntoDraft(for project: NovelProject) {
         let trimmed = aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        if let blockingMessage = blockedAISuggestionAcceptanceMessage(for: project) {
+            aiStatusMessage = blockingMessage
+            return
+        }
 
         appState.appendDraftText(trimmed, for: project.id)
         aiSuggestion = ""
+        if latestChapterReviewDraftContext == nil {
+            latestChapterReview = nil
+        }
+        latestReviewedAISuggestionText = ""
+        latestAISuggestionAcceptanceContext = nil
         saveMessage = "已接受 AI 候选稿到草稿箱"
         aiStatusMessage = "候选稿已放入草稿箱，可继续编辑或保存当前章。"
         focusDraftEditor()
         requestAutoScroll(to: .draft)
+    }
+
+    private func canAcceptAISuggestion(for project: NovelProject) -> Bool {
+        !aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && blockedAISuggestionAcceptanceMessage(for: project) == nil
+    }
+
+    private func blockedAISuggestionAcceptanceMessage(for project: NovelProject) -> String? {
+        guard project.storyLength.supportsVolumePlanning else { return nil }
+        let normalizedSuggestion = aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedSuggestion.isEmpty else { return nil }
+        guard let review = latestChapterReview else {
+            return "长篇候选稿还没有可用审查结果，请先重新生成或完成审查后再放入草稿箱。"
+        }
+        let reviewedText = latestReviewedAISuggestionText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard reviewedText == normalizedSuggestion else {
+            return "候选稿已被修改，当前审查结果不再对应这版文本。请先重写生成新的审查结果，或把修改后的正文直接放在草稿箱手动处理。"
+        }
+        guard let latestAISuggestionAcceptanceContext else {
+            return "长篇候选稿缺少生成时上下文记录，请重新生成后再放入草稿箱。"
+        }
+        guard latestAISuggestionAcceptanceContext == acceptanceContext(for: project) else {
+            return "生成候选稿后，草稿、章节位置、记忆或长篇后台合同已经变化。请按当前内容重新生成，避免旧上下文污染新草稿。"
+        }
+
+        let contract = LongformStorySystem.buildRuntimeContract(for: project)
+        let minimumScore = contract.review.minimumAcceptedScore
+        if review.hasBlockingIssues {
+            let issueTitle = review.blockingIssues.first?.dimension.displayName ?? "质量审查"
+            return "候选稿未通过长篇审查：\(issueTitle)存在阻断问题。请先重写这一版，或手动修订到不阻断后再放入草稿箱。"
+        }
+        if review.overallScore < minimumScore {
+            return "候选稿审查 \(review.overallScore)/100，低于长篇最低通过线 \(minimumScore)。请先重写或修订后再放入草稿箱。"
+        }
+
+        let missedNodes = LongformStorySystem.missingMandatoryNodes(
+            for: project,
+            additionalText: normalizedSuggestion,
+            contract: contract
+        )
+        if !missedNodes.isEmpty {
+            return "候选稿尚未覆盖本章合同节点：\(missedNodes.prefix(2).joined(separator: "；"))。请先重写或补齐节点后再放入草稿箱。"
+        }
+        return nil
     }
 
     private func polishEntireDraft(for project: NovelProject) {
@@ -1438,18 +1836,27 @@ struct WritingDeskView: View {
                     }
 
                     let originalSelection = draftSelection
-                    appState.updateDraftText(normalizedDraft, for: project.id)
+                    let blockingMessage = longformDraftPolishBlockingMessage(
+                        polishedDraft: normalizedDraft,
+                        project: latestProject
+                    )
+                    let isApplied = blockingMessage == nil
+                    if isApplied {
+                        appState.updateDraftText(normalizedDraft, for: project.id)
+                    }
                     pendingDraftPolishReview = DraftPolishReview(
                         projectID: project.id,
                         mode: .full,
                         originalDraft: latestProject.draftText,
                         polishedDraft: normalizedDraft,
                         polishedText: normalizedDraft,
-                        restoredSelection: originalSelection
+                        restoredSelection: originalSelection,
+                        isApplied: isApplied,
+                        blockingMessage: blockingMessage
                     )
                     pendingDraftPolishReviewAnchorPoint = nil
-                    saveMessage = "润色结果待确认"
-                    aiStatusMessage = "整篇草稿已完成润色并写回正文。可选择保留或舍弃。"
+                    saveMessage = blockingMessage == nil ? "润色结果待确认" : "润色结果未写入"
+                    aiStatusMessage = blockingMessage ?? "整篇草稿已完成润色并写回正文。可选择保留或舍弃。"
                     isGenerating = false
                     activeDraftPolishMode = nil
                     draftSelection = .empty
@@ -1504,23 +1911,37 @@ struct WritingDeskView: View {
 
                 await MainActor.run {
                     let normalizedSelection = normalizedSelectionPolishResult(polishedSelection)
-                    if let updatedDraft = applyPolishedSelection(
+                    if let updatedDraft = draftReplacingSelection(
                         normalizedSelection,
                         selection: currentSelection,
-                        for: project.id
+                        in: latestProject.draftText
                     ) {
+                        let blockingMessage = longformDraftPolishBlockingMessage(
+                            polishedDraft: updatedDraft,
+                            project: latestProject
+                        )
+                        let isApplied = blockingMessage == nil
+                        if isApplied {
+                            applyPolishedSelection(
+                                normalizedSelection,
+                                selection: currentSelection,
+                                for: project.id
+                            )
+                        }
                         pendingDraftPolishReview = DraftPolishReview(
                             projectID: project.id,
                             mode: .selection,
                             originalDraft: latestProject.draftText,
                             polishedDraft: updatedDraft,
                             polishedText: normalizedSelection,
-                            restoredSelection: currentSelection
+                            restoredSelection: currentSelection,
+                            isApplied: isApplied,
+                            blockingMessage: blockingMessage
                         )
                         pendingDraftPolishReviewAnchorPoint = reviewAnchorPoint
                     }
-                    saveMessage = "润色结果待确认"
-                    aiStatusMessage = "当前选区已润色并写回正文。可选择保留或舍弃。"
+                    saveMessage = pendingDraftPolishReview?.blockingMessage == nil ? "润色结果待确认" : "润色结果未写入"
+                    aiStatusMessage = pendingDraftPolishReview?.blockingMessage ?? "当前选区已润色并写回正文。可选择保留或舍弃。"
                     isGenerating = false
                     activeDraftPolishMode = nil
                     selectionPolishTarget = nil
@@ -1538,12 +1959,100 @@ struct WritingDeskView: View {
         }
     }
 
-    private func saveCurrentChapterDraft(for project: NovelProject, advanceToNextChapter: Bool = false) {
+    private func saveCurrentChapterDraft(
+        for project: NovelProject,
+        advanceToNextChapter: Bool = false,
+        preSaveReview: ChapterReviewResult? = nil,
+        validatedConfiguration: AIConnectionConfiguration? = nil
+    ) {
         let latestProject = appState.project(for: project.id) ?? project
         let trimmedDraft = latestProject.draftText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !trimmedDraft.isEmpty else {
             aiStatusMessage = "草稿箱里还没有可保存的正文。"
+            return
+        }
+
+        if latestProject.storyLength.supportsVolumePlanning, preSaveReview == nil {
+            guard let configuration = validatedConfiguration ?? appState.aiConfiguration else {
+                saveLongformChapterWithoutModel(for: latestProject, advanceToNextChapter: advanceToNextChapter)
+                return
+            }
+
+            if let blockingMessage = writingPreflightBlockingMessage(for: latestProject, allowsCurrentChapterRepair: true) {
+                aiStatusMessage = blockingMessage.replacingOccurrences(of: "暂不生成候选稿", with: "暂不保存当前章")
+                return
+            }
+
+            let contract = LongformStorySystem.buildRuntimeContract(for: latestProject)
+            let missedNodes = LongformStorySystem.missingMandatoryNodes(
+                for: latestProject,
+                additionalText: "",
+                contract: contract
+            )
+            if !missedNodes.isEmpty {
+                aiStatusMessage = "长篇保存门禁未通过：当前草稿漏掉本章合同节点：\(missedNodes.prefix(2).joined(separator: "；"))。请补齐后再保存。"
+                return
+            }
+
+            let saveContext = chapterSaveValidationContext(for: latestProject)
+            isSavingChapter = true
+            aiStatusMessage = "长篇章节保存前正在运行质量审查，只有通过后才会收录进已保存章节…"
+
+            Task {
+                do {
+                    let review = try await ChapterQualityReviewer.reviewChapter(
+                        project: latestProject,
+                        chapterDraft: trimmedDraft,
+                        memoryContext: latestProject.enhancedMemoryContext,
+                        configuration: configuration
+                    )
+
+                    await MainActor.run {
+                        guard let currentProject = appState.project(for: project.id),
+                              chapterSaveValidationContext(for: currentProject) == saveContext
+                        else {
+                            isSavingChapter = false
+                            aiStatusMessage = "保存审查期间正文或章节位置已经变化，旧审查结果已丢弃。请按当前内容重新保存。"
+                            revealWritingDeskWindow(for: project.id)
+                            return
+                        }
+
+                        latestChapterReview = review
+                        latestChapterReviewDraftContext = chapterSaveValidationContext(for: currentProject)
+                        appState.applyEnhancedWritingUpdate(
+                            nil,
+                            review: review,
+                            reviewedChapter: ChapterReviewTarget(
+                                volumeNumber: currentProject.currentVolumeNumber,
+                                chapterNumber: currentProject.currentChapterNumber,
+                                chapterTitle: currentProject.currentChapterTitle
+                            ),
+                            for: project.id
+                        )
+
+                        if let blockingMessage = longformChapterSaveBlockingMessage(review: review, project: currentProject) {
+                            isSavingChapter = false
+                            aiStatusMessage = blockingMessage
+                            revealWritingDeskWindow(for: project.id)
+                            return
+                        }
+
+                        saveCurrentChapterDraft(
+                            for: currentProject,
+                            advanceToNextChapter: advanceToNextChapter,
+                            preSaveReview: review,
+                            validatedConfiguration: configuration
+                        )
+                    }
+                } catch {
+                    await MainActor.run {
+                        isSavingChapter = false
+                        aiStatusMessage = "长篇章节保存前审查失败，当前章未收录：\(error.localizedDescription)"
+                        revealWritingDeskWindow(for: project.id)
+                    }
+                }
+            }
             return
         }
 
@@ -1555,7 +2064,7 @@ struct WritingDeskView: View {
                 return
             }
 
-            guard let configuration = appState.aiConfiguration else {
+            guard let configuration = validatedConfiguration ?? appState.aiConfiguration else {
                 let longformCommit = applyLocalLongformUpdates(after: result, for: project.id)
                 let canAdvance = advanceToNextChapter && (longformCommit?.isAccepted ?? true)
                 if advanceToNextChapter {
@@ -1587,12 +2096,13 @@ struct WritingDeskView: View {
                 saveResult: result,
                 configuration: configuration,
                 statusPrefix: "已按当前标题更新",
-                advanceToNextChapter: advanceToNextChapter
+                advanceToNextChapter: advanceToNextChapter,
+                preSaveReview: preSaveReview
             )
             return
         }
 
-        guard let configuration = appState.aiConfiguration else {
+        guard let configuration = validatedConfiguration ?? appState.aiConfiguration else {
             let fallbackTitle = fallbackChapterTitle(for: latestProject)
             appState.updateCurrentChapterTitle(fallbackTitle, for: project.id)
             if let result = completeChapterDraftSave(for: project, statusPrefix: "模型未配置，已按当前标题保存") {
@@ -1624,6 +2134,7 @@ struct WritingDeskView: View {
         }
 
         aiStatusMessage = "AI 正在根据草稿箱内容拟一个章节标题，并同步保存当前章…"
+        let reviewedSaveContext = preSaveReview.map { _ in chapterSaveValidationContext(for: latestProject) }
 
         Task {
             do {
@@ -1634,6 +2145,17 @@ struct WritingDeskView: View {
                 )
 
                 await MainActor.run {
+                    if let reviewedSaveContext {
+                        guard let currentProject = appState.project(for: project.id),
+                              chapterSaveValidationContext(for: currentProject) == reviewedSaveContext
+                        else {
+                            isSavingChapter = false
+                            aiStatusMessage = "拟标题期间正文、章节位置或长篇上下文已经变化，旧保存审查结果已丢弃。请按当前内容重新保存。"
+                            revealWritingDeskWindow(for: project.id)
+                            return
+                        }
+                    }
+
                     appState.updateCurrentChapterTitle(title, for: project.id)
                     if let result = completeChapterDraftSave(for: project, statusPrefix: "AI 已拟好标题并保存") {
                         refreshProjectContextAfterChapterSave(
@@ -1641,7 +2163,8 @@ struct WritingDeskView: View {
                             saveResult: result,
                             configuration: configuration,
                             statusPrefix: "AI 已拟好标题并保存",
-                            advanceToNextChapter: advanceToNextChapter
+                            advanceToNextChapter: advanceToNextChapter,
+                            preSaveReview: preSaveReview
                         )
                     } else {
                         isSavingChapter = false
@@ -1650,6 +2173,17 @@ struct WritingDeskView: View {
                 }
             } catch {
                 await MainActor.run {
+                    if let reviewedSaveContext {
+                        guard let currentProject = appState.project(for: project.id),
+                              chapterSaveValidationContext(for: currentProject) == reviewedSaveContext
+                        else {
+                            isSavingChapter = false
+                            aiStatusMessage = "拟标题期间正文、章节位置或长篇上下文已经变化，旧保存审查结果已丢弃。请按当前内容重新保存。"
+                            revealWritingDeskWindow(for: project.id)
+                            return
+                        }
+                    }
+
                     let fallbackTitle = fallbackChapterTitle(for: latestProject)
                     appState.updateCurrentChapterTitle(fallbackTitle, for: project.id)
                     if let result = completeChapterDraftSave(
@@ -1663,7 +2197,8 @@ struct WritingDeskView: View {
                             configuration: configuration,
                             statusPrefix: "AI 拟标题失败，已按当前标题保存",
                             detailMessage: error.localizedDescription,
-                            advanceToNextChapter: advanceToNextChapter
+                            advanceToNextChapter: advanceToNextChapter,
+                            preSaveReview: preSaveReview
                         )
                     } else {
                         isSavingChapter = false
@@ -1829,12 +2364,57 @@ struct WritingDeskView: View {
             return baseInstruction
         }
 
+        let reviewFeedback = rewriteReviewFeedback(for: trimmedRejectedSuggestion)
+        let reviewFeedbackBlock = reviewFeedback.isEmpty
+            ? ""
+            : """
+
+        上一版质量审查反馈（这次必须优先修复，不要只换措辞）：
+        \(reviewFeedback)
+        """
+
         return """
         \(baseInstruction)
         用户对上一版候选稿不满意，这次重写方向是：\(rewriteDirection.title)。\(rewriteDirection.instruction)
+        \(reviewFeedbackBlock)
         不要重复下面这版的句子结构或段落组织：
         \(excerpt(from: trimmedRejectedSuggestion, limit: 1_200))
         """
+    }
+
+    private func rewriteReviewFeedback(for rejectedSuggestion: String) -> String {
+        guard let review = latestChapterReview else { return "" }
+        let reviewedText = latestReviewedAISuggestionText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard reviewedText == rejectedSuggestion else { return "" }
+
+        var lines: [String] = []
+        let summary = review.overallSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+        lines.append(summary.isEmpty ? "- 审查分数：\(review.overallScore)/100。" : "- 审查分数：\(review.overallScore)/100。\(summary)")
+
+        let priorityIssues = (review.blockingIssues + review.nonBlockingIssues.filter { $0.severity == .high })
+            .prefix(5)
+        for issue in priorityIssues {
+            let fixHint = issue.fixHint.trimmingCharacters(in: .whitespacesAndNewlines)
+            let evidence = issue.evidence.trimmingCharacters(in: .whitespacesAndNewlines)
+            var issueLine = "- [\(issue.severity.displayName)] \(issue.dimension.displayName)：\(issue.description)"
+            if !fixHint.isEmpty {
+                issueLine += "；修复：\(fixHint)"
+            }
+            if !evidence.isEmpty {
+                issueLine += "；证据：\(excerpt(from: evidence, limit: 120))"
+            }
+            lines.append(issueLine)
+        }
+
+        if !review.antiPatterns.isEmpty {
+            lines.append("- 避免 AI 味反模式：\(review.antiPatterns.prefix(3).joined(separator: "；"))")
+        }
+
+        if lines.count == 1 {
+            lines.append("- 上一版没有明确阻断项，但重写仍要明显改善承接、推进、对白和信息增量。")
+        }
+
+        return lines.joined(separator: "\n")
     }
 
     private func excerpt(from text: String, limit: Int) -> String {
@@ -1846,6 +2426,59 @@ struct WritingDeskView: View {
     private func fallbackChapterTitle(for project: NovelProject) -> String {
         let trimmedTitle = project.currentChapterTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmedTitle.isEmpty ? project.currentChapterLabel : trimmedTitle
+    }
+
+    private func chapterSaveValidationContext(for project: NovelProject) -> ChapterSaveValidationContext {
+        ChapterSaveValidationContext(
+            projectID: project.id,
+            storyLength: project.storyLength,
+            currentVolumeNumber: max(project.currentVolumeNumber, 1),
+            currentChapterNumber: max(project.currentChapterNumber, 1),
+            currentChapterTitle: project.currentChapterTitle,
+            chapterFocus: project.chapterFocus,
+            draftText: project.draftText,
+            outlineText: project.outlineText,
+            structureNotes: project.structureNotes,
+            sceneProgressNotes: project.sceneProgressNotes,
+            characterArcNotes: project.characterArcNotes,
+            foreshadowNotes: project.foreshadowNotes,
+            volumePlanNotes: project.volumePlanNotes,
+            activeThreadsNotes: project.activeThreadsNotes,
+            continuityNotes: project.continuityNotes,
+            referenceContextText: project.referenceContextText,
+            specialRequirements: project.specialRequirements,
+            wordTargetText: project.wordTargetText,
+            enhancedMemoryContext: project.enhancedMemoryContext,
+            longformStorySystemContext: project.longformStorySystemContext
+        )
+    }
+
+    private func longformChapterSaveBlockingMessage(review: ChapterReviewResult, project: NovelProject) -> String? {
+        guard project.storyLength.supportsVolumePlanning else { return nil }
+
+        let contract = LongformStorySystem.buildRuntimeContract(for: project)
+        if review.hasBlockingIssues {
+            let issue = review.blockingIssues.first
+            let issueTitle = issue?.dimension.displayName ?? "质量审查"
+            let fixHint = issue?.fixHint.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let suffix = fixHint.isEmpty ? "请先修订后再保存。" : "建议：\(fixHint)"
+            return "长篇保存门禁未通过：\(issueTitle)存在阻断问题，当前章未收录。\(suffix)"
+        }
+
+        if review.overallScore < contract.review.minimumAcceptedScore {
+            return "长篇保存门禁未通过：当前章审查 \(review.overallScore)/100，低于最低通过线 \(contract.review.minimumAcceptedScore)，当前章未收录。请先重写或修订后再保存。"
+        }
+
+        let missedNodes = LongformStorySystem.missingMandatoryNodes(
+            for: project,
+            additionalText: "",
+            contract: contract
+        )
+        if !missedNodes.isEmpty {
+            return "长篇保存门禁未通过：当前草稿漏掉本章合同节点：\(missedNodes.prefix(2).joined(separator: "；"))。请补齐后再保存。"
+        }
+
+        return nil
     }
 
     @discardableResult
@@ -1872,16 +2505,59 @@ struct WritingDeskView: View {
     }
 
     private func applyLocalLongformUpdates(after saveResult: ChapterDraftSaveResult, for projectID: NovelProject.ID) -> LongformChapterCommit? {
+        applyLocalLongformUpdates(after: saveResult, for: projectID, reviewFailureReason: nil)
+    }
+
+    private func applyLocalLongformUpdates(
+        after saveResult: ChapterDraftSaveResult,
+        for projectID: NovelProject.ID,
+        reviewFailureReason: String?
+    ) -> LongformChapterCommit? {
         let chapterDraft = saveResult.chapterDraft
         let commit = appState.extractAndStoreMemoryItems(
             from: chapterDraft,
-            for: projectID
+            for: projectID,
+            reviewFailureReason: reviewFailureReason
         )
         appState.appendLocalAntiPatterns(
             from: chapterDraft.content,
             for: projectID
         )
         return commit
+    }
+
+    private func saveLongformChapterWithoutModel(for project: NovelProject, advanceToNextChapter: Bool) {
+        isSavingChapter = true
+
+        let fallbackTitle = fallbackChapterTitle(for: project)
+        appState.updateCurrentChapterTitle(fallbackTitle, for: project.id)
+
+        guard let result = completeChapterDraftSave(
+            for: project,
+            statusPrefix: "模型未配置，已先安全保存"
+        ) else {
+            isSavingChapter = false
+            return
+        }
+
+        let commit = applyLocalLongformUpdates(
+            after: result,
+            for: project.id,
+            reviewFailureReason: "模型未配置，当前章已安全收录，但尚未完成质量审查、全局记忆刷新和章节树刷新。"
+        )
+        let canAdvance = advanceToNextChapter && (commit?.isAccepted ?? false)
+        if canAdvance {
+            appState.beginNextChapter(after: result.chapterDraft, for: project.id)
+        }
+
+        aiStatusMessage = longformSaveMessage(
+            prefix: "模型未配置，已先安全保存",
+            chapterSummary: result.chapterDraft.chapterSummary,
+            commit: commit,
+            advancedToNextChapter: canAdvance,
+            suffix: "请稍后配置模型并重新保存/审查，以恢复质量门禁、全局记忆和章节树刷新。"
+        )
+        isSavingChapter = false
     }
 
     private func longformSaveMessage(
@@ -1919,12 +2595,14 @@ struct WritingDeskView: View {
         configuration: AIConnectionConfiguration,
         statusPrefix: String,
         detailMessage: String? = nil,
-        advanceToNextChapter: Bool = false
+        advanceToNextChapter: Bool = false,
+        preSaveReview: ChapterReviewResult? = nil
     ) {
         let chapterDraft = saveResult.chapterDraft
         aiStatusMessage = "\(statusPrefix) \(chapterDraft.chapterSummary)。正在更新全局记忆和章节树…"
         let baselineProject = appState.project(for: project.id) ?? project
         let baseline = ChapterTreeRefreshBaseline(project: baselineProject)
+        let baselineLongformContract = LongformStorySystem.buildRuntimeContract(for: baselineProject)
         let refreshToken = UUID()
         projectContextRefreshTokens[project.id] = refreshToken
 
@@ -1956,6 +2634,10 @@ struct WritingDeskView: View {
             }()
 
             async let reviewTask: Result<ChapterReviewResult, Error> = {
+                if let preSaveReview {
+                    return .success(preSaveReview)
+                }
+
                 do {
                     return .success(try await ChapterQualityReviewer.reviewChapter(
                         project: latestProject,
@@ -1982,12 +2664,13 @@ struct WritingDeskView: View {
                 let normalizedContinuity = currentProject?.continuityNotes
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let shouldApplyGlobalMemory = normalizedContinuity == baseline.continuityNotes
-                let preservedLocalGlobalMemory = !shouldApplyGlobalMemory
-                    && (currentProject?.hasGlobalMemory ?? false)
+                let preservedLocalGlobalMemory = currentProject != nil && !shouldApplyGlobalMemory
 
                 var chapterTreeApplyOutcome = ChapterTreeRefreshApplyOutcome()
 
-                if case let .success(globalMemory) = globalMemoryResult, shouldApplyGlobalMemory {
+                if case let .success(globalMemory) = globalMemoryResult,
+                   shouldApplyGlobalMemory,
+                   !globalMemory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     appState.updateContinuityNotes(
                         globalMemory,
                         updatedAt: updatedAt,
@@ -2008,7 +2691,17 @@ struct WritingDeskView: View {
                 if case let .success(review) = reviewResult {
                     currentChapterReview = review
                     latestChapterReview = review
-                    appState.applyEnhancedWritingUpdate(nil, review: review, for: project.id)
+                    if let reviewedProject = appState.project(for: project.id) {
+                        latestChapterReviewDraftContext = chapterSaveValidationContext(for: reviewedProject)
+                    } else {
+                        latestChapterReviewDraftContext = nil
+                    }
+                    appState.applyEnhancedWritingUpdate(
+                        nil,
+                        review: review,
+                        reviewedChapter: ChapterReviewTarget(chapterDraft: chapterDraft),
+                        for: project.id
+                    )
                 } else {
                     currentChapterReview = nil
                 }
@@ -2026,7 +2719,8 @@ struct WritingDeskView: View {
                     from: chapterDraft,
                     for: project.id,
                     review: currentChapterReview,
-                    reviewFailureReason: reviewFailureReason
+                    reviewFailureReason: reviewFailureReason,
+                    contractOverride: baselineLongformContract
                 )
 
                 // Also run AI-powered extraction for deeper memory extraction
@@ -2034,6 +2728,8 @@ struct WritingDeskView: View {
                     appState.runAIMemoryExtraction(
                         from: chapterContent,
                         chapterNumber: chapterNum,
+                        volumeNumber: chapterDraft.volumeNumber,
+                        expectedCommitID: longformCommit?.id,
                         projectID: project.id
                     )
                 }
@@ -2100,7 +2796,10 @@ struct WritingDeskView: View {
         case let .success(refresh) where !refresh.hasStructuredContent:
             refreshNotes.append("章节树返回为空，已保留当前版本")
         case .success:
-            if chapterTreeApplyOutcome.preservedLocalChanges {
+            let chapterTreeSummary = chapterTreeApplyOutcome.summaryLabel
+            if !chapterTreeSummary.isEmpty {
+                refreshNotes.append("章节树刷新结果：\(chapterTreeSummary)")
+            } else if chapterTreeApplyOutcome.preservedLocalChanges {
                 refreshNotes.append("章节树已刷新，并保留了你刚修改过的 \(chapterTreeApplyOutcome.protectedSections) 个区块")
             } else {
                 refreshNotes.append("章节树已同步更新")
@@ -2171,7 +2870,10 @@ struct WritingDeskView: View {
         activeDraftPolishMode = nil
         pendingDraftPolishReview = nil
         pendingDraftPolishReviewAnchorPoint = nil
-        latestChapterReview = activeProject?.lastReviewResult
+        latestChapterReview = nil
+        latestChapterReviewDraftContext = nil
+        latestReviewedAISuggestionText = ""
+        latestAISuggestionAcceptanceContext = nil
         latestStrandWarning = nil
         isSelectionPolishPopoverPresented = false
         saveMessage = "自动保存已开启，可按章节收录"
@@ -2198,6 +2900,7 @@ struct WritingDeskView: View {
         DraftGenerationRequestContext(
             projectID: project.id,
             storyLength: project.storyLength,
+            currentVolumeNumber: project.currentVolumeNumber,
             currentChapterTitle: project.currentChapterTitle,
             currentChapterNumber: project.currentChapterNumber,
             chapterFocus: project.chapterFocus,
@@ -2209,10 +2912,35 @@ struct WritingDeskView: View {
             continuityNotes: project.continuityNotes,
             referenceDocuments: project.referenceDocuments,
             chapterDrafts: project.chapterDrafts,
+            enhancedMemoryContext: project.enhancedMemoryContext,
+            longformStorySystemContext: project.longformStorySystemContext,
             mode: project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .advanceChapter : .continueScene,
             length: preferredLength(for: project),
             rewriteDirection: rewriteDirection,
             rejectedSuggestion: rejectedSuggestion?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        )
+    }
+
+    private func acceptanceContext(for project: NovelProject) -> AISuggestionAcceptanceContext {
+        AISuggestionAcceptanceContext(
+            projectID: project.id,
+            storyLength: project.storyLength,
+            currentVolumeNumber: max(project.currentVolumeNumber, 1),
+            currentChapterTitle: project.currentChapterTitle,
+            currentChapterNumber: max(project.currentChapterNumber, 1),
+            chapterFocus: project.chapterFocus,
+            draftText: project.draftText,
+            outlineText: project.outlineText,
+            referenceContextText: project.referenceContextText,
+            specialRequirements: project.specialRequirements,
+            wordTargetText: project.wordTargetText,
+            continuityNotes: project.continuityNotes,
+            referenceDocuments: project.referenceDocuments,
+            chapterDrafts: project.chapterDrafts,
+            enhancedMemoryContext: project.enhancedMemoryContext,
+            longformStorySystemContext: project.longformStorySystemContext,
+            mode: project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .advanceChapter : .continueScene,
+            length: preferredLength(for: project)
         )
     }
 
@@ -2278,6 +3006,13 @@ struct WritingDeskView: View {
 
     private func keepDraftPolishReview(_ review: DraftPolishReview) {
         guard pendingDraftPolishReview?.id == review.id else { return }
+        if let blockingMessage = review.blockingMessage {
+            aiStatusMessage = blockingMessage
+            return
+        }
+        if !review.isApplied {
+            appState.updateDraftText(review.polishedDraft, for: review.projectID)
+        }
 
         pendingDraftPolishReview = nil
         pendingDraftPolishReviewAnchorPoint = nil
@@ -2288,6 +3023,10 @@ struct WritingDeskView: View {
 
     private func replaceDraftPolishReview(_ review: DraftPolishReview) {
         guard pendingDraftPolishReview?.id == review.id else { return }
+        if let blockingMessage = review.blockingMessage {
+            aiStatusMessage = blockingMessage
+            return
+        }
 
         appState.updateDraftText(review.polishedDraft, for: review.projectID)
         pendingDraftPolishReview = nil
@@ -2300,12 +3039,14 @@ struct WritingDeskView: View {
     private func discardDraftPolishReview(_ review: DraftPolishReview) {
         guard pendingDraftPolishReview?.id == review.id else { return }
 
-        appState.updateDraftText(review.originalDraft, for: review.projectID)
+        if review.isApplied {
+            appState.updateDraftText(review.originalDraft, for: review.projectID)
+        }
         pendingDraftPolishReview = nil
         pendingDraftPolishReviewAnchorPoint = nil
         draftSelection = review.restoredSelection
         saveMessage = "已舍弃本次润色"
-        aiStatusMessage = "已恢复到润色前的草稿。"
+        aiStatusMessage = review.isApplied ? "已恢复到润色前的草稿。" : "已关闭未写入正文的润色结果。"
         focusDraftEditor()
     }
 
@@ -2351,6 +3092,49 @@ struct WritingDeskView: View {
             text: replacement
         )
         return updatedDraft
+    }
+
+    private func draftReplacingSelection(
+        _ replacement: String,
+        selection: WritingDeskDraftSelection,
+        in draft: String
+    ) -> String? {
+        guard let range = Range(selection.range, in: draft) else {
+            return nil
+        }
+
+        var updatedDraft = draft
+        updatedDraft.replaceSubrange(range, with: replacement)
+        return updatedDraft
+    }
+
+    private func longformDraftPolishBlockingMessage(polishedDraft: String, project: NovelProject) -> String? {
+        guard project.storyLength.supportsVolumePlanning else { return nil }
+
+        var projectedProject = project
+        projectedProject.draftText = polishedDraft
+        let contract = LongformStorySystem.buildRuntimeContract(for: projectedProject)
+        let missedNodes = LongformStorySystem.missingMandatoryNodes(
+            for: projectedProject,
+            additionalText: "",
+            contract: contract
+        )
+        if !missedNodes.isEmpty {
+            return "长篇润色结果未写入正文：它漏掉当前章合同节点：\(missedNodes.prefix(2).joined(separator: "；"))。可复制结果手动摘用，或先补齐节点后再保存。"
+        }
+
+        let localPatterns = ChapterQualityReviewer.quickAIFlavorCheck(text: polishedDraft)
+        let severePatterns = localPatterns.filter {
+            $0.contains("连续") || $0.contains("模板表达") || $0.contains("情绪标签化")
+        }
+        if !severePatterns.isEmpty || localPatterns.count >= 3 {
+            let reason = (severePatterns.isEmpty ? localPatterns : severePatterns)
+                .prefix(2)
+                .joined(separator: "；")
+            return "长篇润色结果未写入正文：检测到明显 AI 味风险：\(reason)。可复制结果手动摘用，或换更具体的润色要求重试。"
+        }
+
+        return nil
     }
 
     private func normalizedSelectionPolishResult(_ rawText: String) -> String {
@@ -2510,6 +3294,12 @@ private enum WritingDeskScrollAnchor: String {
     case cache
 }
 
+private struct WritingDeskSessionKey: Hashable {
+    let projectID: NovelProject.ID
+    let volumeNumber: Int
+    let chapterNumber: Int
+}
+
 private struct OutlineGenerationRequestContext: Equatable {
     let projectID: NovelProject.ID
     let storyLength: NovelLength
@@ -2520,6 +3310,7 @@ private struct OutlineGenerationRequestContext: Equatable {
 private struct DraftGenerationRequestContext: Equatable {
     let projectID: NovelProject.ID
     let storyLength: NovelLength
+    let currentVolumeNumber: Int
     let currentChapterTitle: String
     let currentChapterNumber: Int
     let chapterFocus: String
@@ -2531,10 +3322,56 @@ private struct DraftGenerationRequestContext: Equatable {
     let continuityNotes: String
     let referenceDocuments: [ReferenceDocument]
     let chapterDrafts: [ChapterDraft]
+    let enhancedMemoryContext: String
+    let longformStorySystemContext: String
     let mode: AIWritingMode
     let length: AIWritingLength
     let rewriteDirection: AIRewriteDirection
     let rejectedSuggestion: String
+}
+
+private struct AISuggestionAcceptanceContext: Equatable {
+    let projectID: NovelProject.ID
+    let storyLength: NovelLength
+    let currentVolumeNumber: Int
+    let currentChapterTitle: String
+    let currentChapterNumber: Int
+    let chapterFocus: String
+    let draftText: String
+    let outlineText: String
+    let referenceContextText: String
+    let specialRequirements: String
+    let wordTargetText: String
+    let continuityNotes: String
+    let referenceDocuments: [ReferenceDocument]
+    let chapterDrafts: [ChapterDraft]
+    let enhancedMemoryContext: String
+    let longformStorySystemContext: String
+    let mode: AIWritingMode
+    let length: AIWritingLength
+}
+
+private struct ChapterSaveValidationContext: Equatable {
+    let projectID: NovelProject.ID
+    let storyLength: NovelLength
+    let currentVolumeNumber: Int
+    let currentChapterNumber: Int
+    let currentChapterTitle: String
+    let chapterFocus: String
+    let draftText: String
+    let outlineText: String
+    let structureNotes: String
+    let sceneProgressNotes: String
+    let characterArcNotes: String
+    let foreshadowNotes: String
+    let volumePlanNotes: String
+    let activeThreadsNotes: String
+    let continuityNotes: String
+    let referenceContextText: String
+    let specialRequirements: String
+    let wordTargetText: String
+    let enhancedMemoryContext: String
+    let longformStorySystemContext: String
 }
 
 private struct WritingDeskChapterNavigator: View {
@@ -2771,6 +3608,8 @@ private struct DraftPolishReview: Identifiable {
     let polishedDraft: String
     let polishedText: String
     let restoredSelection: WritingDeskDraftSelection
+    let isApplied: Bool
+    let blockingMessage: String?
 
     var changedCharacterCount: Int {
         abs(polishedDraft.count - originalDraft.count)
@@ -3076,7 +3915,7 @@ private struct DraftPolishResultPanel: View {
                     .background(Circle().fill(palette.toolbarButtonFill))
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(review.mode.reviewTitle)
+                    Text(review.blockingMessage == nil ? review.mode.reviewTitle : "润色结果未写入正文")
                         .font(.headline.weight(.semibold))
 
                     Text(review.changedCharacterCount == 0 ? "请确认如何处理这次润色。" : "字数变化约 \(review.changedCharacterCount) 字")
@@ -3085,6 +3924,14 @@ private struct DraftPolishResultPanel: View {
                 }
 
                 Spacer()
+            }
+
+            if let blockingMessage = review.blockingMessage {
+                Label(blockingMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.red)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             ScrollView {
@@ -3112,12 +3959,14 @@ private struct DraftPolishResultPanel: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(palette.activeAccent)
+                .disabled(review.blockingMessage != nil)
                 .accessibilityHint("保留当前已写入草稿的润色结果")
 
                 Button(action: onReplace) {
                     Label("替换", systemImage: "arrow.triangle.2.circlepath")
                 }
                 .buttonStyle(.bordered)
+                .disabled(review.blockingMessage != nil)
                 .accessibilityHint("重新将正文替换为这次润色结果")
 
                 Button(action: onDiscard) {
@@ -3351,17 +4200,27 @@ private struct StrandRatioBar: View {
 
 private struct ChapterQualityReviewPanel: View {
     let review: ChapterReviewResult
+    let minimumAcceptedScore: Int
+
+    private var isAccepted: Bool {
+        review.passes(minimumScore: minimumAcceptedScore)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("质量审查", systemImage: review.hasBlockingIssues ? "exclamationmark.triangle.fill" : "checkmark.seal.fill")
+                Label("质量审查", systemImage: isAccepted ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
                     .font(.subheadline.weight(.semibold))
 
                 Spacer()
 
-                Text("\(review.overallScore)/100")
-                    .font(.headline.monospacedDigit())
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("\(review.overallScore)/100")
+                        .font(.headline.monospacedDigit())
+                    Text("最低 \(minimumAcceptedScore)")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(isAccepted ? Color.secondary : Color.red)
+                }
             }
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 128), spacing: 8)], alignment: .leading, spacing: 8) {

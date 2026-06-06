@@ -5,6 +5,40 @@ struct ProjectExportSummary {
     let fileCount: Int
 }
 
+struct ProjectExportValidationReport {
+    let directoryURL: URL
+    let project: NovelProject
+    let manifestFileCount: Int
+    let missingFiles: [String]
+    let invalidFiles: [String]
+
+    var isValid: Bool {
+        missingFiles.isEmpty && invalidFiles.isEmpty
+    }
+}
+
+enum ProjectExportError: LocalizedError {
+    case missingManifest(URL)
+    case unreadableProjectJSON(URL)
+    case invalidManifest(URL)
+    case invalidExport(URL, missingFiles: [String], invalidFiles: [String])
+
+    var errorDescription: String? {
+        switch self {
+        case let .missingManifest(url):
+            return "没有找到导出清单：\(url.path)"
+        case let .unreadableProjectJSON(url):
+            return "无法读取项目备份文件：\(url.path)"
+        case let .invalidManifest(url):
+            return "导出清单不可解析：\(url.path)"
+        case let .invalidExport(_, missingFiles, invalidFiles):
+            let missing = missingFiles.isEmpty ? "" : "缺少文件：\(missingFiles.prefix(3).joined(separator: "、"))。"
+            let invalid = invalidFiles.isEmpty ? "" : "文件格式异常：\(invalidFiles.prefix(3).joined(separator: "、"))。"
+            return "导出备份不完整。\(missing)\(invalid)"
+        }
+    }
+}
+
 enum ProjectExportService {
     private struct Manifest: Codable {
         var title: String
@@ -85,20 +119,86 @@ enum ProjectExportService {
         return ProjectExportSummary(directoryURL: directoryURL, fileCount: files.count + 1)
     }
 
+    static func validateExport(at directoryURL: URL) throws -> ProjectExportValidationReport {
+        let fileManager = FileManager.default
+        let manifestURL = directoryURL.appendingPathComponent("manifest.json", isDirectory: false)
+        guard fileManager.fileExists(atPath: manifestURL.path) else {
+            throw ProjectExportError.missingManifest(manifestURL)
+        }
+
+        let decoder = JSONDecoder()
+        guard let manifestData = try? Data(contentsOf: manifestURL),
+              let manifest = try? decoder.decode(Manifest.self, from: manifestData)
+        else {
+            throw ProjectExportError.invalidManifest(manifestURL)
+        }
+
+        let projectURL = directoryURL.appendingPathComponent("project.json", isDirectory: false)
+        guard let projectData = try? Data(contentsOf: projectURL),
+              let project = try? decoder.decode(NovelProject.self, from: projectData)
+        else {
+            throw ProjectExportError.unreadableProjectJSON(projectURL)
+        }
+
+        let listedFiles = Set(manifest.files + ["manifest.json"])
+        let missingFiles = listedFiles
+            .filter { relativePath in
+                !fileManager.fileExists(atPath: directoryURL.appendingPathComponent(relativePath).path)
+            }
+            .sorted()
+
+        let invalidFiles = listedFiles
+            .filter { relativePath in
+                let url = directoryURL.appendingPathComponent(relativePath)
+                guard fileManager.fileExists(atPath: url.path) else { return false }
+                return !isValidExportFile(relativePath: relativePath, url: url)
+            }
+            .sorted()
+
+        let report = ProjectExportValidationReport(
+            directoryURL: directoryURL,
+            project: project,
+            manifestFileCount: listedFiles.count,
+            missingFiles: missingFiles,
+            invalidFiles: invalidFiles
+        )
+
+        guard report.isValid else {
+            throw ProjectExportError.invalidExport(
+                directoryURL,
+                missingFiles: missingFiles,
+                invalidFiles: invalidFiles
+            )
+        }
+
+        return report
+    }
+
+    static func importProject(from directoryURL: URL) throws -> NovelProject {
+        try validateExport(at: directoryURL).project
+    }
+
     private static func orderedChapters(for project: NovelProject) -> [ChapterDraft] {
         project.chapterDrafts.sorted {
-            if $0.chapterNumber == $1.chapterNumber {
+            if $0.volumeNumber != $1.volumeNumber {
+                return $0.volumeNumber < $1.volumeNumber
+            }
+            if $0.chapterNumber != $1.chapterNumber {
+                return $0.chapterNumber < $1.chapterNumber
+            }
+            if $0.savedAtDate != $1.savedAtDate {
                 return $0.savedAtDate < $1.savedAtDate
             }
-            return $0.chapterNumber < $1.chapterNumber
+            return $0.id < $1.id
         }
     }
 
     private static func chapterFileName(for chapter: ChapterDraft, index: Int) -> String {
         let title = sanitizedFileComponent(chapter.chapterTitle)
         return String(
-            format: "%04d-ch%04d-%@.md",
+            format: "%04d-v%04d-ch%04d-%@.md",
             index + 1,
+            chapter.volumeNumber,
             chapter.chapterNumber,
             title.isEmpty ? "chapter" : title
         )
@@ -128,6 +228,29 @@ enum ProjectExportService {
             }
             .joined()
             .trimmingCharacters(in: CharacterSet(charactersIn: "-_ "))
+    }
+
+    private static func isValidExportFile(relativePath: String, url: URL) -> Bool {
+        switch url.pathExtension.lowercased() {
+        case "json":
+            guard let data = try? Data(contentsOf: url) else { return false }
+            return (try? JSONSerialization.jsonObject(with: data)) != nil
+        case "md":
+            return (try? String(contentsOf: url, encoding: .utf8)) != nil
+        case "docx", "epub":
+            return hasZipHeader(url)
+        default:
+            return true
+        }
+    }
+
+    private static func hasZipHeader(_ url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        let signature = handle.readData(ofLength: 4)
+        return signature == Data([0x50, 0x4b, 0x03, 0x04])
+            || signature == Data([0x50, 0x4b, 0x05, 0x06])
+            || signature == Data([0x50, 0x4b, 0x07, 0x08])
     }
 }
 

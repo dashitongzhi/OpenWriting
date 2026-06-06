@@ -589,7 +589,10 @@ enum AIWritingService {
 
         private static func relevantChapterExcerpts(for project: NovelProject, queryTerms: [String], keywords: [String]) -> [String] {
             let filteredChapters = project.chapterDrafts
-                .filter { $0.chapterNumber != project.currentChapterNumber }
+                .filter {
+                    $0.volumeNumber != project.currentVolumeNumber
+                        || $0.chapterNumber != project.currentChapterNumber
+                }
             guard !filteredChapters.isEmpty else { return [] }
 
             let chapterTexts = filteredChapters.map { $0.content + "\n" + $0.chapterSummary }
@@ -603,6 +606,9 @@ enum AIWritingService {
                 .filter { _, score in score > 0 }
                 .sorted { lhs, rhs in
                     if lhs.1 == rhs.1 {
+                        if lhs.0.volumeNumber != rhs.0.volumeNumber {
+                            return lhs.0.volumeNumber > rhs.0.volumeNumber
+                        }
                         return lhs.0.chapterNumber > rhs.0.chapterNumber
                     }
                     return lhs.1 > rhs.1
@@ -720,25 +726,6 @@ enum AIWritingService {
         )
     }
 
-    // MARK: - Genre Template Aware Writing
-
-    /// 带题材模板上下文的续写
-    static func continueChapterWithGenreTemplate(
-        project: NovelProject,
-        template: GenreTemplate?,
-        memoryManager: MemoryManager?,
-        configuration: AIConnectionConfiguration,
-        progressHandler: @escaping (String) -> Void
-    ) async throws -> String {
-        // 使用标准续写（增强上下文通过 project 的已有字段注入）
-        return try await continueChapter(
-            configuration: configuration,
-            project: project,
-            mode: project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .advanceChapter : .continueScene,
-            additionalInstruction: template.map { AIWritingService.genreTemplateContext($0) } ?? "",
-            length: .medium
-        )
-    }
 }
 
 // MARK: - Prompts moved to AIWritingService+Prompts.swift

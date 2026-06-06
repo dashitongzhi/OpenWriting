@@ -30,6 +30,7 @@ extension AIWritingService {
                 text: "",
                 validation: validation,
                 review: nil,
+                minimumAcceptedScore: LongformStorySystem.minimumAcceptedScore(for: project.storyLength),
                 strandWarning: nil,
                 memoryUpdate: nil
             )
@@ -84,7 +85,7 @@ extension AIWritingService {
             maxTokens: length.maxTokens + 500
         )
 
-        let finalText: String
+        var finalText: String
         if revisedDraft.count >= length.minimumAcceptableCount {
             finalText = revisedDraft
         } else {
@@ -111,35 +112,41 @@ extension AIWritingService {
         // Step 4: Post-write quality review (if enabled)
         var reviewResult: ChapterReviewResult? = nil
         if enableReview {
-            // Quick local AI-flavor check first
-            let localPatterns = ChapterQualityReviewer.quickAIFlavorCheck(text: finalText)
-
-            // Full AI review
-            let reviewPrompt = ChapterQualityReviewer.reviewUserPrompt(
+            reviewResult = try await reviewCandidate(
+                finalText,
                 project: project,
-                chapterDraft: finalText,
-                memoryContext: support.enhancedMemoryContext
+                support: support,
+                configuration: configuration
             )
-            let reviewResponse = try await completeEnhancedText(
-                configuration: configuration,
-                systemPrompt: ChapterQualityReviewer.reviewSystemPrompt,
-                userPrompt: reviewPrompt,
-                temperature: 0.3,
-                maxTokens: 2_000
-            )
-            reviewResult = ChapterQualityReviewer.parseReviewResult(from: reviewResponse)
 
-            // Merge local anti-patterns
-            if !localPatterns.isEmpty, var review = reviewResult {
-                review = ChapterReviewResult(
-                    overallScore: review.overallScore,
-                    dimensionScores: review.dimensionScores,
-                    issues: review.issues,
-                    hasBlockingIssues: review.hasBlockingIssues,
-                    antiPatterns: review.antiPatterns + localPatterns,
-                    overallSummary: review.overallSummary
+            if let review = reviewResult,
+               shouldRepairCandidate(review: review, project: project) {
+                let repairedDraft = try await completeEnhancedText(
+                    configuration: configuration,
+                    systemPrompt: writingReviewRepairSystemPrompt,
+                    userPrompt: writingReviewRepairUserPrompt(
+                        project: project,
+                        mode: mode,
+                        additionalInstruction: additionalInstruction,
+                        length: length,
+                        support: AIWritingService.WritingSupportContext(project: project),
+                        writingPlan: plan,
+                        draft: finalText,
+                        review: review
+                    ),
+                    temperature: 0.32,
+                    maxTokens: length.maxTokens + 700
                 )
-                reviewResult = review
+                let normalizedRepair = repairedDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                if normalizedRepair.count >= length.minimumAcceptableCount {
+                    finalText = normalizedRepair
+                    reviewResult = try await reviewCandidate(
+                        finalText,
+                        project: project,
+                        support: support,
+                        configuration: configuration
+                    )
+                }
             }
         }
 
@@ -147,12 +154,17 @@ extension AIWritingService {
         let strandType = analyzeStrandType(text: finalText, project: project)
         var strandState = project.strandWeaveState
         let warnings = strandState.checkRedLines(currentChapter: project.currentChapterNumber)
-        strandState.recordChapter(project.currentChapterNumber, dominant: strandType)
+        strandState.recordChapter(
+            project.currentChapterNumber,
+            volumeNumber: project.currentVolumeNumber,
+            dominant: strandType
+        )
 
         return EnhancedWritingResult(
             text: finalText,
             validation: validation,
             review: reviewResult,
+            minimumAcceptedScore: LongformStorySystem.minimumAcceptedScore(for: project.storyLength),
             strandWarning: warnings.first,
             memoryUpdate: MemoryUpdateContext(
                 strandState: strandState,
@@ -216,8 +228,7 @@ extension AIWritingService {
             project.draftContinuationCache,
             fallback: "暂无上一章节结尾缓存，请依据当前章节目标稳妥起笔。"
         )
-        let recentChapterSummaries = project.sortedChapterDrafts
-            .filter { $0.chapterNumber < project.currentChapterNumber }
+        let recentChapterSummaries = project.previousChapterDraftsForContinuation
             .prefix(3)
             .map(\.chapterSummary)
             .joined(separator: "、")
@@ -314,6 +325,9 @@ extension AIWritingService {
 
         本次续写拍点：
         \(normalized(writingPlan, fallback: "请先承接当前草稿，再推进一个明确的新情节拍点。"))
+
+        长篇后台执行合同（固定高优先级，必须先于普通参考文本执行）：
+        \(writingExecutionContractPrompt(project: project))
         """
 
         // Append ranked context sections
@@ -387,6 +401,9 @@ extension AIWritingService {
         后台长篇合同：
         \(support.longformStorySystemContext)
 
+        本章执行验收：
+        \(writingExecutionContractPrompt(project: project))
+
         章节树关键约束：
         \(support.chapterTreeFocus)
 
@@ -435,6 +452,45 @@ extension AIWritingService {
             return .constellation
         }
         return .quest
+    }
+
+    private static func reviewCandidate(
+        _ text: String,
+        project: NovelProject,
+        support: EnhancedWritingSupport,
+        configuration: AIConnectionConfiguration
+    ) async throws -> ChapterReviewResult {
+        let localPatterns = ChapterQualityReviewer.quickAIFlavorCheck(text: text)
+        let reviewPrompt = ChapterQualityReviewer.reviewUserPrompt(
+            project: project,
+            chapterDraft: text,
+            memoryContext: support.enhancedMemoryContext
+        )
+        let reviewResponse = try await completeEnhancedText(
+            configuration: configuration,
+            systemPrompt: ChapterQualityReviewer.reviewSystemPrompt,
+            userPrompt: reviewPrompt,
+            temperature: 0.3,
+            maxTokens: 2_000
+        )
+        let review = ChapterQualityReviewer.parseReviewResult(from: reviewResponse)
+        return ChapterQualityReviewer.mergeLocalAntiPatterns(
+            into: review,
+            localPatterns: localPatterns
+        )
+    }
+
+    private static func shouldRepairCandidate(
+        review: ChapterReviewResult,
+        project: NovelProject
+    ) -> Bool {
+        let minimumScore = LongformStorySystem
+            .buildRuntimeContract(for: project)
+            .review
+            .minimumAcceptedScore
+        return review.hasBlockingIssues
+            || review.overallScore < minimumScore
+            || review.nonBlockingIssues.contains { $0.severity == .high }
     }
 
     private static func completeEnhancedText(
@@ -549,11 +605,12 @@ struct EnhancedWritingResult {
     let text: String
     let validation: PrewriteValidationResult
     let review: ChapterReviewResult?
+    let minimumAcceptedScore: Int
     let strandWarning: StrandWeaveState.PacingWarning?
     let memoryUpdate: MemoryUpdateContext?
 
     var isSuccessful: Bool {
-        !text.isEmpty && validation.isReady && !(review?.hasBlockingIssues ?? false)
+        !text.isEmpty && validation.isReady && (review?.passes(minimumScore: minimumAcceptedScore) ?? true)
     }
 
     var summary: String {
@@ -568,6 +625,13 @@ struct EnhancedWritingResult {
 
         if let review {
             lines.append(review.summary)
+            if review.passes(minimumScore: minimumAcceptedScore) {
+                lines.append("✅ 已达到当前规模最低审查线 \(minimumAcceptedScore)/100")
+            } else if review.hasBlockingIssues {
+                lines.append("⛔ 存在阻断问题，当前候选稿不能直接进入长篇正文链。")
+            } else {
+                lines.append("⛔ 审查分数低于当前规模最低线 \(minimumAcceptedScore)/100，请先重写或修订。")
+            }
         }
 
         if let warning = strandWarning {

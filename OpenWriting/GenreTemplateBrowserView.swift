@@ -126,7 +126,16 @@ struct GenreTemplateBrowserView: View {
 
     private func categoryRow(_ category: GenreCategory) -> some View {
         let isSelected = selectedCategory == category
-        let count = GenreTemplateLibrary.allTemplates.filter { $0.category == category }.count
+        // Count templates in this category that match the current search text,
+        // so the sidebar reflects what the user can actually see.
+        let q = searchText.lowercased()
+        let count = GenreTemplateLibrary.allTemplates.filter { template in
+            guard template.category == category else { return false }
+            if q.isEmpty { return true }
+            return template.name.lowercased().contains(q)
+                || template.description.lowercased().contains(q)
+                || template.coreSellingPoint.lowercased().contains(q)
+        }.count
 
         return Button {
             withAnimation(.easeInOut(duration: 0.2)) {
@@ -719,6 +728,7 @@ fileprivate struct FlowLayout: Layout {
 struct GenreTemplatePickerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selectedTemplateID: String?
+    @State private var hasInitialized = false
 
     let currentTemplateID: String?
     let onSelect: (String) -> Void
@@ -727,12 +737,16 @@ struct GenreTemplatePickerSheet: View {
         GenreTemplateBrowserView(selectedTemplateID: $selectedTemplateID)
             .frame(minWidth: 860, minHeight: 560)
             .onAppear {
-                selectedTemplateID = currentTemplateID
+                // Seed with the current template once, and only once, so the
+                // initial assignment doesn't fire onSelect().
+                if !hasInitialized {
+                    hasInitialized = true
+                    selectedTemplateID = currentTemplateID
+                }
             }
             .onChange(of: selectedTemplateID) { _, newValue in
-                if let id = newValue {
-                    onSelect(id)
-                }
+                guard hasInitialized, let id = newValue else { return }
+                onSelect(id)
             }
     }
 }

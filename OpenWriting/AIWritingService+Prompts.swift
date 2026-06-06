@@ -30,6 +30,7 @@ extension AIWritingService {
     2. 每条都要具体说明：承接哪里、推进什么、人物状态有什么变化或信息增量。
     3. 不要改写用户草稿，不要跳过当前场景，不要提前揭示长期真相。
     4. 如果草稿箱已有正文，必须把草稿最后状态作为本次续写的直接起点。
+    5. 如果提供了后台长篇合同，拍点必须逐条覆盖“本章必须执行”和“后台健康诊断”的修复方向。
     """
 
     static let writingRevisionSystemPrompt = """
@@ -40,6 +41,18 @@ extension AIWritingService {
     2. 修正重复上一章、复述设定、偏离本章目标、突然跳时间线、口吻不连续和结尾悬空的问题。
     3. 如果候选正文已经合格，只做极轻微润色，保留原有内容和段落顺序。
     4. 不要新增与上下文无依据的新人物、新设定或重大反转。
+    5. 如果提供了本章执行验收，必须优先补齐漏掉的必须节点、修复后台健康阻断项，再做文字润色。
+    """
+
+    static let writingReviewRepairSystemPrompt = """
+    你是一位中文长篇小说的质量返修编辑。
+    你的任务是根据质量审查反馈，修复候选正文中的阻断问题和高优先级问题。
+    必须遵守：
+    1. 只输出返修后的完整候选正文，不要解释，不要列检查项。
+    2. 优先修复审查反馈里的 critical 和 high 问题，再处理 AI 味、承接、节奏和追读力。
+    3. 不要重写草稿箱已有正文，不要重新开头，不要跳到下一章。
+    4. 保留候选正文中已经合格的情节推进、人物状态和信息增量。
+    5. 如果修复需要补写内容，必须围绕本章目标和后台合同补，不得新增无依据的新设定或大反转。
     """
 
     static let writingSupplementSystemPrompt = """
@@ -49,6 +62,7 @@ extension AIWritingService {
     1. 只输出可以直接接在候选正文后面的新增正文。
     2. 不要重写或复述候选正文，不要重新开头，不要加标题。
     3. 继续推进同一场景的动作、对白、信息增量或情绪变化，避免跳章节。
+    4. 如果候选正文尚未覆盖本章必须节点，补稿优先补节点，不要只补氛围或解释。
     """
 
     static let chapterTreeRefreshSystemPrompt = """
@@ -65,7 +79,8 @@ extension AIWritingService {
     伏笔与回收记录：
     4. 每个小节写 2 到 6 条以“- ”开头的短句，尽量具体，不写空泛议论。
     5. 结论要服务于连续创作：短篇强调闭环，中篇强调阶段推进，长篇强调分卷延展、长期伏笔和人物长期状态。
-    6. 只输出这 5 个小节，不要解释，不要补充额外标题。
+    6. 长篇模式下，每条记录都要能指导后续正文创作：写清“发生了什么、状态变成什么、后续需要承接什么”。
+    7. 只输出这 5 个小节，不要解释，不要补充额外标题。
     """
 
     static let globalMemorySystemPrompt = """
@@ -147,8 +162,7 @@ extension AIWritingService {
             project.draftContinuationCache,
             fallback: "暂无上一章节结尾缓存，请依据当前章节目标稳妥起笔。"
         )
-        let recentChapterSummaries = project.sortedChapterDrafts
-            .filter { $0.chapterNumber < project.currentChapterNumber }
+        let recentChapterSummaries = project.previousChapterDraftsForContinuation
             .prefix(3)
             .map(\.chapterSummary)
             .joined(separator: "、")
@@ -210,6 +224,9 @@ extension AIWritingService {
 
         章节树关键约束（优先提取本章必须推进、不能提前揭示、待回收伏笔）：
         \(support.chapterTreeFocus)
+
+        长篇后台执行合同（优先级高于普通参考文本）：
+        \(writingExecutionContractPrompt(project: project))
 
         风格指纹：
         \(support.styleFingerprint)
@@ -285,6 +302,9 @@ extension AIWritingService {
         章节树关键约束：
         \(support.chapterTreeFocus)
 
+        长篇后台执行合同：
+        \(writingExecutionContractPrompt(project: project))
+
         作品大纲：
         \(bounded(project.outlineText, fallback: "暂无完整大纲。", limit: 2_200))
 
@@ -336,6 +356,9 @@ extension AIWritingService {
         章节树关键约束：
         \(support.chapterTreeFocus)
 
+        本章执行验收：
+        \(writingExecutionContractPrompt(project: project))
+
         风格指纹：
         \(support.styleFingerprint)
 
@@ -353,6 +376,54 @@ extension AIWritingService {
         2. 如果没有推进本章目标，请补足一个明确的信息增量、关系变化或冲突进展。
         3. 如果和草稿箱内容衔接不顺，请修顺第一段。
         4. 只输出修订后的完整候选正文。
+        """
+    }
+
+    static func writingReviewRepairUserPrompt(
+        project: NovelProject,
+        mode: AIWritingMode,
+        additionalInstruction: String,
+        length: AIWritingLength,
+        support: WritingSupportContext,
+        writingPlan: String,
+        draft: String,
+        review: ChapterReviewResult
+    ) -> String {
+        """
+        当前章节：\(project.currentChapterSummary)
+        本章目标：\(project.chapterFocus)
+        写作模式：\(mode.title)
+        字数目标：\(length.instruction)
+
+        草稿箱当前正文（返修后的候选正文仍应接在它后面）：
+        \(support.currentDraftExcerpt)
+
+        本次续写拍点：
+        \(normalized(writingPlan, fallback: "请至少推进一个新的情节增量。"))
+
+        本章执行验收：
+        \(writingExecutionContractPrompt(project: project))
+
+        风格指纹：
+        \(support.styleFingerprint)
+
+        题材配置：
+        \(GenreTemplateLibrary.autoDetect(from: project.genre).formattedForPrompt)
+
+        额外指令：
+        \(normalized(additionalInstruction, fallback: "暂无额外指令。"))
+
+        质量审查反馈（必须逐条修复 critical/high 问题）：
+        \(reviewRepairFeedback(review))
+
+        待返修候选正文：
+        \(draft)
+
+        返修要求：
+        1. 修掉审查反馈里的阻断和高优先级问题，不要只改几个词。
+        2. 保持候选正文整体篇幅和章节推进，必要时补写关键动作、对白、证据链或章末钩子。
+        3. 返修后仍必须自然接在草稿箱最后状态之后。
+        4. 只输出返修后的完整候选正文。
         """
     }
 
@@ -374,6 +445,9 @@ extension AIWritingService {
 
         本次续写拍点：
         \(normalized(writingPlan, fallback: "请继续推进当前场景。"))
+
+        本章执行验收：
+        \(writingExecutionContractPrompt(project: project))
 
         已有候选正文（不要重复）：
         \(draft)
@@ -444,6 +518,13 @@ extension AIWritingService {
                 "参考《\(document.title)》：\n\(excerpt(from: document.content, limit: 900))"
             }
             .joined(separator: "\n\n")
+        let reviewContext = chapterTreeReviewContext(project.lastReviewResult)
+        let health = project.longformRuntimeHealth
+        let healthContext = health.issues
+            .filter { $0.title != "长篇合同尚未落盘" }
+            .prefix(4)
+            .map { "- [\($0.status.displayName)] \($0.title)：\($0.detail)\n  修复方向：\($0.repairHint)" }
+            .joined(separator: "\n")
 
         return """
         项目名称：\(project.title)
@@ -481,6 +562,20 @@ extension AIWritingService {
         全局记忆：
         \(bounded(project.continuityNotes, fallback: "暂无全局记忆。", limit: 2_400))
 
+        结构化长期记忆（以此判断人物、关系、设定和伏笔的当前真实状态）：
+        \(bounded(project.enhancedMemoryContext, fallback: "暂无结构化长期记忆。", limit: 2_400))
+
+        长篇后台合同与本章执行要求：
+        \(bounded(project.longformStorySystemContext, fallback: "暂无长篇后台合同。", limit: 3_600))
+
+        后台健康诊断：
+        状态：\(health.summary)
+        下一步：\(health.nextAction)
+        \(normalized(healthContext, fallback: "- 暂无额外健康问题。"))
+
+        最新质量审查：
+        \(reviewContext)
+
         最新保存章节正文：
         \(normalized(excerpt(from: chapterDraft.content, limit: 3_600), fallback: "正文还较短，请重点根据大纲和本章目标判断结构。"))
 
@@ -489,11 +584,12 @@ extension AIWritingService {
 
         输出要求：
         请根据这次章节保存后最新形成的状态，刷新章节树工作区。
-        章节树总结要概括当前结构位置、推进成效与下一步整理方向。
-        章节骨架拆解要写清卷章承接、当前章节功能和上下文接力关系。
-        场景推进记录要按场景拍点概括"发生了什么、推进了什么"。
-        角色弧线记录要突出人物欲望变化、关系变化、立场变化或心理转折。
-        伏笔与回收记录要区分"新增""推进""待回收"。
+        章节树总结要概括当前结构位置、推进成效、后台健康风险与下一章整理方向。
+        章节骨架拆解要写清卷章承接、当前章节功能、已覆盖节点、未完成或下一章要接的节点。
+        场景推进记录要按场景拍点概括“发生了什么、推进了什么、场景结束时状态是什么”。
+        角色弧线记录要突出人物欲望变化、关系变化、立场变化、伤势/身份/能力等当前最新状态。
+        伏笔与回收记录要区分“新增”“推进”“已回收”“待回收”，并写清后续兑现方向。
+        如果最新质量审查或后台健康诊断指出问题，章节树中必须记录对应修复方向，避免后续章节绕开问题。
         结论要符合当前创作规模：\(project.storyLength.outlineDirective)
         """
     }
@@ -633,6 +729,101 @@ extension AIWritingService {
 
     // MARK: - Prompt Helpers
 
+    static func writingExecutionContractPrompt(project: NovelProject) -> String {
+        let contractContext = bounded(
+            project.longformStorySystemContext,
+            fallback: "暂无后台长篇合同，请至少依据本章目标、草稿箱最后状态和章节树约束推进。",
+            limit: project.storyLength.supportsVolumePlanning ? 5_600 : 2_800
+        )
+        let health = project.longformRuntimeHealth
+        let issueLines = health.issues
+            .filter { $0.title != "长篇合同尚未落盘" }
+            .prefix(4)
+            .map { "- [\($0.status.displayName)] \($0.title)：\($0.detail)\n  修复方向：\($0.repairHint)" }
+            .joined(separator: "\n")
+        let healthText = issueLines.isEmpty
+            ? "- 后台健康诊断暂无额外阻断项。"
+            : issueLines
+        let qualityTrend = project.longformQualityTrend
+        let qualityTrendText = qualityTrend.hasSignals
+            ? qualityTrend.formattedForPrompt
+            : "- 暂无跨章节质量趋势。"
+
+        return """
+        执行优先级：
+        - 先承接草稿箱最后一句和当前场景状态。
+        - 再逐条落实后台合同里的“本章必须执行”。
+        - 如果存在后台健康诊断阻断项，本次正文必须优先修复当前章可修复部分，不要绕到下一章。
+        - 如果近期质量趋势显示反复失分或 AI 味反模式，本次正文必须在生成阶段主动避开。
+        - 输出前自检：是否推进了本章目标、是否覆盖必须节点、是否没有违背禁区与风险。
+
+        后台合同正文：
+        \(contractContext)
+
+        后台健康状态：\(health.summary)
+        下一步：\(health.nextAction)
+        \(healthText)
+
+        近期质量趋势：
+        \(qualityTrendText)
+        """
+    }
+
+    private static func reviewRepairFeedback(_ review: ChapterReviewResult) -> String {
+        var lines: [String] = []
+        let summary = review.overallSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+        lines.append(summary.isEmpty ? "- 审查分数：\(review.overallScore)/100。" : "- 审查分数：\(review.overallScore)/100。\(summary)")
+
+        let priorityIssues = (review.blockingIssues + review.nonBlockingIssues.filter { $0.severity == .high })
+            .prefix(8)
+        for issue in priorityIssues {
+            let fixHint = issue.fixHint.trimmingCharacters(in: .whitespacesAndNewlines)
+            let evidence = issue.evidence.trimmingCharacters(in: .whitespacesAndNewlines)
+            var issueLine = "- [\(issue.severity.displayName)] \(issue.dimension.displayName)：\(issue.description)"
+            if !fixHint.isEmpty {
+                issueLine += "；修复：\(fixHint)"
+            }
+            if !evidence.isEmpty {
+                issueLine += "；证据：\(excerpt(from: evidence, limit: 140))"
+            }
+            lines.append(issueLine)
+        }
+
+        if !review.antiPatterns.isEmpty {
+            lines.append("- 避免 AI 味反模式：\(review.antiPatterns.prefix(4).joined(separator: "；"))")
+        }
+
+        if lines.count == 1 {
+            lines.append("- 没有明确 critical/high 条目，但返修仍要提升承接、推进、对白自然度和追读力。")
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    private static func chapterTreeReviewContext(_ review: ChapterReviewResult?) -> String {
+        guard let review else {
+            return "暂无最新质量审查。"
+        }
+
+        var lines: [String] = []
+        let summary = review.overallSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+        lines.append(summary.isEmpty ? "- 审查分数：\(review.overallScore)/100。" : "- 审查分数：\(review.overallScore)/100。\(summary)")
+
+        let priorityIssues = (review.blockingIssues + review.nonBlockingIssues.filter { $0.severity == .high })
+            .prefix(5)
+        for issue in priorityIssues {
+            let fixHint = issue.fixHint.trimmingCharacters(in: .whitespacesAndNewlines)
+            let detail = fixHint.isEmpty ? issue.description : "\(issue.description)；修复：\(fixHint)"
+            lines.append("- [\(issue.severity.displayName)] \(issue.dimension.displayName)：\(detail)")
+        }
+
+        if !review.antiPatterns.isEmpty {
+            lines.append("- AI味反模式：\(review.antiPatterns.prefix(3).joined(separator: "；"))")
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
     static func excerpt(from text: String, limit: Int) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count > limit else { return trimmed }
@@ -719,17 +910,6 @@ extension AIWritingService {
         
         3. **发明需识别** — 如果需要引入新角色、新设定、新地点，必须在正文后单独标注，格式：
         [新实体] 类型: xxx | 名称: xxx | 描述: xxx
-        """
-    }
-
-    /// 全局记忆上下文注入
-    static func memoryContext(memoryManager: MemoryManager) -> String {
-        let text = memoryManager.exportAsText()
-        if text.isEmpty { return "" }
-        return """
-        ## 全局记忆（长期语义事实）
-        
-        \(text)
         """
     }
 }

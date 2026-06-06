@@ -156,6 +156,11 @@ extension NovelProject {
 
     // MARK: - Enhanced Memory Context
 
+    /// Hard cap on the assembled memory context string. Without this, a project
+    /// with thousands of memory items can push the prompt past the LLM's
+    /// context window.
+    static let enhancedMemoryContextCharacterLimit = 4000
+
     /// Build the full memory context for writing, combining structured buckets
     /// with existing notes.
     var enhancedMemoryContext: String {
@@ -175,7 +180,14 @@ extension NovelProject {
             sections.append("【全局记忆】\n\(continuityNotes)")
         }
 
-        return sections.isEmpty ? "暂无记忆上下文。" : sections.joined(separator: "\n\n")
+        let joined = sections.isEmpty ? "暂无记忆上下文。" : sections.joined(separator: "\n\n")
+        return truncate(joined, to: Self.enhancedMemoryContextCharacterLimit)
+    }
+
+    private func truncate(_ text: String, to limit: Int) -> String {
+        guard text.count > limit else { return text }
+        let head = text.prefix(limit)
+        return head + "\n…(已截断，完整记忆存储在结构化存储中)"
     }
 
     // MARK: - Strand Context

@@ -19,7 +19,7 @@ final class SearchTests: XCTestCase {
         let tokens = Self.searchTokens(from: query)
 
         XCTAssertFalse(tokens.contains("A"))
-        XCTAssertTrue(tokens.contains("主"))
+        XCTAssertFalse(tokens.contains("主"))
     }
 
     func testSearchTokenDeduplication() {
@@ -150,12 +150,19 @@ final class SearchTests: XCTestCase {
     // MARK: - Helper Methods (mimicking AppState)
 
     private static func searchTokens(from query: String) -> [String] {
-        let separators = CharacterSet.whitespacesNewlines
-            .union(CharacterSet(charactersIn: "，。、！？：；""''（）【】《》…——"))
-            .union(CharacterSet(charactersIn: ".,!?;:\"'()[]{}<>-_=+*&^%$#@~`\\|/"))
-        return query.components(separatedBy: separators)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { $0.count >= 2 }
+        var seen = Set<String>()
+        return query
+            .components(separatedBy: CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters).union(.symbols))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { token in
+                guard token.count >= 2 else { return false }
+                let normalized = token.lowercased()
+                guard !seen.contains(normalized) else { return false }
+                seen.insert(normalized)
+                return true
+            }
+            .prefix(12)
+            .map { String($0) }
     }
 
     private static func searchScore(in text: String, tokens: [String]) -> Int {

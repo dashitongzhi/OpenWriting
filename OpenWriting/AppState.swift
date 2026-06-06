@@ -326,6 +326,29 @@ final class AppState {
         openProjectSpace(for: draftProject.id, scrollToProject: true)
     }
 
+    @discardableResult
+    func importProjectBackup(_ project: NovelProject) -> NovelProject {
+        let timestamp = Self.currentTimestampLabel()
+        let importedProject: NovelProject
+
+        if recentProjects.contains(where: { $0.id == project.id }) {
+            let importedTitle = "\(project.title)（导入备份）"
+            importedProject = project.importedBackupCopy(
+                id: makeProjectIdentifier(from: importedTitle),
+                title: importedTitle,
+                updatedAt: timestamp
+            )
+        } else {
+            var project = project
+            project.updatedAt = timestamp
+            importedProject = project
+        }
+
+        recentProjects.insert(importedProject, at: 0)
+        openProjectSpace(for: importedProject.id, scrollToProject: true)
+        return importedProject
+    }
+
     func continueWriting() {
         openWritingDesk(for: activeProject?.id ?? recentProjects.first?.id)
     }
@@ -700,6 +723,7 @@ final class AppState {
     func applyEnhancedWritingUpdate(
         _ context: MemoryUpdateContext?,
         review: ChapterReviewResult?,
+        reviewedChapter: ChapterReviewTarget? = nil,
         for projectID: NovelProject.ID
     ) {
         updateProject(projectID) { project in
@@ -711,6 +735,24 @@ final class AppState {
 
             if let review {
                 project.lastReviewResult = review
+                project.appendAntiPatterns(from: review)
+                let reviewTarget = reviewedChapter ?? ChapterReviewTarget(
+                    volumeNumber: project.currentVolumeNumber,
+                    chapterNumber: project.currentChapterNumber,
+                    chapterTitle: project.currentChapterTitle
+                )
+                let report = QualityReviewReport(
+                    volumeNumber: reviewTarget.volumeNumber,
+                    chapterNumber: reviewTarget.chapterNumber,
+                    chapterTitle: reviewTarget.chapterTitle,
+                    unifiedResult: review
+                )
+                project.qualityReviewReports.removeAll {
+                    $0.resolvedVolumeNumber == report.resolvedVolumeNumber
+                        && $0.chapterNumber == report.chapterNumber
+                }
+                project.qualityReviewReports.insert(report, at: 0)
+                project.qualityReviewReports = Array(project.qualityReviewReports.prefix(80))
             }
 
             project.updatedAt = Self.currentTimestampLabel()
@@ -728,6 +770,18 @@ final class AppState {
 
         updateProject(projectID) { project in
             let timestamp = updatedAt ?? Self.currentTimestampLabel()
+            func recordChapterTreeDecision(_ decision: ChapterTreeSectionMergeDecision, label: String) {
+                switch decision {
+                case .accepted:
+                    outcome.acceptedSections += 1
+                    outcome.acceptedSectionLabels.append(label)
+                case .protected:
+                    outcome.protectedSections += 1
+                    outcome.protectedSectionLabels.append(label)
+                case .ignored:
+                    outcome.ignoredSectionLabels.append(label)
+                }
+            }
 
             let outlineDecision = mergeChapterTreeSection(
                 current: &project.outlineSummary,
@@ -736,54 +790,36 @@ final class AppState {
             )
             if outlineDecision.accepted {
                 project.outlineSummaryUpdatedAt = timestamp
-                outcome.acceptedSections += 1
-            } else if outlineDecision.protectedLocalChange {
-                outcome.protectedSections += 1
             }
+            recordChapterTreeDecision(outlineDecision, label: "章节树总结")
 
             let structureDecision = mergeChapterTreeSection(
                 current: &project.structureNotes,
                 replacement: refresh.structureNotes,
                 baseline: baseline?.structureNotes
             )
-            if structureDecision.accepted {
-                outcome.acceptedSections += 1
-            } else if structureDecision.protectedLocalChange {
-                outcome.protectedSections += 1
-            }
+            recordChapterTreeDecision(structureDecision, label: "章节骨架")
 
             let sceneDecision = mergeChapterTreeSection(
                 current: &project.sceneProgressNotes,
                 replacement: refresh.sceneProgressNotes,
                 baseline: baseline?.sceneProgressNotes
             )
-            if sceneDecision.accepted {
-                outcome.acceptedSections += 1
-            } else if sceneDecision.protectedLocalChange {
-                outcome.protectedSections += 1
-            }
+            recordChapterTreeDecision(sceneDecision, label: "场景推进")
 
             let characterDecision = mergeChapterTreeSection(
                 current: &project.characterArcNotes,
                 replacement: refresh.characterArcNotes,
                 baseline: baseline?.characterArcNotes
             )
-            if characterDecision.accepted {
-                outcome.acceptedSections += 1
-            } else if characterDecision.protectedLocalChange {
-                outcome.protectedSections += 1
-            }
+            recordChapterTreeDecision(characterDecision, label: "角色弧线")
 
             let foreshadowDecision = mergeChapterTreeSection(
                 current: &project.foreshadowNotes,
                 replacement: refresh.foreshadowNotes,
                 baseline: baseline?.foreshadowNotes
             )
-            if foreshadowDecision.accepted {
-                outcome.acceptedSections += 1
-            } else if foreshadowDecision.protectedLocalChange {
-                outcome.protectedSections += 1
-            }
+            recordChapterTreeDecision(foreshadowDecision, label: "伏笔回收")
 
             if outcome.acceptedSections > 0 {
                 project.updatedAt = Self.currentTimestampLabel()
@@ -879,6 +915,31 @@ final class AppState {
         return project
     }
 
+    @discardableResult
+    func ensureContinuationChapterDraftsLoaded(
+        for projectID: NovelProject.ID,
+        limit: Int = 3
+    ) -> [ChapterDraft] {
+        guard let project = project(for: projectID) else { return [] }
+        let currentVolumeNumber = max(project.currentVolumeNumber, 1)
+        let currentChapterNumber = max(project.currentChapterNumber, 1)
+        let previousMetadata = project.sortedChapterCatalog
+            .filter { metadata in
+                metadata.volumeNumber < currentVolumeNumber
+                    || (metadata.volumeNumber == currentVolumeNumber && metadata.chapterNumber < currentChapterNumber)
+            }
+            .prefix(max(limit, 0))
+
+        for metadata in previousMetadata {
+            ensureChapterDraftLoaded(metadata.id, for: projectID)
+        }
+
+        return self.project(for: projectID)?
+            .previousChapterDraftsForContinuation
+            .prefix(max(limit, 0))
+            .map { $0 } ?? []
+    }
+
     func hydratedProjectsForPersistenceSnapshot(_ projects: [NovelProject]) -> [NovelProject] {
         projects.map { project in
             var hydratedProject = project
@@ -965,7 +1026,7 @@ final class AppState {
             project.currentVolumeNumber = normalizedVolumeNumber
             project.currentChapterNumber = normalizedChapterNumber
             project.currentChapterTitle = normalizedChapterTitle
-            project.writtenChapters = max(project.writtenChapters, project.chapterDrafts.count, normalizedChapterNumber)
+            project.writtenChapters = max(project.writtenChapters, project.savedChapterCount, normalizedChapterNumber)
             project.updatedAt = timestamp
         }
 
@@ -981,43 +1042,37 @@ final class AppState {
             project.currentChapterNumber = max(chapterDraft.chapterNumber, 1)
             project.currentChapterTitle = chapterDraft.chapterTitle
             project.draftText = chapterDraft.content
-            project.writtenChapters = max(project.writtenChapters, project.chapterDrafts.count, chapterDraft.chapterNumber)
+            project.writtenChapters = max(project.writtenChapters, project.savedChapterCount, chapterDraft.chapterNumber)
             project.updatedAt = Self.currentTimestampLabel()
         }
     }
 
     func beginNextChapter(after chapterDraft: ChapterDraft, for projectID: NovelProject.ID) {
         if let project = project(for: projectID),
-           let existingMetadata = project.chapterCatalog.first(where: {
-               $0.volumeNumber == max(chapterDraft.volumeNumber, 1)
-                   && $0.chapterNumber == max(chapterDraft.chapterNumber + 1, 1)
-           }) {
+           let existingMetadata = Self.nextExistingChapterMetadata(after: chapterDraft, in: project) {
             ensureChapterDraftLoaded(existingMetadata.id, for: projectID)
         }
 
         updateProject(projectID) { project in
-            let nextChapterNumber = max(chapterDraft.chapterNumber + 1, 1)
-            let nextVolumeNumber = max(chapterDraft.volumeNumber, 1)
-
-            if let existingDraft = project.chapterDrafts.first(where: {
-                $0.volumeNumber == nextVolumeNumber && $0.chapterNumber == nextChapterNumber
-            }) {
+            if let existingDraft = Self.nextExistingChapterDraft(after: chapterDraft, in: project.chapterDrafts) {
                 project.currentVolumeNumber = max(existingDraft.volumeNumber, 1)
-                project.currentChapterNumber = nextChapterNumber
+                project.currentChapterNumber = max(existingDraft.chapterNumber, 1)
                 project.currentChapterTitle = existingDraft.chapterTitle
                 project.draftText = existingDraft.content
             } else {
+                let nextChapterNumber = max(chapterDraft.chapterNumber + 1, 1)
+                let nextVolumeNumber = max(chapterDraft.volumeNumber, 1)
                 project.currentVolumeNumber = nextVolumeNumber
                 project.currentChapterNumber = nextChapterNumber
                 project.currentChapterTitle = "待命名章节"
+                project.draftText = ""
                 project.chapterFocus = Self.defaultNextChapterFocus(
                     after: chapterDraft,
-                    storyLength: project.storyLength
+                    project: project
                 )
-                project.draftText = ""
             }
 
-            project.writtenChapters = max(project.writtenChapters, project.chapterDrafts.count, chapterDraft.chapterNumber)
+            project.writtenChapters = max(project.writtenChapters, project.savedChapterCount, chapterDraft.chapterNumber)
             project.updatedAt = Self.currentTimestampLabel()
         }
     }
@@ -1066,7 +1121,15 @@ final class AppState {
                 project.draftText = trimmedContent
             }
 
-            project.writtenChapters = max(project.writtenChapters, project.chapterDrafts.count, chapterNumber)
+            if hasMeaningfulChange {
+                Self.markLongformChapterNeedsRecommit(
+                    updated,
+                    in: &project,
+                    reason: "已保存章节被手动修改，需重新保存并通过质量审查后才能恢复后台提交链。"
+                )
+            }
+
+            project.writtenChapters = max(project.writtenChapters, project.savedChapterCount, chapterNumber)
             project.updatedAt = timestamp
             updatedDraft = updated
         }
@@ -1110,7 +1173,13 @@ final class AppState {
                 project.draftText = restored.content
             }
 
-            project.writtenChapters = max(project.writtenChapters, project.chapterDrafts.count, restored.chapterNumber)
+            Self.markLongformChapterNeedsRecommit(
+                restored,
+                in: &project,
+                reason: "章节版本已回滚，需重新保存并通过质量审查后才能恢复后台提交链。"
+            )
+
+            project.writtenChapters = max(project.writtenChapters, project.savedChapterCount, restored.chapterNumber)
             project.updatedAt = timestamp
             restoredDraft = restored
         }
@@ -1186,7 +1255,8 @@ final class AppState {
         chapterNumber: Int,
         for projectID: NovelProject.ID,
         review: ChapterReviewResult? = nil,
-        reviewFailureReason: String? = nil
+        reviewFailureReason: String? = nil,
+        contractOverride: LongformStoryContractBundle? = nil
     ) -> LongformChapterCommit? {
         let chapterDraft = ChapterDraft(
             volumeNumber: max(project(for: projectID)?.currentVolumeNumber ?? 1, 1),
@@ -1199,7 +1269,8 @@ final class AppState {
             from: chapterDraft,
             for: projectID,
             review: review,
-            reviewFailureReason: reviewFailureReason
+            reviewFailureReason: reviewFailureReason,
+            contractOverride: contractOverride
         )
     }
 
@@ -1208,16 +1279,18 @@ final class AppState {
         from chapterDraft: ChapterDraft,
         for projectID: NovelProject.ID,
         review: ChapterReviewResult? = nil,
-        reviewFailureReason: String? = nil
+        reviewFailureReason: String? = nil,
+        contractOverride: LongformStoryContractBundle? = nil
     ) -> LongformChapterCommit? {
         let allItems = extractedStructuredMemoryItems(
             from: chapterDraft.content,
+            volumeNumber: chapterDraft.volumeNumber,
             chapterNumber: chapterDraft.chapterNumber
         )
         var builtCommit: LongformChapterCommit?
 
         updateProject(projectID) { project in
-            let contract = LongformStorySystem.buildRuntimeContract(for: project)
+            let contract = contractOverride ?? LongformStorySystem.buildRuntimeContract(for: project)
             let commit = LongformStorySystem.buildCommit(
                 project: project,
                 chapterDraft: chapterDraft,
@@ -1240,6 +1313,8 @@ final class AppState {
     func runAIMemoryExtraction(
         from chapterContent: String,
         chapterNumber: Int,
+        volumeNumber: Int? = nil,
+        expectedCommitID: LongformChapterCommit.ID? = nil,
         projectID: NovelProject.ID
     ) {
         Task { [weak self] in
@@ -1247,20 +1322,59 @@ final class AppState {
             let configuration = self.aiConfiguration
 
             // Capture project context before the async call
-            let projectSnapshot: (title: String, genre: String, summary: String)?
+            let projectSnapshot: (
+                title: String,
+                genre: String,
+                summary: String,
+                volumeNumber: Int,
+                chapterSummary: String,
+                chapterFocus: String,
+                longformContext: String,
+                memoryContext: String,
+                reviewContext: String
+            )?
             if let project = self.project(for: projectID) {
-                projectSnapshot = (project.title, project.genre, project.summary)
+                let runtime = project.longformRuntimeState
+                let reviewContext = [
+                    runtime.latestCommit?.reviewSummary,
+                    runtime.latestCommit?.revisionHints?.prefix(4).joined(separator: "；")
+                ]
+                    .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: "\n")
+                projectSnapshot = (
+                    project.title,
+                    project.genre,
+                    project.summary,
+                    max(project.currentVolumeNumber, 1),
+                    project.currentChapterSummary,
+                    project.chapterFocus,
+                    Self.boundedPromptContext(project.longformStorySystemContext, limit: 3_600),
+                    Self.boundedPromptContext(project.enhancedMemoryContext, limit: 2_400),
+                    Self.boundedPromptContext(reviewContext, limit: 1_200)
+                )
             } else {
                 projectSnapshot = nil
             }
 
             guard let config = configuration, let context = projectSnapshot else { return }
+            let sourceVolumeNumber = max(volumeNumber ?? context.volumeNumber, 1)
 
             let systemPrompt = MemoryExtractionService.extractionSystemPrompt
             let userPrompt = MemoryExtractionService.extractionUserPrompt(
                 chapterText: String(chapterContent.prefix(8000)),
                 chapterNumber: chapterNumber,
-                projectContext: "作品名：\(context.title)\n题材：\(context.genre)\n简介：\(context.summary)"
+                volumeNumber: sourceVolumeNumber,
+                projectContext: """
+                作品名：\(context.title)
+                题材：\(context.genre)
+                简介：\(context.summary)
+                当前章节：\(context.chapterSummary)
+                本章目标：\(context.chapterFocus)
+                """,
+                longformContext: context.longformContext,
+                existingMemoryContext: context.memoryContext,
+                reviewContext: context.reviewContext
             )
 
             do {
@@ -1273,26 +1387,44 @@ final class AppState {
                 )
 
                 if let extractionResult = MemoryExtractionService.parseExtractionResult(from: response) {
-                    let aiItems = extractionResult.allItems
+                    let aiItems = extractionResult.allItems(
+                        sourceVolumeNumber: sourceVolumeNumber,
+                        sourceChapterNumber: chapterNumber
+                    )
                     guard !aiItems.isEmpty else { return }
 
                     self.updateProject(projectID) { project in
-                        var buckets = project.memoryBuckets
-                        for item in aiItems {
-                            buckets.upsert(item)
-                        }
-                        buckets.compact(currentChapter: chapterNumber)
-                        project.memoryBuckets = buckets
-
                         var runtime = project.longformRuntimeState
                         if var latestCommit = runtime.latestCommit,
                            latestCommit.chapterNumber == chapterNumber,
+                           latestCommit.volumeNumber == sourceVolumeNumber,
+                           expectedCommitID.map({ latestCommit.id == $0 }) ?? true,
                            latestCommit.isAccepted {
+                            var buckets = project.memoryBuckets
+                            buckets.removeItems(
+                                sourceVolumeNumber: sourceVolumeNumber,
+                                sourceChapter: chapterNumber
+                            )
+                            for item in latestCommit.extractedMemoryItems {
+                                buckets.upsert(item)
+                            }
+                            for item in aiItems {
+                                buckets.upsert(item)
+                            }
+                            buckets.compact(currentVolumeNumber: sourceVolumeNumber, currentChapter: chapterNumber)
+                            project.memoryBuckets = buckets
+
                             let existingIDs = Set(latestCommit.extractedMemoryItems.map(\.id))
                             let newItems = aiItems.filter { !existingIDs.contains($0.id) }
                             latestCommit.extractedMemoryItems.append(contentsOf: newItems)
                             latestCommit.projectionStatus["ai_memory"] = "done"
                             runtime.record(commit: latestCommit)
+                            if let latestContract = runtime.latestContract {
+                                runtime.record(writeGate: LongformStorySystem.buildWriteGateReport(
+                                    commit: latestCommit,
+                                    contract: latestContract
+                                ))
+                            }
                             project.longformRuntimeState = runtime
                         }
                     }
@@ -1317,9 +1449,9 @@ final class AppState {
         }
     }
 
-    private func extractedStructuredMemoryItems(from text: String, chapterNumber: Int) -> [MemoryItem] {
+    private func extractedStructuredMemoryItems(from text: String, volumeNumber: Int, chapterNumber: Int) -> [MemoryItem] {
         let (characters, relationships, locations, foreshadowing, timeline, storyFacts) =
-            extractStructuredMemory(from: text, chapterNumber: chapterNumber)
+            extractStructuredMemory(from: text, volumeNumber: volumeNumber, chapterNumber: chapterNumber)
 
         return characters + relationships + locations + foreshadowing + timeline + storyFacts
     }
@@ -1327,6 +1459,7 @@ final class AppState {
     /// Keyword-based extraction of structured memory items from Chinese chapter text.
     private func extractStructuredMemory(
         from text: String,
+        volumeNumber: Int,
         chapterNumber: Int
     ) -> (
         characters: [MemoryItem],
@@ -1336,6 +1469,7 @@ final class AppState {
         timeline: [MemoryItem],
         storyFacts: [MemoryItem]
     ) {
+        let sourceVolumeNumber = max(volumeNumber, 1)
         let nonNameWords: Set<String> = [
             // Pronouns & demonstratives
             "什么", "怎么", "那个", "这个", "他们", "我们", "你们", "自己",
@@ -1414,7 +1548,8 @@ final class AppState {
                 category: .characterState,
                 subject: name,
                 field: "出场",
-                value: "在第\(chapterNumber)章中出场并有对白或行动",
+                value: "在第\(sourceVolumeNumber)卷第\(chapterNumber)章中出场并有对白或行动",
+                sourceVolumeNumber: sourceVolumeNumber,
                 sourceChapter: chapterNumber
             )
         }
@@ -1447,7 +1582,8 @@ final class AppState {
                     category: .relationship,
                     subject: pair,
                     field: count >= 3 ? "密切互动" : "互动",
-                    value: "第\(chapterNumber)章中共同出现\(count)次",
+                    value: "第\(sourceVolumeNumber)卷第\(chapterNumber)章中共同出现\(count)次",
+                    sourceVolumeNumber: sourceVolumeNumber,
                     sourceChapter: chapterNumber
                 )
             }
@@ -1488,7 +1624,8 @@ final class AppState {
                     category: .worldRule,
                     subject: location,
                     field: "地点",
-                    value: "在第\(chapterNumber)章中出现",
+                    value: "在第\(sourceVolumeNumber)卷第\(chapterNumber)章中出现",
+                    sourceVolumeNumber: sourceVolumeNumber,
                     sourceChapter: chapterNumber
                 )
             }
@@ -1519,6 +1656,7 @@ final class AppState {
                             field: field,
                             value: context,
                             status: .tentative,
+                            sourceVolumeNumber: sourceVolumeNumber,
                             sourceChapter: chapterNumber
                         ))
                     }
@@ -1548,7 +1686,8 @@ final class AppState {
                     category: .timeline,
                     subject: marker,
                     field: "时间标记",
-                    value: "第\(chapterNumber)章提及「\(marker)」",
+                    value: "第\(sourceVolumeNumber)卷第\(chapterNumber)章提及「\(marker)」",
+                    sourceVolumeNumber: sourceVolumeNumber,
                     sourceChapter: chapterNumber
                 ))
             }
@@ -1575,7 +1714,8 @@ final class AppState {
                         category: .storyFact,
                         subject: marker,
                         field: field,
-                        value: "第\(chapterNumber)章中出现\(count)次",
+                        value: "第\(sourceVolumeNumber)卷第\(chapterNumber)章中出现\(count)次",
+                        sourceVolumeNumber: sourceVolumeNumber,
                         sourceChapter: chapterNumber
                     ))
                 }
@@ -1824,9 +1964,90 @@ final class AppState {
         PersistedTimestampCodec.displayLabel(for: Date(), style: .project)
     }
 
+    private static func boundedPromptContext(_ text: String, limit: Int) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > limit else { return trimmed }
+        return String(trimmed.suffix(limit))
+    }
+
     private static func trimChapterVersionHistory(_ chapterDraft: inout ChapterDraft) {
         guard chapterDraft.versionHistory.count > maxChapterVersionHistoryCount else { return }
         chapterDraft.versionHistory = Array(chapterDraft.versionHistory.prefix(maxChapterVersionHistoryCount))
+    }
+
+    private static func markLongformChapterNeedsRecommit(
+        _ chapterDraft: ChapterDraft,
+        in project: inout NovelProject,
+        reason: String
+    ) {
+        guard project.storyLength.supportsVolumePlanning else { return }
+
+        var contractProject = project
+        contractProject.currentVolumeNumber = max(chapterDraft.volumeNumber, 1)
+        contractProject.currentChapterNumber = max(chapterDraft.chapterNumber, 1)
+        contractProject.currentChapterTitle = chapterDraft.chapterTitle
+        contractProject.draftText = chapterDraft.content
+
+        let contract = LongformStorySystem.buildRuntimeContract(for: contractProject)
+        let commit = LongformStorySystem.buildCommit(
+            project: contractProject,
+            chapterDraft: chapterDraft,
+            review: nil,
+            reviewFailureReason: reason,
+            extractedMemoryItems: [],
+            contract: contract
+        )
+        LongformStorySystem.apply(commit: commit, contract: contract, to: &project)
+    }
+
+    private static func nextExistingChapterMetadata(
+        after chapterDraft: ChapterDraft,
+        in project: NovelProject
+    ) -> ChapterDraftMetadata? {
+        let currentVolume = max(chapterDraft.volumeNumber, 1)
+        let currentChapter = max(chapterDraft.chapterNumber, 1)
+        return project.sortedChapterCatalog
+            .filter {
+                $0.volumeNumber > currentVolume
+                    || ($0.volumeNumber == currentVolume && $0.chapterNumber > currentChapter)
+            }
+            .sorted(by: chapterPositionAscending)
+            .first
+    }
+
+    private static func nextExistingChapterDraft(
+        after chapterDraft: ChapterDraft,
+        in chapterDrafts: [ChapterDraft]
+    ) -> ChapterDraft? {
+        let currentVolume = max(chapterDraft.volumeNumber, 1)
+        let currentChapter = max(chapterDraft.chapterNumber, 1)
+        return chapterDrafts
+            .filter {
+                $0.volumeNumber > currentVolume
+                    || ($0.volumeNumber == currentVolume && $0.chapterNumber > currentChapter)
+            }
+            .sorted(by: chapterPositionAscending)
+            .first
+    }
+
+    private static func chapterPositionAscending(_ lhs: ChapterDraftMetadata, _ rhs: ChapterDraftMetadata) -> Bool {
+        if lhs.volumeNumber != rhs.volumeNumber {
+            return lhs.volumeNumber < rhs.volumeNumber
+        }
+        if lhs.chapterNumber != rhs.chapterNumber {
+            return lhs.chapterNumber < rhs.chapterNumber
+        }
+        return lhs.savedAtDate < rhs.savedAtDate
+    }
+
+    private static func chapterPositionAscending(_ lhs: ChapterDraft, _ rhs: ChapterDraft) -> Bool {
+        if lhs.volumeNumber != rhs.volumeNumber {
+            return lhs.volumeNumber < rhs.volumeNumber
+        }
+        if lhs.chapterNumber != rhs.chapterNumber {
+            return lhs.chapterNumber < rhs.chapterNumber
+        }
+        return lhs.savedAtDate < rhs.savedAtDate
     }
 
     private static func upsertChapterMetadata(_ metadata: ChapterDraftMetadata, in project: inout NovelProject) {
@@ -1899,7 +2120,7 @@ final class AppState {
         return prefix + String(trimmed[start..<end]) + suffix
     }
 
-    private static func defaultNextChapterFocus(after chapterDraft: ChapterDraft, storyLength: NovelLength) -> String {
+    private static func defaultNextChapterFocus(after chapterDraft: ChapterDraft, project: NovelProject) -> String {
         let trimmedEnding = chapterDraft.content
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let ending = trimmedEnding.count > 180
@@ -1907,7 +2128,7 @@ final class AppState {
             : trimmedEnding
 
         let baseFocus: String
-        switch storyLength {
+        switch project.storyLength {
         case .short:
             baseFocus = "承接上一段的结果，继续压缩场景数量，推动核心冲突向结尾闭环靠拢。"
         case .medium:
@@ -1916,8 +2137,74 @@ final class AppState {
             baseFocus = "承接上一章留下的行动后果、人物状态和在途线索，推进当前卷目标，并保留长期伏笔的延展空间。"
         }
 
-        guard !ending.isEmpty else { return baseFocus }
-        return "\(baseFocus)\n\n上一章结尾参考：\(ending)"
+        var sections = [baseFocus]
+        let runtime = project.longformRuntimeState
+
+        if let latestCommit = runtime.latestCommit,
+           latestCommit.volumeNumber == max(chapterDraft.volumeNumber, 1),
+           latestCommit.chapterNumber == max(chapterDraft.chapterNumber, 1) {
+            var commitLines: [String] = []
+            let coveredNodes = latestCommit.coveredNodes
+                .prefix(3)
+                .joined(separator: "；")
+            if !coveredNodes.isEmpty {
+                commitLines.append("上一章已完成节点：\(coveredNodes)")
+            }
+
+            let eventSummary = latestCommit.acceptedEvents
+                .prefix(4)
+                .map { "\($0.subject)-\($0.field)：\($0.value)" }
+                .joined(separator: "；")
+            if !eventSummary.isEmpty {
+                commitLines.append("上一章沉淀状态：\(eventSummary)")
+            }
+
+            if !commitLines.isEmpty {
+                sections.append(commitLines.joined(separator: "\n"))
+            }
+        }
+
+        let qualityTrend = project.longformQualityTrend
+        if qualityTrend.hasSignals {
+            var qualityLines: [String] = []
+            if let averageScore = qualityTrend.averageScore {
+                qualityLines.append("近期审查均分 \(averageScore)/100，下一章要主动拉高稳定性。")
+            }
+
+            let priorityIssues = qualityTrend.priorityIssues
+                .prefix(3)
+                .joined(separator: "；")
+            if !priorityIssues.isEmpty {
+                qualityLines.append("优先避免旧问题：\(priorityIssues)")
+            }
+
+            let antiPatterns = qualityTrend.antiPatterns
+                .prefix(3)
+                .joined(separator: "；")
+            if !antiPatterns.isEmpty {
+                qualityLines.append("避免重复 AI 味：\(antiPatterns)")
+            }
+
+            if !qualityLines.isEmpty {
+                sections.append("质量修复方向：\n" + qualityLines.joined(separator: "\n"))
+            }
+        }
+
+        let health = project.longformRuntimeHealth
+        let healthHints = health.issues
+            .filter { $0.status != .passed && $0.title != "长篇合同尚未落盘" }
+            .prefix(3)
+            .map { "\($0.title)：\($0.repairHint)" }
+            .joined(separator: "\n")
+        if !healthHints.isEmpty {
+            sections.append("后台提醒：\n\(healthHints)")
+        }
+
+        if !ending.isEmpty {
+            sections.append("上一章结尾参考：\(ending)")
+        }
+
+        return sections.joined(separator: "\n\n")
     }
 
     private static func abbreviatedCount(_ value: Int) -> String {

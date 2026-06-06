@@ -109,16 +109,41 @@ struct LegacyQualityReviewIssue: Codable, Identifiable {
 
 // MARK: - QualityReviewReport (Backward-Compatible, now wraps ChapterReviewResult)
 
+struct ChapterReviewTarget: Hashable {
+    var volumeNumber: Int
+    var chapterNumber: Int
+    var chapterTitle: String
+
+    init(volumeNumber: Int = 1, chapterNumber: Int, chapterTitle: String) {
+        self.volumeNumber = max(volumeNumber, 1)
+        self.chapterNumber = max(chapterNumber, 1)
+        self.chapterTitle = chapterTitle
+    }
+
+    init(chapterDraft: ChapterDraft) {
+        self.init(
+            volumeNumber: chapterDraft.volumeNumber,
+            chapterNumber: chapterDraft.chapterNumber,
+            chapterTitle: chapterDraft.chapterTitle
+        )
+    }
+}
+
 /// Legacy report format, stored in NovelProject.qualityReviewReports.
 /// Now constructed from the unified ChapterReviewResult.
 struct QualityReviewReport: Codable, Identifiable {
     let id: UUID
+    let volumeNumber: Int?
     let chapterNumber: Int
     let chapterTitle: String
     let reviewedAt: Date
     let dimensionResults: [ReviewDimensionResult]
     let overallScore: Int
     let overallSummary: String
+
+    var resolvedVolumeNumber: Int {
+        max(volumeNumber ?? 1, 1)
+    }
 
     /// The unified review result this report was built from.
     /// Transient — not persisted, reconstructed from dimensionResults.
@@ -149,8 +174,15 @@ struct QualityReviewReport: Codable, Identifiable {
         )
     }
 
-    init(chapterNumber: Int, chapterTitle: String, dimensionResults: [ReviewDimensionResult], overallSummary: String) {
+    init(
+        volumeNumber: Int = 1,
+        chapterNumber: Int,
+        chapterTitle: String,
+        dimensionResults: [ReviewDimensionResult],
+        overallSummary: String
+    ) {
         self.id = UUID()
+        self.volumeNumber = max(volumeNumber, 1)
         self.chapterNumber = chapterNumber
         self.chapterTitle = chapterTitle
         self.reviewedAt = Date()
@@ -161,8 +193,14 @@ struct QualityReviewReport: Codable, Identifiable {
     }
 
     /// Build from unified ChapterReviewResult (preferred constructor).
-    init(chapterNumber: Int, chapterTitle: String, unifiedResult: ChapterReviewResult) {
+    init(
+        volumeNumber: Int = 1,
+        chapterNumber: Int,
+        chapterTitle: String,
+        unifiedResult: ChapterReviewResult
+    ) {
         self.id = UUID()
+        self.volumeNumber = max(volumeNumber, 1)
         self.chapterNumber = chapterNumber
         self.chapterTitle = chapterTitle
         self.reviewedAt = Date()
@@ -204,12 +242,18 @@ struct QualityReviewReport: Codable, Identifiable {
     /// When constructed from ChapterReviewResult, overallScore is 0-100;
     /// when computed from legacy dimensionResults, it is 1-10.
     var isPassed: Bool {
+        passes(minimumScore: 60)
+    }
+
+    func passes(minimumScore: Int) -> Bool {
         let hasCritical = dimensionResults.contains { result in
             result.issues.contains { $0.severity == .critical }
         }
-        // Detect scale: if any dimension score > 10, it's the unified 0-100 scale.
+        // Scale detection: any dimension > 10, or an overall score above the
+        // 1-10 ceiling, marks this as the unified 0-100 scale.
         let isUnifiedScale = dimensionResults.contains { $0.score > 10 }
-        let threshold = isUnifiedScale ? 60 : 6
+            || overallScore > 10
+        let threshold = isUnifiedScale ? minimumScore : Int(ceil(Double(minimumScore) / 10))
         return !hasCritical && overallScore >= threshold
     }
 

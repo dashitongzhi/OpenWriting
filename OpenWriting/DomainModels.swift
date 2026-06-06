@@ -1099,6 +1099,30 @@ struct ForeshadowList: Codable, Hashable {
         entries.removeAll { $0.id == id }
     }
 
+    mutating func removeLongformProjection(volumeNumber: Int, chapterNumber: Int) {
+        let normalizedVolume = max(volumeNumber, 1)
+        let normalizedChapter = max(chapterNumber, 1)
+        let marker = "longform:auto:v\(normalizedVolume):c\(normalizedChapter)"
+
+        entries.removeAll {
+            $0.volumeNumber == normalizedVolume
+                && $0.plantedChapter == normalizedChapter
+                && $0.notes.contains(marker)
+        }
+
+        for index in entries.indices where entries[index].notes.contains(marker) {
+            if entries[index].resolutionChapter == normalizedChapter {
+                entries[index].status = .advanced
+                entries[index].resolutionChapter = nil
+                entries[index].updatedAt = Date()
+            }
+            entries[index].notes = entries[index].notes
+                .components(separatedBy: "\n")
+                .filter { !$0.contains(marker) }
+                .joined(separator: "\n")
+        }
+    }
+
     mutating func update(_ entry: ForeshadowEntry) {
         if let index = entries.firstIndex(where: { $0.id == entry.id }) {
             entries[index] = entry
@@ -1284,23 +1308,29 @@ enum ThreadStatus: String, Codable, CaseIterable {
 /// 叙事线关键事件
 struct ThreadEvent: Codable, Identifiable, Hashable {
     let id: String
+    var volumeNumber: Int?
     var chapter: Int            // 发生章节
     var title: String           // 事件标题
     var description: String     // 事件描述
     var eventType: ThreadEventType  // 事件类型
+    var source: String?
 
     init(
         id: String = UUID().uuidString,
+        volumeNumber: Int? = nil,
         chapter: Int,
         title: String,
         description: String = "",
-        eventType: ThreadEventType = .development
+        eventType: ThreadEventType = .development,
+        source: String? = nil
     ) {
         self.id = id
+        self.volumeNumber = volumeNumber.map { max($0, 1) }
         self.chapter = chapter
         self.title = title
         self.description = description
         self.eventType = eventType
+        self.source = source
     }
 }
 
@@ -1374,6 +1404,34 @@ struct PlotThreadList: Codable, Hashable {
         threads.removeAll { $0.id == id }
     }
 
+    mutating func removeLongformProjection(volumeNumber: Int, chapterNumber: Int) {
+        let normalizedVolume = max(volumeNumber, 1)
+        let normalizedChapter = max(chapterNumber, 1)
+
+        for index in threads.indices {
+            threads[index].keyEvents.removeAll { event in
+                event.source == "longform"
+                    && event.volumeNumber == normalizedVolume
+                    && event.chapter == normalizedChapter
+            }
+
+            let latestChapter = threads[index].keyEvents
+                .map(\.chapter)
+                .max() ?? threads[index].startChapter
+            threads[index].lastActiveChapter = max(threads[index].startChapter, latestChapter)
+
+            let remainingVolumes = threads[index].keyEvents
+                .compactMap(\.volumeNumber)
+            if let minVolume = remainingVolumes.min(), let maxVolume = remainingVolumes.max() {
+                threads[index].volumeRange = minVolume...maxVolume
+            }
+        }
+
+        threads.removeAll {
+            $0.keyEvents.isEmpty && $0.description.contains("后台根据章节提交自动维护")
+        }
+    }
+
     mutating func update(_ thread: PlotThread) {
         if let index = threads.firstIndex(where: { $0.id == thread.id }) {
             threads[index] = thread
@@ -1386,9 +1444,17 @@ struct PlotThreadList: Codable, Hashable {
         }
     }
 
-    mutating func addEventToThread(threadID: String, event: ThreadEvent) {
+    mutating func addEventToThread(threadID: String, event: ThreadEvent, volumeNumber: Int? = nil) {
         if let index = threads.firstIndex(where: { $0.id == threadID }) {
             threads[index].addEvent(event)
+            if let volumeNumber {
+                let safeVolumeNumber = max(volumeNumber, 1)
+                if let range = threads[index].volumeRange {
+                    threads[index].volumeRange = min(range.lowerBound, safeVolumeNumber)...max(range.upperBound, safeVolumeNumber)
+                } else {
+                    threads[index].volumeRange = safeVolumeNumber...safeVolumeNumber
+                }
+            }
         }
     }
 
@@ -1747,17 +1813,22 @@ struct NovelProject: Identifiable, Codable {
     }
 
     var duplicateChapterNumbers: [Int] {
-        let grouped = Dictionary(grouping: sortedChapterCatalog, by: \.chapterNumber)
+        let grouped = Dictionary(grouping: sortedChapterCatalog) { metadata in
+            "\(metadata.volumeNumber)-\(metadata.chapterNumber)"
+        }
         return grouped
             .filter { $0.value.count > 1 }
-            .map(\.key)
+            .compactMap { $0.value.first?.chapterNumber }
             .sorted()
     }
 
     var missingChapterNumbers: [Int] {
-        let chapterNumbers = Set(sortedChapterCatalog.map(\.chapterNumber))
-        guard let highest = chapterNumbers.max(), highest > 1 else { return [] }
-        return (1...highest).filter { !chapterNumbers.contains($0) }
+        let chaptersByVolume = Dictionary(grouping: sortedChapterCatalog, by: \.volumeNumber)
+        return chaptersByVolume.keys.sorted().flatMap { volumeNumber -> [Int] in
+            let chapterNumbers = Set(chaptersByVolume[volumeNumber, default: []].map(\.chapterNumber))
+            guard let highest = chapterNumbers.max(), highest > 1 else { return [] }
+            return (1...highest).filter { !chapterNumbers.contains($0) }
+        }
     }
 
     var chapterIntegrityStatusLabel: String {
@@ -1780,7 +1851,7 @@ struct NovelProject: Identifiable, Codable {
     }
 
     var hasSavedCurrentChapter: Bool {
-        chapterDrafts.contains(where: {
+        sortedChapterCatalog.contains(where: {
             $0.volumeNumber == currentVolumeNumber && $0.chapterNumber == currentChapterNumber
         })
     }
@@ -1960,7 +2031,7 @@ struct NovelProject: Identifiable, Codable {
     }
 
     var savedChapterWordCount: Int {
-        chapterDrafts.reduce(0) { $0 + $1.wordCount }
+        sortedChapterCatalog.reduce(0) { $0 + $1.wordCount }
     }
 
     var manuscriptWordCount: Int {
@@ -2010,15 +2081,14 @@ struct NovelProject: Identifiable, Codable {
     }
 
     var previousChapterDraftForContinuation: ChapterDraft? {
-        let sortedDrafts = sortedChapterDrafts
+        previousChapterDraftsForContinuation.first
+    }
 
-        if let directPrevious = sortedDrafts.first(where: { $0.chapterNumber == currentChapterNumber - 1 }) {
-            return directPrevious
+    var previousChapterDraftsForContinuation: [ChapterDraft] {
+        sortedChapterDrafts.filter { draft in
+            draft.volumeNumber < currentVolumeNumber
+                || (draft.volumeNumber == currentVolumeNumber && draft.chapterNumber < currentChapterNumber)
         }
-
-        return sortedDrafts
-            .filter { $0.chapterNumber < currentChapterNumber }
-            .max { $0.chapterNumber < $1.chapterNumber }
     }
 
     private static func outlineNodeCount(in text: String) -> Int {
@@ -2098,6 +2168,55 @@ struct NovelProject: Identifiable, Codable {
         }
 
         return nil
+    }
+}
+
+extension NovelProject {
+    func importedBackupCopy(id newID: String, title newTitle: String, updatedAt: String) -> NovelProject {
+        var copy = NovelProject(
+            id: newID,
+            title: newTitle,
+            genre: genre,
+            summary: summary,
+            storyLength: storyLength,
+            updatedAt: updatedAt,
+            currentChapterTitle: currentChapterTitle,
+            currentVolumeNumber: currentVolumeNumber,
+            currentChapterNumber: currentChapterNumber,
+            writtenChapters: writtenChapters,
+            chapterFocus: chapterFocus,
+            draftText: draftText,
+            outlineText: outlineText,
+            outlineGenerationProfile: outlineGenerationProfile,
+            structureNotes: structureNotes,
+            sceneProgressNotes: sceneProgressNotes,
+            characterArcNotes: characterArcNotes,
+            foreshadowNotes: foreshadowNotes,
+            volumePlanNotes: volumePlanNotes,
+            activeThreadsNotes: activeThreadsNotes,
+            outlineSummary: outlineSummary,
+            outlineSummaryUpdatedAt: outlineSummaryUpdatedAt,
+            referenceContextText: referenceContextText,
+            specialRequirements: specialRequirements,
+            wordTargetText: wordTargetText,
+            continuityNotes: continuityNotes,
+            globalMemorySnapshot: globalMemorySnapshot,
+            globalMemoryUpdatedAt: globalMemoryUpdatedAt,
+            referenceDocuments: referenceDocuments,
+            chapterDrafts: chapterDrafts,
+            chapterCatalog: chapterCatalog,
+            genreTemplateId: genreTemplateId,
+            strandWeaveTracker: strandWeaveTracker,
+            qualityReviewReports: qualityReviewReports,
+            persistedMemoryBuckets: persistedMemoryBuckets,
+            persistedStrandWeaveState: persistedStrandWeaveState,
+            persistedAntiPatterns: persistedAntiPatterns,
+            persistedLastReviewResult: persistedLastReviewResult,
+            persistedLongformRuntimeState: persistedLongformRuntimeState
+        )
+        copy.foreshadowList = foreshadowList
+        copy.plotThreadList = plotThreadList
+        return copy
     }
 }
 

@@ -6,8 +6,34 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		B00100000000000000000008 /* NovelProjectTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00100000000000000000003 /* NovelProjectTests.swift */; };
+		B00100000000000000000009 /* ProjectFileStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00100000000000000000004 /* ProjectFileStoreTests.swift */; };
+		B0010000000000000000000A /* DomainModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00100000000000000000005 /* DomainModelsTests.swift */; };
+		B0010000000000000000000B /* SearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00100000000000000000006 /* SearchTests.swift */; };
+		B0010000000000000000000C /* ProjectExportServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00100000000000000000007 /* ProjectExportServiceTests.swift */; };
+		B00100000000000000000016 /* TestFactories.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00100000000000000000017 /* TestFactories.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B00100000000000000000014 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AD9EB9A52F8676DB005D3EBC /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AD9EB9AC2F8676DB005D3EBC;
+			remoteInfo = OpenWriting;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		AD9EB9AD2F8676DB005D3EBC /* OpenWriting.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OpenWriting.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B00100000000000000000001 /* OpenWritingTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OpenWritingTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B00100000000000000000003 /* NovelProjectTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/NovelProjectTests.swift; sourceTree = "<group>"; };
+		B00100000000000000000004 /* ProjectFileStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/ProjectFileStoreTests.swift; sourceTree = "<group>"; };
+		B00100000000000000000005 /* DomainModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/DomainModelsTests.swift; sourceTree = "<group>"; };
+		B00100000000000000000006 /* SearchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/SearchTests.swift; sourceTree = "<group>"; };
+		B00100000000000000000007 /* ProjectExportServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/ProjectExportServiceTests.swift; sourceTree = "<group>"; };
+		B00100000000000000000017 /* TestFactories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/TestFactories.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -26,6 +52,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B0010000000000000000000E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -33,6 +66,7 @@
 			isa = PBXGroup;
 			children = (
 				AD9EB9AF2F8676DB005D3EBC /* OpenWriting */,
+				B00100000000000000000002 /* Tests */,
 				AD9EB9AE2F8676DB005D3EBC /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,8 +75,22 @@
 			isa = PBXGroup;
 			children = (
 				AD9EB9AD2F8676DB005D3EBC /* OpenWriting.app */,
+				B00100000000000000000001 /* OpenWritingTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		B00100000000000000000002 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				B00100000000000000000005 /* DomainModelsTests.swift */,
+				B00100000000000000000003 /* NovelProjectTests.swift */,
+				B00100000000000000000007 /* ProjectExportServiceTests.swift */,
+				B00100000000000000000004 /* ProjectFileStoreTests.swift */,
+				B00100000000000000000006 /* SearchTests.swift */,
+				B00100000000000000000017 /* TestFactories.swift */,
+			);
+			path = Tests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -70,6 +118,26 @@
 			productReference = AD9EB9AD2F8676DB005D3EBC /* OpenWriting.app */;
 			productType = "com.apple.product-type.application";
 		};
+		B00100000000000000000010 /* OpenWritingTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B00100000000000000000011 /* Build configuration list for PBXNativeTarget "OpenWritingTests" */;
+			buildPhases = (
+				B0010000000000000000000D /* Sources */,
+				B0010000000000000000000E /* Frameworks */,
+				B0010000000000000000000F /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B00100000000000000000015 /* PBXTargetDependency */,
+			);
+			name = OpenWritingTests;
+			packageProductDependencies = (
+			);
+			productName = OpenWritingTests;
+			productReference = B00100000000000000000001 /* OpenWritingTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -82,6 +150,10 @@
 				TargetAttributes = {
 					AD9EB9AC2F8676DB005D3EBC = {
 						CreatedOnToolsVersion = 26.4;
+					};
+					B00100000000000000000010 = {
+						CreatedOnToolsVersion = 26.4;
+						TestTargetID = AD9EB9AC2F8676DB005D3EBC;
 					};
 				};
 			};
@@ -100,12 +172,20 @@
 			projectRoot = "";
 			targets = (
 				AD9EB9AC2F8676DB005D3EBC /* OpenWriting */,
+				B00100000000000000000010 /* OpenWritingTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		AD9EB9AB2F8676DB005D3EBC /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B0010000000000000000000F /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -122,7 +202,28 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B0010000000000000000000D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B0010000000000000000000A /* DomainModelsTests.swift in Sources */,
+				B00100000000000000000008 /* NovelProjectTests.swift in Sources */,
+				B0010000000000000000000C /* ProjectExportServiceTests.swift in Sources */,
+				B00100000000000000000009 /* ProjectFileStoreTests.swift in Sources */,
+				B0010000000000000000000B /* SearchTests.swift in Sources */,
+				B00100000000000000000016 /* TestFactories.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B00100000000000000000015 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AD9EB9AC2F8676DB005D3EBC /* OpenWriting */;
+			targetProxy = B00100000000000000000014 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		AD9EB9B62F8676DC005D3EBC /* Debug */ = {
@@ -313,6 +414,56 @@
 			};
 			name = Release;
 		};
+		B00100000000000000000012 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 2HD5836RZ2;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.4;
+				PRODUCT_BUNDLE_IDENTIFIER = CHZ.Kral.OpenWritingTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/OpenWriting.app/Contents/MacOS/OpenWriting";
+				WRAPPER_EXTENSION = xctest;
+			};
+			name = Debug;
+		};
+		B00100000000000000000013 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 2HD5836RZ2;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.4;
+				PRODUCT_BUNDLE_IDENTIFIER = CHZ.Kral.OpenWritingTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/OpenWriting.app/Contents/MacOS/OpenWriting";
+				WRAPPER_EXTENSION = xctest;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -330,6 +481,15 @@
 			buildConfigurations = (
 				AD9EB9B92F8676DC005D3EBC /* Debug */,
 				AD9EB9BA2F8676DC005D3EBC /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B00100000000000000000011 /* Build configuration list for PBXNativeTarget "OpenWritingTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B00100000000000000000012 /* Debug */,
+				B00100000000000000000013 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -11,8 +11,21 @@ struct MemoryItem: Identifiable, Codable, Hashable {
     var field: String
     var value: String
     var status: MemoryItemStatus
+    var sourceVolumeNumber: Int
     var sourceChapter: Int
     var updatedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case category
+        case subject
+        case field
+        case value
+        case status
+        case sourceVolumeNumber
+        case sourceChapter
+        case updatedAt
+    }
 
     init(
         id: String = UUID().uuidString,
@@ -21,6 +34,7 @@ struct MemoryItem: Identifiable, Codable, Hashable {
         field: String,
         value: String,
         status: MemoryItemStatus = .active,
+        sourceVolumeNumber: Int = 1,
         sourceChapter: Int,
         updatedAt: Date = Date()
     ) {
@@ -30,17 +44,48 @@ struct MemoryItem: Identifiable, Codable, Hashable {
         self.field = field
         self.value = value
         self.status = status
+        self.sourceVolumeNumber = max(sourceVolumeNumber, 1)
         self.sourceChapter = sourceChapter
         self.updatedAt = updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        category = try container.decode(MemoryCategory.self, forKey: .category)
+        subject = try container.decode(String.self, forKey: .subject)
+        field = try container.decode(String.self, forKey: .field)
+        value = try container.decode(String.self, forKey: .value)
+        status = try container.decodeIfPresent(MemoryItemStatus.self, forKey: .status) ?? .active
+        sourceVolumeNumber = max(try container.decodeIfPresent(Int.self, forKey: .sourceVolumeNumber) ?? 1, 1)
+        sourceChapter = try container.decode(Int.self, forKey: .sourceChapter)
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(category, forKey: .category)
+        try container.encode(subject, forKey: .subject)
+        try container.encode(field, forKey: .field)
+        try container.encode(value, forKey: .value)
+        try container.encode(status, forKey: .status)
+        try container.encode(sourceVolumeNumber, forKey: .sourceVolumeNumber)
+        try container.encode(sourceChapter, forKey: .sourceChapter)
+        try container.encode(updatedAt, forKey: .updatedAt)
+    }
+
+    var sourceLabel: String {
+        sourceVolumeNumber > 1 ? "第\(sourceVolumeNumber)卷第\(sourceChapter)章" : "第\(sourceChapter)章"
     }
 
     /// Deterministic dedup key based on category rules
     var dedupKey: String {
         switch category {
-        case .characterState, .relationship, .worldRule, .storyFact:
+        case .characterState, .relationship, .worldRule:
             return "\(subject)|\(field)"
-        case .timeline:
-            return "\(subject)|\(sourceChapter)"
+        case .storyFact, .timeline:
+            return "\(subject)|\(field)|v\(sourceVolumeNumber)|c\(sourceChapter)"
         case .openLoop, .readerPromise:
             return subject
         }
@@ -154,6 +199,18 @@ struct MemoryBuckets: Codable, Hashable {
         }
     }
 
+    /// Remove memory facts projected from one exact volume/chapter. Used when a
+    /// saved chapter is rewritten, rolled back, or rejected by the longform gate.
+    mutating func removeItems(sourceVolumeNumber: Int, sourceChapter: Int) {
+        let normalizedVolume = max(sourceVolumeNumber, 1)
+        for category in MemoryCategory.allCases {
+            let filtered = bucket(for: category).filter { item in
+                !(item.sourceVolumeNumber == normalizedVolume && item.sourceChapter == sourceChapter)
+            }
+            setBucket(filtered, for: category)
+        }
+    }
+
     // MARK: - Upsert (Dedup + Status Transition)
 
     /// Insert or update a memory item. If an existing active item shares the same
@@ -196,6 +253,9 @@ struct MemoryBuckets: Codable, Hashable {
             .sorted { lhs, rhs in
                 if lhs.category.priority != rhs.category.priority {
                     return lhs.category.priority < rhs.category.priority
+                }
+                if lhs.sourceVolumeNumber != rhs.sourceVolumeNumber {
+                    return lhs.sourceVolumeNumber > rhs.sourceVolumeNumber
                 }
                 return lhs.sourceChapter > rhs.sourceChapter
             }
@@ -244,9 +304,10 @@ struct MemoryBuckets: Codable, Hashable {
 
     /// Compact memory when items exceed threshold. Keeps latest outdated per key,
     /// removes resolved open loops, merges old timeline items.
-    mutating func compact(currentChapter: Int, threshold: Int = 500) {
+    mutating func compact(currentVolumeNumber: Int = 1, currentChapter: Int, threshold: Int = 500) {
         let totalItems = MemoryCategory.allCases.reduce(0) { $0 + bucket(for: $1).count }
         guard totalItems > threshold else { return }
+        let normalizedVolume = max(currentVolumeNumber, 1)
 
         // Stage 1: Keep only latest outdated per dedup key
         for category in MemoryCategory.allCases {
@@ -280,24 +341,38 @@ struct MemoryBuckets: Codable, Hashable {
         }
 
         // Stage 3: Merge old timeline items (>50 chapters ago)
-        let oldThreshold = currentChapter - 50
-        let oldItems = timeline.filter { $0.sourceChapter < oldThreshold && $0.status == .active }
+        let oldThreshold = max(currentChapter - 50, 1)
+        let oldItems = timeline.filter { item in
+            guard item.status == .active else { return false }
+            if item.sourceVolumeNumber < normalizedVolume { return true }
+            return item.sourceVolumeNumber == normalizedVolume && item.sourceChapter < oldThreshold
+        }
         if oldItems.count > 3 {
             let summary = oldItems
-                .sorted { $0.sourceChapter < $1.sourceChapter }
+                .sorted {
+                    if $0.sourceVolumeNumber != $1.sourceVolumeNumber {
+                        return $0.sourceVolumeNumber < $1.sourceVolumeNumber
+                    }
+                    return $0.sourceChapter < $1.sourceChapter
+                }
                 .prefix(8)
-                .map { "第\($0.sourceChapter)章: \($0.subject)" }
+                .map { "\($0.sourceLabel): \($0.subject)" }
                 .joined(separator: "；")
             let summaryItem = MemoryItem(
                 category: .storyFact,
                 subject: "timeline_summary",
                 field: "历史事件概要",
                 value: summary,
+                sourceVolumeNumber: normalizedVolume,
                 sourceChapter: oldThreshold
             )
             storyFacts.removeAll { $0.subject == "timeline_summary" }
             storyFacts.append(summaryItem)
-            timeline.removeAll { $0.sourceChapter < oldThreshold && $0.status == .active }
+            timeline.removeAll { item in
+                guard item.status == .active else { return false }
+                if item.sourceVolumeNumber < normalizedVolume { return true }
+                return item.sourceVolumeNumber == normalizedVolume && item.sourceChapter < oldThreshold
+            }
         }
 
         lastCompactedAtChapter = currentChapter
@@ -356,11 +431,16 @@ struct MemoryBuckets: Codable, Hashable {
         for category in MemoryCategory.allCases {
             let activeItems = bucket(for: category)
                 .filter { $0.status == .active }
-                .sorted { $0.sourceChapter > $1.sourceChapter }
+                .sorted {
+                    if $0.sourceVolumeNumber != $1.sourceVolumeNumber {
+                        return $0.sourceVolumeNumber > $1.sourceVolumeNumber
+                    }
+                    return $0.sourceChapter > $1.sourceChapter
+                }
 
             guard !activeItems.isEmpty else { continue }
 
-            let lines = activeItems.map { "- [\($0.subject)] \($0.field): \($0.value)" }
+            let lines = activeItems.map { "- [\($0.sourceLabel) · \($0.subject)] \($0.field): \($0.value)" }
             sections.append("\(category.displayName):\n\(lines.joined(separator: "\n"))")
         }
 

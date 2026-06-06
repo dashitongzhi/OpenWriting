@@ -11,49 +11,43 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(NovelLength.long.title, "长篇")
     }
 
-    func testNovelLengthWordRange() {
-        XCTAssertEqual(NovelLength.short.wordRangeLabel, "3-10万字")
-        XCTAssertEqual(NovelLength.medium.wordRangeLabel, "10-50万字")
-        XCTAssertEqual(NovelLength.long.wordRangeLabel, "50万字以上")
-    }
-
-    func testNovelLengthChapterRange() {
-        XCTAssertEqual(NovelLength.short.chapterRangeLabel, "约30-60章")
-        XCTAssertEqual(NovelLength.medium.chapterRangeLabel, "约60-200章")
-        XCTAssertEqual(NovelLength.long.chapterRangeLabel, "200章以上")
+    func testNovelLengthTargetRangeSummary() {
+        XCTAssertEqual(NovelLength.short.targetRangeSummary, "全文约 0.6 万到 1.5 万字")
+        XCTAssertEqual(NovelLength.medium.targetRangeSummary, "全文约 3 万到 12 万字")
+        XCTAssertEqual(NovelLength.long.targetRangeSummary, "全文约 30 万字以上")
     }
 
     // MARK: - ModelProvider Tests
 
     func testModelProviderCases() {
-        XCTAssertEqual(ModelProvider.openAICompatible.displayName, "OpenAI 兼容")
-        XCTAssertEqual(ModelProvider.custom.displayName, "自定义")
+        XCTAssertEqual(ModelProvider.openAICompatible.title, "OpenW")
+        XCTAssertEqual(ModelProvider.custom.title, "自定义")
     }
 
     // MARK: - ConnectionStatus Tests
 
-    func testConnectionStatusDisconnected() {
-        let status = ConnectionStatus.disconnected
-        XCTAssertEqual(status.displayText, "未连接")
-        XCTAssertEqual(status.colorHex, "#808080")
+    func testConnectionStatusIdle() {
+        let status = ConnectionStatus.idle
+        XCTAssertEqual(status.label, "等待配置")
+        XCTAssertEqual(status.symbolName, "circle.dashed")
     }
 
-    func testConnectionStatusConnecting() {
-        let status = ConnectionStatus.connecting
-        XCTAssertEqual(status.displayText, "连接中")
-        XCTAssertEqual(status.colorHex, "#FFA500")
+    func testConnectionStatusChecking() {
+        let status = ConnectionStatus.checking
+        XCTAssertEqual(status.label, "正在验证")
+        XCTAssertEqual(status.symbolName, "arrow.triangle.2.circlepath.circle.fill")
     }
 
-    func testConnectionStatusConnected() {
-        let status = ConnectionStatus.connected
-        XCTAssertEqual(status.displayText, "已连接")
-        XCTAssertEqual(status.colorHex, "#00AA00")
+    func testConnectionStatusReady() {
+        let status = ConnectionStatus.ready
+        XCTAssertEqual(status.label, "配置就绪")
+        XCTAssertEqual(status.symbolName, "checkmark.seal.fill")
     }
 
-    func testConnectionStatusError() {
-        let status = ConnectionStatus.error("测试错误")
-        XCTAssertEqual(status.displayText, "错误: 测试错误")
-        XCTAssertEqual(status.colorHex, "#FF4444")
+    func testConnectionStatusNeedsAttention() {
+        let status = ConnectionStatus.needsAttention
+        XCTAssertEqual(status.label, "需要检查")
+        XCTAssertEqual(status.symbolName, "exclamationmark.triangle.fill")
     }
 
     // MARK: - ChapterDraftSaveResult Tests
@@ -100,7 +94,7 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(ReferenceMaterialCategory.organization.title, "组织")
         XCTAssertEqual(ReferenceMaterialCategory.worldbuilding.title, "世界观")
         XCTAssertEqual(ReferenceMaterialCategory.plot.title, "剧情")
-        XCTAssertEqual(ReferenceMaterialCategory.research.title, "资料")
+        XCTAssertEqual(ReferenceMaterialCategory.research.title, "考据")
         XCTAssertEqual(ReferenceMaterialCategory.reference.title, "参考")
     }
 
@@ -123,7 +117,7 @@ final class DomainModelsTests: XCTestCase {
 
         // Organization inference
         XCTAssertEqual(
-            ReferenceMaterialCategory.infer(fromTitle: "门派设定", content: ""),
+            ReferenceMaterialCategory.infer(fromTitle: "宗门设定", content: ""),
             .organization
         )
         XCTAssertEqual(
@@ -148,8 +142,8 @@ final class DomainModelsTests: XCTestCase {
 
     func testPersistedTimestampCodecRoundTrip() {
         let now = Date()
-        let timestamp = PersistedTimestampCodec.encode(now)
-        let decoded = PersistedTimestampCodec.decode(timestamp)
+        let timestamp = ISO8601DateFormatter().string(from: now)
+        let decoded = PersistedTimestampCodec.parse(timestamp)
 
         // Allow 1 second tolerance
         XCTAssertNotNil(decoded)
@@ -160,8 +154,7 @@ final class DomainModelsTests: XCTestCase {
 
     func testPersistedTimestampCodecFromDouble() {
         let doubleValue: Double = 1704067200
-        let timestamp = PersistedTimestampCodec.encode(doubleValue)
-        let decoded = PersistedTimestampCodec.decode(timestamp)
+        let decoded = PersistedTimestampCodec.parse(String(doubleValue))
 
         XCTAssertNotNil(decoded)
         XCTAssertEqual(decoded?.timeIntervalSince1970, doubleValue)
@@ -169,8 +162,7 @@ final class DomainModelsTests: XCTestCase {
 
     func testPersistedTimestampCodecFromInt() {
         let intValue: Int = 1704067200
-        let timestamp = PersistedTimestampCodec.encode(intValue)
-        let decoded = PersistedTimestampCodec.decode(timestamp)
+        let decoded = PersistedTimestampCodec.parse(String(intValue))
 
         XCTAssertNotNil(decoded)
     }

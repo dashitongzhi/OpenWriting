@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 struct ProjectFileStore {
     private let fileManager: FileManager
@@ -96,7 +97,7 @@ struct ProjectFileStore {
             return project
         }
 
-        return projects.isEmpty ? nil : projects
+        return projects
     }
 
     func loadChapterDraft(_ chapterID: ChapterDraft.ID, for projectID: NovelProject.ID, scope: String?) -> ChapterDraft? {
@@ -190,7 +191,7 @@ struct ProjectFileStore {
     }
 
     private func writeIfChanged(_ data: Data, to url: URL) throws {
-        let fingerprint = ProjectFileFingerprint(size: data.count, hash: data.hashValue)
+        let fingerprint = ProjectFileFingerprint(size: data.count, hash: stableHash(data))
         if writeCache.fingerprint(for: url) == fingerprint {
             return
         }
@@ -203,6 +204,20 @@ struct ProjectFileStore {
         try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: url, options: .atomic)
         writeCache.set(fingerprint, for: url)
+    }
+
+    /// Deterministic content hash. Data.hashValue is seeded per-process, so it
+    /// would change every launch and defeat the write cache.
+    private func stableHash(_ data: Data) -> Int {
+        let digest = SHA256.hash(data: data)
+        return digest.withUnsafeBytes { rawBytes in
+            let bytes = rawBytes.bindMemory(to: UInt8.self)
+            var value: UInt64 = 0
+            for byte in bytes.prefix(8) {
+                value = (value << 8) | UInt64(byte)
+            }
+            return Int(truncatingIfNeeded: value)
+        }
     }
 
     private func removeDeletedProjectDirectories(keeping projectIDs: Set<NovelProject.ID>, scope: String?) throws {
@@ -230,12 +245,6 @@ struct ProjectFileStore {
             try fileManager.removeItem(at: url)
             writeCache.remove(url)
         }
-    }
-
-    private func prepareProjectsFileURL(for scope: String?) throws -> URL {
-        let directoryURL = scopeDirectoryURL(for: scope)
-        try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-        return directoryURL.appendingPathComponent("projects.json", isDirectory: false)
     }
 
     private func projectsFileURL(for scope: String?) -> URL {

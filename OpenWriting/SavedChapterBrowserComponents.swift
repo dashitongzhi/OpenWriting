@@ -31,9 +31,8 @@ func resolvedSavedChapter(
     in project: NovelProject,
     selectedChapterID: ChapterDraft.ID?
 ) -> ChapterDraft? {
-    if let selectedChapterID,
-       let chapterDraft = project.sortedChapterDrafts.first(where: { $0.id == selectedChapterID }) {
-        return chapterDraft
+    if let selectedChapterID {
+        return project.sortedChapterDrafts.first(where: { $0.id == selectedChapterID })
     }
 
     return project.sortedChapterDrafts.first

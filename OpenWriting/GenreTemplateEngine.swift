@@ -78,7 +78,15 @@ enum GenreTemplateLibrary {
     // MARK: - Build Templates
 
     private static func buildTemplates() -> [GenreTemplate] {
-        buildCoreTemplates() + migrateLegacyTemplates() + buildAdditionalTemplates()
+        let combined = buildCoreTemplates() + migrateLegacyTemplates() + buildAdditionalTemplates()
+        // Deduplicate by id (legacy migration can collide with core entries like
+        // "高武" and "都市日常"), preserving first occurrence order.
+        var seen = Set<String>()
+        var unique: [GenreTemplate] = []
+        for template in combined where seen.insert(template.id).inserted {
+            unique.append(template)
+        }
+        return unique
     }
 
     /// Core templates defined in the new system (hand-authored, not migrated from legacy).
@@ -516,7 +524,8 @@ enum GenreTemplateLibrary {
         let trimmed = projectGenre.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return defaultTemplate }
 
-        let hasComposite = trimmed.contains("+") || trimmed.contains("/") || hasYuSeparator(trimmed)
+        let hasComposite = trimmed.contains("+") || trimmed.contains("/")
+            || trimmed.contains("、") || hasYuSeparator(trimmed)
         if hasComposite { return resolveComposite(trimmed) }
 
         return template(for: trimmed)
@@ -747,7 +756,9 @@ private func inferHookTypes(from patterns: [String]) -> [HookType] {
     if joined.contains("表白") || joined.contains("甜蜜") || joined.contains("互动") || joined.contains("心动") || joined.contains("感情") || joined.contains("虐") { result.append(.emotion) }
     if joined.contains("抉择") || joined.contains("选择") || joined.contains("背叛") { result.append(.choice) }
     if result.isEmpty { result = [.crisis, .desire] }
-    return Array(Set(result))
+    // Dedupe while preserving insertion order (Array(Set(...)) was non-deterministic).
+    var seen = Set<HookType>()
+    return result.filter { seen.insert($0).inserted }
 }
 
 private func inferCoolPointPatterns(from types: [String]) -> [CoolPointPattern] {
@@ -762,7 +773,9 @@ private func inferCoolPointPatterns(from types: [String]) -> [CoolPointPattern] 
     if joined.contains("吐槽") || joined.contains("神反转") || joined.contains("笑") || joined.contains("沙雕") || joined.contains("脑洞") { result.append(.misinterpretation) }
     if joined.contains("身份") || joined.contains("揭秘") || joined.contains("身世") || joined.contains("掉马") { result.append(.identityReveal) }
     if result.isEmpty { result = [.flexAndCounter, .underdogVictory] }
-    return Array(Set(result))
+    // Dedupe while preserving insertion order (Array(Set(...)) was non-deterministic).
+    var seen = Set<CoolPointPattern>()
+    return result.filter { seen.insert($0).inserted }
 }
 
 private func buildStrandConfig(id: String, name: String, ratio: (quest: Double, fire: Double, constellation: Double)) -> GenreStrandConfig {

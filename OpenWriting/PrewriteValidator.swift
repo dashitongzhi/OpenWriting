@@ -52,6 +52,8 @@ enum PrewriteValidator {
         // === Additional checks ===
         checkChapterFocus(project: project, warnings: &warnings, checklist: &checklist)
         checkContinuity(project: project, warnings: &warnings, checklist: &checklist)
+        checkLongformReadiness(project: project, blockingReasons: &blockingReasons, warnings: &warnings, checklist: &checklist)
+        checkUnresolvedPlaceholders(project: project, blockingReasons: &blockingReasons, checklist: &checklist)
 
         return PrewriteValidationResult(
             isReady: blockingReasons.isEmpty,
@@ -190,7 +192,10 @@ enum PrewriteValidator {
         })
 
         if hasConflict {
-            warnings.append("当前章节（第\(project.currentChapterNumber)章）已有保存记录，续写将创建新版本。")
+            let chapterLabel = project.currentVolumeNumber > 1
+                ? "第\(project.currentVolumeNumber)卷第\(project.currentChapterNumber)章"
+                : "第\(project.currentChapterNumber)章"
+            warnings.append("当前章节（\(chapterLabel)）已有保存记录，续写将创建新版本。")
         }
     }
 
@@ -202,14 +207,313 @@ enum PrewriteValidator {
         checklist: inout [PrewriteChecklistItem]
     ) {
         // Check if previous chapter exists for continuation
-        let hasPreviousChapter = project.chapterDrafts.contains(where: {
-            $0.chapterNumber == project.currentChapterNumber - 1
-            || ($0.volumeNumber == project.currentVolumeNumber - 1 && $0.chapterNumber > 0)
-        })
+        let hasPreviousChapter = project.previousChapterDraftForContinuation != nil
             || project.draftContinuationCache.count > 50
 
         if project.writtenChapters > 0 && !hasPreviousChapter {
             warnings.append("未找到上一章的缓存或草稿，续写衔接可能不够紧密。")
         }
+    }
+
+    // MARK: - Longform Readiness
+
+    private static func checkLongformReadiness(
+        project: NovelProject,
+        blockingReasons: inout [String],
+        warnings: inout [String],
+        checklist: inout [PrewriteChecklistItem]
+    ) {
+        guard project.storyLength.supportsVolumePlanning else { return }
+
+        let hasSpecificVolumePlan = isSpecificLongformText(project.volumePlanNotes)
+            && !looksLikeDefaultLongformVolumePlan(project.volumePlanNotes)
+        checklist.append(PrewriteChecklistItem(
+            id: "longform_volume_plan",
+            label: "长篇分卷计划已具体化",
+            passed: hasSpecificVolumePlan,
+            isBlocking: true,
+            detail: hasSpecificVolumePlan ? "已有具体分卷目标和卷末回收方向" : "长篇不能只依赖默认分卷模板"
+        ))
+        if !hasSpecificVolumePlan {
+            blockingReasons.append("长篇充分性：请先把分卷/阶段规划改成具体内容，至少写清当前卷目标、卷末回收点和下一卷升级方向。")
+        }
+
+        let hasChapterDirective = hasSpecificChapterGoal(project)
+            || containsCurrentChapterMarker(project.outlineText, project: project)
+            || containsCurrentChapterMarker(project.structureNotes, project: project)
+        checklist.append(PrewriteChecklistItem(
+            id: "longform_chapter_directive",
+            label: "本章合同已具体化",
+            passed: hasChapterDirective,
+            isBlocking: true,
+            detail: hasChapterDirective ? "当前章已有明确目标或章纲节点" : "缺少当前章真实目标，AI 容易跳步或泛写"
+        ))
+        if !hasChapterDirective {
+            blockingReasons.append("长篇充分性：请补齐当前章真实目标或章纲节点，不能只使用默认开篇/续写提示。")
+        }
+
+        let hasThreadMap = !project.plotThreadList.activeThreads.isEmpty
+            || (isSpecificLongformText(project.activeThreadsNotes) && !looksLikeDefaultLongformThreadMap(project.activeThreadsNotes))
+        checklist.append(PrewriteChecklistItem(
+            id: "longform_thread_map",
+            label: "在途线索已维护",
+            passed: hasThreadMap,
+            isBlocking: false,
+            detail: hasThreadMap ? "已有主线、支线或伏笔线记录" : "尚未把长篇在途线索具体化"
+        ))
+        if !hasThreadMap {
+            warnings.append("建议补齐在途线索：长篇至少维护主线、支线、伏笔线和近期回收线，避免跨章失联。")
+        }
+
+        let hasDetailedChapterTree = project.structureNodeCount >= 3
+            && (project.sceneProgressNodeCount >= 2 || project.characterArcNodeCount >= 2)
+        checklist.append(PrewriteChecklistItem(
+            id: "longform_chapter_tree_detail",
+            label: "章节树细节足够",
+            passed: hasDetailedChapterTree,
+            isBlocking: false,
+            detail: hasDetailedChapterTree ? "结构、场景或人物弧线已有拆解" : "章节树仍偏粗，生成质量会依赖模型自由发挥"
+        ))
+        if !hasDetailedChapterTree {
+            warnings.append("建议细化章节树：至少补当前章场景推进、人物状态变化和必须覆盖节点。")
+        }
+
+        if project.writtenChapters >= 3 && !project.hasGlobalMemory {
+            checklist.append(PrewriteChecklistItem(
+                id: "longform_memory_after_three_chapters",
+                label: "长篇记忆已建立",
+                passed: false,
+                isBlocking: true,
+                detail: "已写 3 章以上但没有全局记忆"
+            ))
+            blockingReasons.append("长篇充分性：已写 \(project.writtenChapters) 章但尚无全局记忆，请先刷新或补齐记忆后再继续。")
+        }
+    }
+
+    // MARK: - Placeholder Scan
+
+    private static func checkUnresolvedPlaceholders(
+        project: NovelProject,
+        blockingReasons: inout [String],
+        checklist: inout [PrewriteChecklistItem]
+    ) {
+        let fields = [
+            ("作品摘要", project.summary),
+            ("当前章目标", project.chapterFocus),
+            ("作品大纲", project.outlineText),
+            ("章节骨架", project.structureNotes),
+            ("场景推进", project.sceneProgressNotes),
+            ("角色弧线", project.characterArcNotes),
+            ("伏笔记录", project.foreshadowNotes),
+            ("分卷规划", project.volumePlanNotes),
+            ("在途线索", project.activeThreadsNotes),
+            ("特殊要求", project.specialRequirements),
+            ("全局记忆", project.continuityNotes)
+        ]
+        let hits = fields.compactMap { label, text -> String? in
+            placeholderHit(in: text).map { "\(label)：\($0)" }
+        }
+
+        checklist.append(PrewriteChecklistItem(
+            id: "placeholder_scan",
+            label: "占位符已清理",
+            passed: hits.isEmpty,
+            isBlocking: true,
+            detail: hits.isEmpty ? "未发现明显占位符" : hits.prefix(3).joined(separator: "；")
+        ))
+        if !hits.isEmpty {
+            blockingReasons.append("写前占位符未清理：\(hits.prefix(3).joined(separator: "；"))")
+        }
+    }
+
+    private static func hasSpecificChapterGoal(_ project: NovelProject) -> Bool {
+        let focus = project.chapterFocus.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isSpecificLongformText(focus) else { return false }
+        if focus == "先写出开篇场景的情绪、主角目标和第一个冲突钩子，并给长期主线留出延展空间。" {
+            return false
+        }
+        if focus == "继续补齐当前章节的目标、冲突和场景节奏。" {
+            return false
+        }
+        return true
+    }
+
+    private static func containsCurrentChapterMarker(_ text: String, project: NovelProject) -> Bool {
+        let normalizedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedText.isEmpty else { return false }
+        let chapter = max(project.currentChapterNumber, 1)
+        let volume = max(project.currentVolumeNumber, 1)
+
+        var activeVolumeNumber: Int?
+        let supportsVolumePlanning = project.storyLength.supportsVolumePlanning
+        let lines = normalizedText
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        for line in lines {
+            if let volumeNumber = explicitVolumeNumber(in: line) {
+                activeVolumeNumber = volumeNumber
+            }
+            if lineReferencesChapter(
+                line,
+                volume: volume,
+                chapter: chapter,
+                activeVolumeNumber: activeVolumeNumber,
+                supportsVolumePlanning: supportsVolumePlanning
+            ) {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private static func lineReferencesChapter(
+        _ line: String,
+        volume: Int,
+        chapter: Int,
+        activeVolumeNumber: Int?,
+        supportsVolumePlanning: Bool
+    ) -> Bool {
+        let chapterAlternatives = regexAlternation(for: numberMarkers(for: chapter))
+        let chapterPatterns = [
+            "第\\s*(?:\(chapterAlternatives))\\s*章",
+            "^\\s*\(chapter)\\s*[\\.、）\\)]"
+        ]
+        let hasChapterMarker = chapterPatterns.contains { pattern in
+            line.range(of: pattern, options: .regularExpression) != nil
+        }
+        guard hasChapterMarker else { return false }
+
+        guard supportsVolumePlanning else { return true }
+
+        if let explicitVolume = explicitVolumeNumber(in: line) {
+            return explicitVolume == volume
+        }
+        if let activeVolumeNumber {
+            return activeVolumeNumber == volume
+        }
+
+        // In longform mode, a bare chapter marker is reliable only while the
+        // project is still in volume 1. Later volumes need an explicit section.
+        return volume == 1
+    }
+
+    private static func explicitVolumeNumber(in line: String) -> Int? {
+        let pattern = "第\\s*([0-9]+|[一二三四五六七八九十百千万零〇两]+)\\s*卷"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let nsLine = line as NSString
+        let range = NSRange(location: 0, length: nsLine.length)
+        guard let match = regex.firstMatch(in: line, range: range), match.numberOfRanges >= 2 else {
+            return nil
+        }
+        let rawValue = nsLine.substring(with: match.range(at: 1))
+        return parsedChineseAwareNumber(rawValue)
+    }
+
+    private static func parsedChineseAwareNumber(_ value: String) -> Int? {
+        if let number = Int(value) {
+            return number
+        }
+        let normalizedValue = value
+            .replacingOccurrences(of: "两", with: "二")
+            .replacingOccurrences(of: "〇", with: "零")
+        for number in 1...999 {
+            if numberMarkers(for: number).contains(normalizedValue) {
+                return number
+            }
+        }
+        return nil
+    }
+
+    private static func numberMarkers(for number: Int) -> [String] {
+        let safeNumber = max(number, 1)
+        var markers = [String(safeNumber)]
+        if let chinese = chineseNumeral(for: safeNumber) {
+            markers.append(chinese)
+        }
+        return markers
+    }
+
+    private static func regexAlternation(for values: [String]) -> String {
+        values
+            .map { NSRegularExpression.escapedPattern(for: $0) }
+            .joined(separator: "|")
+    }
+
+    private static func chineseNumeral(for number: Int) -> String? {
+        guard number > 0, number <= 999 else { return nil }
+        let digits = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九"]
+        if number < 10 {
+            return digits[number]
+        }
+        if number < 100 {
+            let tens = number / 10
+            let ones = number % 10
+            let prefix = tens == 1 ? "十" : "\(digits[tens])十"
+            return ones == 0 ? prefix : "\(prefix)\(digits[ones])"
+        }
+
+        let hundreds = number / 100
+        let remainder = number % 100
+        let prefix = "\(digits[hundreds])百"
+        guard remainder > 0 else { return prefix }
+        if remainder < 10 {
+            return "\(prefix)零\(digits[remainder])"
+        }
+        return "\(prefix)\(chineseNumeral(for: remainder) ?? "")"
+    }
+
+    private static func isSpecificLongformText(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 12 else { return false }
+        guard placeholderHit(in: trimmed) == nil else { return false }
+        let genericFragments = [
+            "暂无",
+            "待补充",
+            "待拆分",
+            "按分卷/阶段推进",
+            "当前卷最重要的推进目标",
+            "当前阶段最重要的目标",
+            "逐步补齐"
+        ]
+        return !genericFragments.contains { trimmed.contains($0) }
+    }
+
+    private static func looksLikeDefaultLongformVolumePlan(_ text: String) -> Bool {
+        let normalized = text.replacingOccurrences(of: " ", with: "")
+        return normalized.contains("第一卷：开篇钩子、主角目标、世界规则、卷末第一次反转")
+            && normalized.contains("第二卷：扩大冲突范围")
+            && normalized.contains("第三卷及以后")
+    }
+
+    private static func looksLikeDefaultLongformThreadMap(_ text: String) -> Bool {
+        let normalized = text.replacingOccurrences(of: " ", with: "")
+        return normalized.contains("主线：当前卷最重要的推进目标与阻力")
+            && normalized.contains("支线：此刻仍在进行")
+            && normalized.contains("伏笔线：下一次必须露面的长期埋点")
+    }
+
+    private static func placeholderHit(in text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let placeholderPatterns = [
+            "\\{[^}]{1,40}\\}",
+            "<[^>]{1,40}>",
+            "\\[[^\\]]*(?:待填|TODO|占位)[^\\]]*\\]",
+            "第\\s*N\\s*章",
+            "第N章",
+            "章纲目标",
+            "TODO",
+            "占位符",
+            "待填"
+        ]
+        for pattern in placeholderPatterns {
+            if let range = trimmed.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
+                return String(trimmed[range])
+            }
+        }
+        return nil
     }
 }

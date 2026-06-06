@@ -14,9 +14,14 @@ struct QualityReviewDashboardView: View {
 
     let result: ChapterReviewResult
     let chapterTitle: String
+    var minimumAcceptedScore: Int = 60
 
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
+    }
+
+    private var isPassed: Bool {
+        result.passes(minimumScore: minimumAcceptedScore)
     }
 
     var body: some View {
@@ -109,7 +114,7 @@ struct QualityReviewDashboardView: View {
 
             VStack(alignment: .leading, spacing: 16) {
                 // Pass status
-                PassStatusBadge(isPassed: result.isPassed, palette: palette)
+                PassStatusBadge(isPassed: isPassed, palette: palette)
 
                 // Grade
                 HStack(spacing: 10) {
@@ -124,6 +129,12 @@ struct QualityReviewDashboardView: View {
 
                 // Quick stats
                 VStack(alignment: .leading, spacing: 6) {
+                    statRow(
+                        icon: "checkmark.seal.fill",
+                        color: isPassed ? palette.successAccent : Color.red,
+                        text: "最低通过线 \(minimumAcceptedScore)/100"
+                    )
+
                     if result.hasBlockingIssues {
                         statRow(
                             icon: "xmark.octagon.fill",
@@ -277,7 +288,8 @@ struct QualityReviewDashboardView: View {
             ],
             overallSummary: "本章整体质量良好，叙事连贯，角色行为基本符合人设。主要问题集中在 AI 味痕迹和节奏把控上，建议重点修正高频 AI 用词，并适当加快前半段节奏。章末钩子力度可以再加强。"
         ),
-        chapterTitle: "第十二章 · 暗夜追踪"
+        chapterTitle: "第十二章 · 暗夜追踪",
+        minimumAcceptedScore: 75
     )
     .frame(width: 780, height: 900)
 }
@@ -340,7 +352,8 @@ struct QualityReviewDashboardView: View {
             ],
             overallSummary: "本章存在严重逻辑矛盾和设定冲突，无法通过审核。需要先修复两个阻断性问题，然后处理高优先级的 AI 味和时间线问题。建议大幅重写相关段落。"
         ),
-        chapterTitle: "第十五章 · 绝境求生"
+        chapterTitle: "第十五章 · 绝境求生",
+        minimumAcceptedScore: 75
     )
     .frame(width: 780, height: 1000)
 }

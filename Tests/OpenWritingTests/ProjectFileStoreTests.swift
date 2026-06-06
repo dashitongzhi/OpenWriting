@@ -64,8 +64,7 @@ final class ProjectFileStoreTests: XCTestCase {
         try store.saveProjects([], for: scope)
 
         let loaded = store.loadProjects(for: scope)
-        XCTAssertNotNil(loaded)
-        XCTAssertEqual(loaded?.count, 0)
+        XCTAssertNil(loaded)
     }
 
     // MARK: - Chapter Draft Tests
@@ -168,9 +167,24 @@ final class ProjectFileStoreTests: XCTestCase {
 
         try store.saveProjects([project], for: scope)
 
-        // Create updated project
-        var updatedProject = project
-        updatedProject.title = "新标题"
+        let updatedProject = NovelProject(
+            id: project.id,
+            title: "新标题",
+            genre: project.genre,
+            summary: project.summary,
+            updatedAt: "2026-06-06",
+            currentChapterTitle: project.currentChapterTitle,
+            currentChapterNumber: project.currentChapterNumber,
+            writtenChapters: project.writtenChapters,
+            chapterFocus: project.chapterFocus,
+            draftText: project.draftText,
+            outlineText: project.outlineText,
+            referenceContextText: project.referenceContextText,
+            specialRequirements: project.specialRequirements,
+            wordTargetText: project.wordTargetText,
+            continuityNotes: project.continuityNotes,
+            referenceDocuments: project.referenceDocuments
+        )
 
         try store.saveProjects([updatedProject], for: scope)
 
@@ -193,7 +207,7 @@ final class ProjectFileStoreTests: XCTestCase {
         try store.saveProjects([], for: scope)
 
         let loaded = store.loadProjects(for: scope)
-        XCTAssertEqual(loaded?.count, 0)
+        XCTAssertNil(loaded)
     }
 
     // MARK: - Scope Tests

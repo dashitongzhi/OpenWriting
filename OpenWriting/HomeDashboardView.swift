@@ -1678,6 +1678,32 @@ private struct ProjectsWorkspacePanel: View {
             subtitle: exportStatusMessage
         ) {
             VStack(alignment: .leading, spacing: 14) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) {
+                        Button("导入备份") {
+                            importProjectBackup()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(palette.coolAccent)
+
+                        Text("选择 OpenWriting 导出的文件夹，验证完整后会作为项目恢复。")
+                            .font(.caption)
+                            .foregroundStyle(palette.textSecondary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Button("导入备份") {
+                            importProjectBackup()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(palette.coolAccent)
+
+                        Text("选择 OpenWriting 导出的文件夹，验证完整后会作为项目恢复。")
+                            .font(.caption)
+                            .foregroundStyle(palette.textSecondary)
+                    }
+                }
+
                 if appState.recentProjects.isEmpty {
                     Text("还没有项目。先用上方第一张卡片底部的“新建项目”开始一本书，创建后会立刻出现在这里。")
                         .font(.subheadline)
@@ -1769,6 +1795,25 @@ private struct ProjectsWorkspacePanel: View {
             NSWorkspace.shared.activateFileViewerSelecting([summary.directoryURL])
         } catch {
             exportStatusMessage = "导出失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func importProjectBackup() {
+        let panel = NSOpenPanel()
+        panel.title = "导入 OpenWriting 备份"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            let report = try ProjectExportService.validateExport(at: url)
+            let importedProject = appState.importProjectBackup(report.project)
+            exportStatusMessage = "已验证 \(report.manifestFileCount) 个备份文件，并恢复《\(importedProject.title)》。"
+        } catch {
+            exportStatusMessage = "导入备份失败：\(error.localizedDescription)"
         }
     }
 }

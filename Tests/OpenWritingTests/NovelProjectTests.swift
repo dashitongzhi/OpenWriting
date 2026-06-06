@@ -71,7 +71,7 @@ final class NovelProjectTests: XCTestCase {
             content: "原始内容"
         )
 
-        let version = draft.versionSnapshot(reason: "手动保存")
+        let version = draft.versionSnapshot(reason: "手动保存", savedAt: "2026-06-06")
         XCTAssertEqual(version.chapterTitle, "测试章节")
         XCTAssertEqual(version.content, "原始内容")
         XCTAssertEqual(version.reason, "手动保存")
@@ -124,68 +124,61 @@ final class NovelProjectTests: XCTestCase {
     }
 
     func testChapterDraftMetadataSorting() {
-        let meta1 = ChapterDraftMetadata(
+        let meta1 = ChapterDraftMetadata(chapterDraft: ChapterDraft(
             id: "1",
             volumeNumber: 1,
             chapterNumber: 1,
             chapterTitle: "第一章",
-            savedAt: "2024-01-01",
-            wordCount: 1000,
-            previewText: "预览1",
-            versionCount: 1
-        )
-        let meta2 = ChapterDraftMetadata(
+            content: "预览1",
+            savedAt: "2024-01-01"
+        ))
+        let meta2 = ChapterDraftMetadata(chapterDraft: ChapterDraft(
             id: "2",
             volumeNumber: 1,
             chapterNumber: 2,
             chapterTitle: "第二章",
-            savedAt: "2024-01-02",
-            wordCount: 2000,
-            previewText: "预览2",
-            versionCount: 2
-        )
+            content: "预览2",
+            savedAt: "2024-01-02"
+        ))
 
         let sorted = [meta2, meta1].sorted(by: ChapterDraftMetadata.sortDescending)
         XCTAssertEqual(sorted[0].chapterNumber, 2)
     }
 
-    // MARK: - NovelVolume Tests
+    // MARK: - Volume Planning Tests
 
-    func testNovelVolumeCreation() {
-        let volume = NovelVolume(
-            volumeNumber: 1,
-            title: "第一卷：开始",
-            summary: "故事的开始"
+    func testNovelProjectVolumeNumberIsNormalized() {
+        let project = NovelProject(
+            id: "volume-normalization",
+            title: "测试小说",
+            genre: "都市",
+            summary: "故事的开始",
+            updatedAt: "2026-06-06",
+            currentChapterTitle: "第一章",
+            currentVolumeNumber: 0,
+            currentChapterNumber: 1,
+            writtenChapters: 0,
+            chapterFocus: "推进开篇",
+            draftText: "",
+            outlineText: "",
+            referenceContextText: "",
+            specialRequirements: "",
+            wordTargetText: "",
+            continuityNotes: "",
+            referenceDocuments: []
         )
 
-        XCTAssertEqual(volume.volumeNumber, 1)
-        XCTAssertEqual(volume.title, "第一卷：开始")
-        XCTAssertEqual(volume.summary, "故事的开始")
+        XCTAssertEqual(project.currentVolumeNumber, 1)
     }
 
-    func testNovelVolumeLabel() {
-        let volume = NovelVolume(
-            volumeNumber: 3,
-            title: "第三卷",
-            summary: ""
-        )
-
-        XCTAssertEqual(volume.label, "第 3 卷")
+    func testLongLengthSupportsVolumePlanning() {
+        XCTAssertTrue(NovelLength.long.supportsVolumePlanning)
+        XCTAssertTrue(NovelLength.long.creationChecklist.contains { $0.contains("分卷") })
     }
 
-    func testDefaultVolumesLong() {
-        let volumes = NovelVolume.defaultVolumes(for: .long)
-        XCTAssertEqual(volumes.count, 4)
-        XCTAssertEqual(volumes[0].volumeNumber, 1)
-        XCTAssertEqual(volumes[1].volumeNumber, 2)
-        XCTAssertEqual(volumes[2].volumeNumber, 3)
-        XCTAssertEqual(volumes[3].volumeNumber, 4)
-    }
-
-    func testDefaultVolumesShort() {
-        let volumes = NovelVolume.defaultVolumes(for: .short)
-        XCTAssertEqual(volumes.count, 1)
-        XCTAssertEqual(volumes[0].volumeNumber, 1)
+    func testShortAndMediumDoNotRequireVolumePlanning() {
+        XCTAssertFalse(NovelLength.short.supportsVolumePlanning)
+        XCTAssertFalse(NovelLength.medium.supportsVolumePlanning)
     }
 
     // MARK: - Reference Document Tests

@@ -42,9 +42,15 @@ final class WritersAICommandsManager {
     func applyEnhancedWritingUpdate(
         _ context: MemoryUpdateContext?,
         review: ChapterReviewResult?,
+        reviewedChapter: ChapterReviewTarget? = nil,
         for projectID: NovelProject.ID
     ) {
-        appState?.applyEnhancedWritingUpdate(context, review: review, for: projectID)
+        appState?.applyEnhancedWritingUpdate(
+            context,
+            review: review,
+            reviewedChapter: reviewedChapter,
+            for: projectID
+        )
     }
 
     func applyChapterTreeRefresh(

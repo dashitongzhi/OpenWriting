@@ -18,16 +18,21 @@ struct MemoryExtractionService {
         var readerPromises: [ExtractedMemoryItem]
 
         var allItems: [MemoryItem] {
-            var items: [MemoryItem] = []
-            let chapter = extractedChapterNumber
+            allItems(sourceVolumeNumber: 1)
+        }
 
-            items += characterStates.map { $0.toMemoryItem(category: .characterState, sourceChapter: chapter) }
-            items += relationships.map { $0.toMemoryItem(category: .relationship, sourceChapter: chapter) }
-            items += worldRules.map { $0.toMemoryItem(category: .worldRule, sourceChapter: chapter) }
-            items += storyFacts.map { $0.toMemoryItem(category: .storyFact, sourceChapter: chapter) }
-            items += timeline.map { $0.toMemoryItem(category: .timeline, sourceChapter: chapter) }
-            items += openLoops.map { $0.toMemoryItem(category: .openLoop, sourceChapter: chapter) }
-            items += readerPromises.map { $0.toMemoryItem(category: .readerPromise, sourceChapter: chapter) }
+        func allItems(sourceVolumeNumber: Int, sourceChapterNumber: Int? = nil) -> [MemoryItem] {
+            var items: [MemoryItem] = []
+            let chapter = sourceChapterNumber ?? extractedChapterNumber
+            let volume = max(sourceVolumeNumber, 1)
+
+            items += characterStates.map { $0.toMemoryItem(category: .characterState, sourceVolumeNumber: volume, sourceChapter: chapter) }
+            items += relationships.map { $0.toMemoryItem(category: .relationship, sourceVolumeNumber: volume, sourceChapter: chapter) }
+            items += worldRules.map { $0.toMemoryItem(category: .worldRule, sourceVolumeNumber: volume, sourceChapter: chapter) }
+            items += storyFacts.map { $0.toMemoryItem(category: .storyFact, sourceVolumeNumber: volume, sourceChapter: chapter) }
+            items += timeline.map { $0.toMemoryItem(category: .timeline, sourceVolumeNumber: volume, sourceChapter: chapter) }
+            items += openLoops.map { $0.toMemoryItem(category: .openLoop, sourceVolumeNumber: volume, sourceChapter: chapter) }
+            items += readerPromises.map { $0.toMemoryItem(category: .readerPromise, sourceVolumeNumber: volume, sourceChapter: chapter) }
 
             return items
         }
@@ -87,19 +92,27 @@ struct MemoryExtractionService {
         var value: String
         var evidence: String?
 
-        func toMemoryItem(category: MemoryCategory, sourceChapter: Int) -> MemoryItem {
+        func toMemoryItem(category: MemoryCategory, sourceVolumeNumber: Int, sourceChapter: Int) -> MemoryItem {
             MemoryItem(
-                id: Self.stableID(category: category, subject: subject, field: field, value: value, chapter: sourceChapter),
+                id: Self.stableID(
+                    category: category,
+                    subject: subject,
+                    field: field,
+                    value: value,
+                    volume: sourceVolumeNumber,
+                    chapter: sourceChapter
+                ),
                 category: category,
                 subject: subject,
                 field: field,
                 value: value,
+                sourceVolumeNumber: sourceVolumeNumber,
                 sourceChapter: sourceChapter
             )
         }
 
-        private static func stableID(category: MemoryCategory, subject: String, field: String, value: String, chapter: Int) -> String {
-            let raw = [category.rawValue, subject, field, value, String(chapter)].joined(separator: "|")
+        private static func stableID(category: MemoryCategory, subject: String, field: String, value: String, volume: Int, chapter: Int) -> String {
+            let raw = [category.rawValue, subject, field, value, String(max(volume, 1)), String(chapter)].joined(separator: "|")
             let hash = raw.unicodeScalars.reduce(UInt64(14_695_981_039_346_656_037)) { result, scalar in
                 (result ^ UInt64(scalar.value)) &* 1_099_511_628_211
             }
@@ -113,7 +126,8 @@ struct MemoryExtractionService {
         """
         你是一位中文网络小说创作助手，专门负责从章节文本中提取结构化记忆信息。
 
-        你的任务是从给定的章节文本中提取以下7类记忆信息，每类最多返回10条：
+        你的任务是从给定的章节文本中提取后续创作必须记住的耐久信息，而不是总结所有句子。
+        请提取以下7类记忆信息，每类最多返回10条：
 
         1. **角色状态 (characterStates)**：角色在本章中的新状态、情绪变化、境界提升、伤势变化、身份变化等。
            - subject: 角色名
@@ -152,7 +166,12 @@ struct MemoryExtractionService {
 
         重要规则：
         - 顶层必须包含 chapter 字段，值为当前章节号
-        - 只提取明确在文本中陈述或暗示的信息，不要过度推断
+        - 只提取明确在文本中陈述或强证据暗示的信息，不要过度推断
+        - 优先提取会影响后续章节的事实：人物状态变化、关系立场变化、世界规则、关键决定、未解决承诺、伏笔投放或回收
+        - 不要提取泛泛氛围、修辞句、普通动作、一次性心理描写、纯风格描述或没有后续影响的寒暄
+        - 如果某个旧状态在本章被更新，请提取“当前最新状态”，不要重复旧状态
+        - openLoops 和 readerPromises 必须说明后续需要回收/兑现什么；如果本章已经回收，请在 value 中写明“已回收/已兑现”
+        - storyFacts 和 timeline 只保留会影响后续理解的关键事件，不要把每个动作都当成事件
         - 每条记忆必须附带evidence字段，引用原文中的关键语句（最多50字）
         - 如果某类没有新信息，返回空数组而非虚构
         - 输出必须是有效的JSON格式，不要包含任何其他文字
@@ -161,18 +180,40 @@ struct MemoryExtractionService {
 
     // MARK: - User Prompt
 
-    static func extractionUserPrompt(chapterText: String, chapterNumber: Int, projectContext: String) -> String {
+    static func extractionUserPrompt(
+        chapterText: String,
+        chapterNumber: Int,
+        volumeNumber: Int = 1,
+        projectContext: String,
+        longformContext: String = "",
+        existingMemoryContext: String = "",
+        reviewContext: String = ""
+    ) -> String {
         """
-        当前章节：第\(chapterNumber)章
+        当前章节：第\(max(volumeNumber, 1))卷第\(chapterNumber)章
 
         项目背景：
         \(projectContext)
 
+        长篇后台合同与当前章目标：
+        \(normalized(longformContext, fallback: "暂无长篇后台合同。"))
+
+        已有结构化记忆摘要（用于判断哪些状态已经存在，避免重复旧信息）：
+        \(normalized(existingMemoryContext, fallback: "暂无已有结构化记忆摘要。"))
+
+        写后审查摘要（用于关注需要沉淀的质量风险、承接问题或修订重点）：
+        \(normalized(reviewContext, fallback: "暂无写后审查摘要。"))
+
         章节文本：
         \(chapterText)
 
-        请提取本章中的所有结构化记忆信息。
+        请只提取本章中新出现、被更新、被兑现、或会影响后续章节的结构化记忆信息。
         """
+    }
+
+    private static func normalized(_ text: String, fallback: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? fallback : trimmed
     }
 
     // MARK: - Parse Result

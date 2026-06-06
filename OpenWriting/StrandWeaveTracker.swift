@@ -370,15 +370,46 @@ struct RhythmRedLineConfig: Codable {
 struct StrandWeaveState: Codable, Hashable {
     struct Entry: Identifiable, Codable, Hashable {
         let id: String
+        let volumeNumber: Int
         let chapterNumber: Int
         let dominant: StrandType
         let recordedAt: Date
 
-        init(chapterNumber: Int, dominant: StrandType, recordedAt: Date = Date()) {
-            self.id = "\(chapterNumber)-\(dominant.rawValue)"
-            self.chapterNumber = chapterNumber
+        enum CodingKeys: String, CodingKey {
+            case id
+            case volumeNumber
+            case chapterNumber
+            case dominant
+            case recordedAt
+        }
+
+        init(volumeNumber: Int = 1, chapterNumber: Int, dominant: StrandType, recordedAt: Date = Date()) {
+            let safeVolumeNumber = max(volumeNumber, 1)
+            let safeChapterNumber = max(chapterNumber, 1)
+            self.id = "\(safeVolumeNumber)-\(safeChapterNumber)-\(dominant.rawValue)"
+            self.volumeNumber = safeVolumeNumber
+            self.chapterNumber = safeChapterNumber
             self.dominant = dominant
             self.recordedAt = recordedAt
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            volumeNumber = try container.decodeIfPresent(Int.self, forKey: .volumeNumber) ?? 1
+            chapterNumber = try container.decode(Int.self, forKey: .chapterNumber)
+            dominant = try container.decode(StrandType.self, forKey: .dominant)
+            recordedAt = try container.decodeIfPresent(Date.self, forKey: .recordedAt) ?? Date()
+            id = try container.decodeIfPresent(String.self, forKey: .id)
+                ?? "\(volumeNumber)-\(chapterNumber)-\(dominant.rawValue)"
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(id, forKey: .id)
+            try container.encode(volumeNumber, forKey: .volumeNumber)
+            try container.encode(chapterNumber, forKey: .chapterNumber)
+            try container.encode(dominant, forKey: .dominant)
+            try container.encode(recordedAt, forKey: .recordedAt)
         }
     }
 
@@ -414,10 +445,23 @@ struct StrandWeaveState: Codable, Hashable {
         constellationMaxGap: 15
     )
 
-    mutating func recordChapter(_ chapterNumber: Int, dominant: StrandType) {
-        entries.removeAll { $0.chapterNumber == chapterNumber }
-        entries.append(Entry(chapterNumber: chapterNumber, dominant: dominant))
-        entries.sort { $0.chapterNumber < $1.chapterNumber }
+    mutating func recordChapter(_ chapterNumber: Int, volumeNumber: Int = 1, dominant: StrandType) {
+        entries.removeAll {
+            $0.volumeNumber == max(volumeNumber, 1) && $0.chapterNumber == max(chapterNumber, 1)
+        }
+        entries.append(Entry(volumeNumber: volumeNumber, chapterNumber: chapterNumber, dominant: dominant))
+        entries.sort {
+            if $0.volumeNumber == $1.volumeNumber {
+                return $0.chapterNumber < $1.chapterNumber
+            }
+            return $0.volumeNumber < $1.volumeNumber
+        }
+    }
+
+    mutating func removeChapter(_ chapterNumber: Int, volumeNumber: Int = 1) {
+        entries.removeAll {
+            $0.volumeNumber == max(volumeNumber, 1) && $0.chapterNumber == max(chapterNumber, 1)
+        }
     }
 
     func checkRedLines(currentChapter: Int) -> [PacingWarning] {
@@ -431,7 +475,7 @@ struct StrandWeaveState: Codable, Hashable {
             ))
         }
 
-        let fireGap = gapSince(.fire, currentChapter: currentChapter)
+        let fireGap = gapSince(.fire)
         if fireGap >= fireMaxGap {
             warnings.append(PacingWarning(
                 strand: .fire,
@@ -440,7 +484,7 @@ struct StrandWeaveState: Codable, Hashable {
             ))
         }
 
-        let constellationGap = gapSince(.constellation, currentChapter: currentChapter)
+        let constellationGap = gapSince(.constellation)
         if constellationGap >= constellationMaxGap {
             warnings.append(PacingWarning(
                 strand: .constellation,
@@ -488,10 +532,10 @@ struct StrandWeaveState: Codable, Hashable {
         return count
     }
 
-    private func gapSince(_ strand: StrandType, currentChapter: Int) -> Int {
-        guard let latest = entries.last(where: { $0.dominant == strand }) else {
-            return max(entries.count, currentChapter - 1)
+    private func gapSince(_ strand: StrandType) -> Int {
+        guard let latestIndex = entries.lastIndex(where: { $0.dominant == strand }) else {
+            return entries.count
         }
-        return max(0, currentChapter - latest.chapterNumber)
+        return max(0, entries.count - latestIndex - 1)
     }
 }

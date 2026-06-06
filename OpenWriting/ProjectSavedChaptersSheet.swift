@@ -102,6 +102,7 @@ struct ProjectSavedChaptersSheet: View {
                                         results: searchResults,
                                         onSelectChapter: { chapterID in
                                             selectedChapterID = chapterID
+                                            appState.ensureChapterDraftLoaded(chapterID, for: project.id)
                                         }
                                     )
                                 }
@@ -160,6 +161,7 @@ struct ProjectSavedChaptersSheet: View {
                                     results: searchResults,
                                     onSelectChapter: { chapterID in
                                         selectedChapterID = chapterID
+                                        appState.ensureChapterDraftLoaded(chapterID, for: project.id)
                                     }
                                 )
                             }

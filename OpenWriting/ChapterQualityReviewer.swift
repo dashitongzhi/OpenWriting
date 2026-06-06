@@ -215,9 +215,13 @@ struct ChapterReviewResult: Codable, Hashable {
         issues.filter { !$0.isBlocking }
     }
 
-    /// Whether the chapter passes review (no blocking issues, score >= 60).
+    func passes(minimumScore: Int) -> Bool {
+        !hasBlockingIssues && overallScore >= minimumScore
+    }
+
+    /// Whether the chapter passes review under the legacy default threshold.
     var isPassed: Bool {
-        !hasBlockingIssues && overallScore >= 60
+        passes(minimumScore: 60)
     }
 
     // MARK: Grade (for UI display)
@@ -301,7 +305,7 @@ enum UnifiedQualityReviewer {
     1. 严格按 9 个维度逐一检查，不跳过任何维度。
     2. 每个问题必须提供原文引用作为证据，不允许主观"感觉不好"。
     3. 问题严重性分为：critical（阻断）、high（高）、medium（中）、low（低）。
-    4. critical 级别问题会阻断下一章的创作，必须修复。
+    4. 每个 issue 必须输出 blocking 布尔值；critical 必须 blocking=true，其他严重度若会破坏长篇连续性也应 blocking=true。
     5. 特别关注 AI 味问题：高频AI词汇、同构句式、情绪标签化、模板化对白。
     6. 必须以 JSON 格式输出审查结果，不要解释。
     """
@@ -313,7 +317,8 @@ enum UnifiedQualityReviewer {
         chapterDraft: String,
         memoryContext: String
     ) -> String {
-        """
+        let draftContext = reviewDraftContext(project: project, chapterDraft: chapterDraft)
+        return """
         项目名称：\(project.title)
         类型：\(project.genre)
         创作规模：\(project.storyLength.title)
@@ -335,11 +340,24 @@ enum UnifiedQualityReviewer {
         伏笔与回收记录：
         \(normalized(project.foreshadowNotes, fallback: "暂无伏笔回收记录。"))
 
+        后台长篇合同：
+        \(excerpt(project.longformStorySystemContext, limit: 3000))
+
+        \(draftContext)
+
         待审查正文：
         \(chapterDraft)
 
         审查要求：
         请对上述正文进行九维质量审查。
+        如果提供了草稿箱当前正文，它只作为承接上下文和连续性参照；issues 只记录待审查正文自身的问题。
+        必须判断待审查正文能否自然接在草稿箱最后状态之后，若明显断裂、倒退、重复或改写已有正文，标记为 critical。
+        必须逐条核对后台长篇合同中的本章必须执行、禁区与风险、写后门禁和本章修订反馈。
+        如果正文漏掉后台合同里的明确章节节点，标记为 critical。
+        如果正文违背全局记忆、人物状态、世界规则、时间线或草稿箱最后状态，标记为 critical。
+        如果正文绕开本章修订反馈继续推进下一章，标记为 critical。
+        每个 issue 都必须输出 blocking；凡是会导致不能安全保存、不能进入下一章或会污染长期记忆的问题，blocking 必须为 true。
+        如果长篇章节没有有效章末钩子、微兑现或下一章期待，追读力至少标记为 high 问题。
 
         审查维度：
         1. 设定一致性 — 战力/地点/道具/能力是否与已有设定矛盾
@@ -379,6 +397,7 @@ enum UnifiedQualityReviewer {
             {
               "dimension": "ai_flavor",
               "severity": "high",
+              "blocking": false,
               "description": "问题描述",
               "evidence": "原文引用",
               "fix_hint": "修复建议",
@@ -417,21 +436,22 @@ enum UnifiedQualityReviewer {
             maxTokens: 3_000
         )
 
-        var result = parseReviewResult(from: reviewResponse)
+        let result = parseReviewResult(from: reviewResponse)
 
-        // Merge local anti-patterns
-        if !localPatterns.isEmpty {
-            result = ChapterReviewResult(
-                overallScore: result.overallScore,
-                dimensionScores: result.dimensionScores,
-                issues: result.issues,
-                hasBlockingIssues: result.hasBlockingIssues,
-                antiPatterns: result.antiPatterns + localPatterns,
-                overallSummary: result.overallSummary
-            )
+        return mergeLocalAntiPatterns(into: result, localPatterns: localPatterns)
+    }
+
+    private static func reviewDraftContext(project: NovelProject, chapterDraft: String) -> String {
+        let currentDraft = project.draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let reviewedDraft = chapterDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !currentDraft.isEmpty, currentDraft != reviewedDraft else {
+            return "草稿箱当前正文：\n暂无额外草稿箱上下文。"
         }
 
-        return result
+        return """
+        草稿箱当前正文（只作承接上下文，不要把这里已有的问题计入待审查正文 issues）：
+        \(excerpt(currentDraft, limit: 2400))
+        """
     }
 
     // MARK: - Parse Review Result (JSON → ChapterReviewResult)
@@ -453,14 +473,11 @@ enum UnifiedQualityReviewer {
         let evidence: String?
         let fix_hint: String?
         let location: String?
+        let blocking: Bool?
     }
 
     static func parseReviewResult(from jsonString: String) -> ChapterReviewResult {
-        let cleaned = jsonString
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "```json", with: "")
-            .replacingOccurrences(of: "```", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleaned = extractJSONPayload(from: jsonString)
 
         guard let data = cleaned.data(using: .utf8),
               let response = try? JSONDecoder().decode(AIReviewResponse.self, from: data) else {
@@ -474,11 +491,11 @@ enum UnifiedQualityReviewer {
         }
 
         // Map issues
-        let issues: [ReviewIssue] = response.issues.compactMap { issue in
-            guard let dimension = ReviewDimension(rawValue: issue.dimension),
-                  let severity = ReviewSeverity(rawValue: issue.severity) else {
-                return nil
-            }
+        let issues: [ReviewIssue] = response.issues.map { issue in
+            let dimension = reviewDimension(from: issue.dimension)
+            let severity = issue.blocking == true
+                ? .critical
+                : reviewSeverity(from: issue.severity)
             return ReviewIssue(
                 dimension: dimension,
                 severity: severity,
@@ -511,6 +528,81 @@ enum UnifiedQualityReviewer {
         )
     }
 
+    private static func extractJSONPayload(from response: String) -> String {
+        var cleaned = response
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "```json", with: "")
+            .replacingOccurrences(of: "```JSON", with: "")
+            .replacingOccurrences(of: "```", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let start = cleaned.firstIndex(of: "{"),
+           let end = cleaned.lastIndex(of: "}"),
+           start <= end {
+            cleaned = String(cleaned[start...end])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        return cleaned
+    }
+
+    private static func reviewDimension(from rawValue: String) -> ReviewDimension {
+        let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let dimension = ReviewDimension(rawValue: normalized) {
+            return dimension
+        }
+
+        let compact = normalized
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: " ", with: "")
+
+        let aliases: [(ReviewDimension, [String])] = [
+            (.settingConsistency, ["settingconsistency", "setting", "设定", "设定一致性", "世界观", "规则"]),
+            (.timelineConsistency, ["timelineconsistency", "timeline", "时间线", "时间"]),
+            (.narrativeContinuity, ["narrativecontinuity", "continuity", "叙事", "连贯", "承接"]),
+            (.characterConsistency, ["characterconsistency", "character", "角色", "人物", "ooc"]),
+            (.logicIntegrity, ["logicintegrity", "logic", "逻辑", "因果"]),
+            (.aiFlavor, ["aiflavor", "ai", "ai味", "模型味", "机器味"]),
+            (.highPointDensity, ["highpointdensity", "highpoint", "爽点", "吸引力"]),
+            (.pacing, ["pacing", "节奏", "比例"]),
+            (.readerPull, ["readerpull", "追读", "钩子", "期待"])
+        ]
+
+        for (dimension, values) in aliases where values.contains(where: { compact.contains($0) }) {
+            return dimension
+        }
+
+        return .logicIntegrity
+    }
+
+    private static func reviewSeverity(from rawValue: String) -> ReviewSeverity {
+        let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let severity = ReviewSeverity(rawValue: normalized) {
+            return severity
+        }
+
+        let compact = normalized
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: " ", with: "")
+
+        if ["critical", "blocker", "blocking", "fatal", "严重", "阻断", "致命"].contains(where: { compact.contains($0) }) {
+            return .critical
+        }
+        if ["high", "major", "重要", "高"].contains(where: { compact.contains($0) }) {
+            return .high
+        }
+        if ["medium", "middle", "moderate", "中", "一般"].contains(where: { compact.contains($0) }) {
+            return .medium
+        }
+        if ["low", "minor", "轻微", "低"].contains(where: { compact.contains($0) }) {
+            return .low
+        }
+
+        return .critical
+    }
+
     // MARK: - Penalty-Based Score Calculation (webnovel-writer methodology)
 
     /// Computes overall score from 100 minus severity penalties.
@@ -518,6 +610,55 @@ enum UnifiedQualityReviewer {
     static func computePenaltyScore(issues: [ReviewIssue]) -> Int {
         let totalPenalty = issues.reduce(0) { $0 + $1.severity.penalty }
         return max(0, 100 - totalPenalty)
+    }
+
+    static func mergeLocalAntiPatterns(
+        into result: ChapterReviewResult,
+        localPatterns: [String]
+    ) -> ChapterReviewResult {
+        guard !localPatterns.isEmpty else { return result }
+
+        let localIssues = localPatterns.map { pattern in
+            ReviewIssue(
+                dimension: .aiFlavor,
+                severity: localPatternSeverity(pattern),
+                description: pattern,
+                evidence: pattern,
+                fixHint: "改成更具体的动作、对白或场景细节，避免重复套话。",
+                location: "本地启发式检查"
+            )
+        }
+        let mergedIssues = result.issues + localIssues
+        let mergedAntiPatterns = uniqueStrings(result.antiPatterns + localPatterns)
+        let penaltyScore = computePenaltyScore(issues: mergedIssues)
+
+        return ChapterReviewResult(
+            overallScore: min(result.overallScore, penaltyScore),
+            dimensionScores: result.dimensionScores,
+            issues: mergedIssues,
+            hasBlockingIssues: result.hasBlockingIssues || mergedIssues.contains { $0.isBlocking },
+            antiPatterns: mergedAntiPatterns,
+            overallSummary: result.overallSummary
+        )
+    }
+
+    private static func localPatternSeverity(_ pattern: String) -> ReviewSeverity {
+        if pattern.contains("连续") || pattern.contains("模板表达") || pattern.contains("情绪标签化") {
+            return .high
+        }
+        return .medium
+    }
+
+    private static func uniqueStrings(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        return values.filter { value in
+            let normalizedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalizedValue.isEmpty, !seen.contains(normalizedValue) else {
+                return false
+            }
+            seen.insert(normalizedValue)
+            return true
+        }
     }
 
     // MARK: - Fallback Parse (text-based, when JSON parsing fails)
@@ -528,11 +669,13 @@ enum UnifiedQualityReviewer {
             dimensionScores: [:],
             issues: [ReviewIssue(
                 dimension: .aiFlavor,
-                severity: .low,
-                description: "审查结果解析失败，请人工检查正文质量。",
-                evidence: String(text.prefix(200))
+                severity: .critical,
+                description: "审查结果解析失败，当前质量门禁不可用。",
+                evidence: String(text.prefix(200)),
+                fixHint: "请重新运行质量审查，确认模型返回可解析 JSON 后再保存或接受候选稿。",
+                location: "质量审查响应"
             )],
-            hasBlockingIssues: false,
+            hasBlockingIssues: true,
             antiPatterns: [],
             overallSummary: "审查结果解析失败，请人工检查。"
         )

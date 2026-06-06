@@ -83,6 +83,9 @@ struct ChapterTreeRefreshBaseline {
 struct ChapterTreeRefreshApplyOutcome {
     var acceptedSections = 0
     var protectedSections = 0
+    var acceptedSectionLabels: [String] = []
+    var protectedSectionLabels: [String] = []
+    var ignoredSectionLabels: [String] = []
 
     var hasAcceptedChanges: Bool {
         acceptedSections > 0
@@ -90,6 +93,20 @@ struct ChapterTreeRefreshApplyOutcome {
 
     var preservedLocalChanges: Bool {
         protectedSections > 0
+    }
+
+    var summaryLabel: String {
+        var parts: [String] = []
+        if !acceptedSectionLabels.isEmpty {
+            parts.append("已更新 \(acceptedSectionLabels.joined(separator: "、"))")
+        }
+        if !protectedSectionLabels.isEmpty {
+            parts.append("已保护 \(protectedSectionLabels.joined(separator: "、"))")
+        }
+        if !ignoredSectionLabels.isEmpty {
+            parts.append("返回为空 \(ignoredSectionLabels.joined(separator: "、"))")
+        }
+        return parts.joined(separator: "；")
     }
 }
 
