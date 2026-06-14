@@ -8,7 +8,22 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LONGFORM="$REPO_ROOT/OpenWriting/LongformStorySystem.swift"
 WRITING_DESK="$REPO_ROOT/OpenWriting/WritingDeskView.swift"
 REVIEWER="$REPO_ROOT/OpenWriting/ChapterQualityReviewer.swift"
+ENHANCED="$REPO_ROOT/OpenWriting/AIWritingService+Enhanced.swift"
 PROMPTS="$REPO_ROOT/OpenWriting/AIWritingService+Prompts.swift"
+MEMORY_BUCKETS="$REPO_ROOT/OpenWriting/WritingMemoryBuckets.swift"
+SAVED_CHAPTERS_SHEET="$REPO_ROOT/OpenWriting/ProjectSavedChaptersSheet.swift"
+APP_STATE="$REPO_ROOT/OpenWriting/AppState.swift"
+APP_STATE_ICLOUD="$REPO_ROOT/OpenWriting/AppState+iCloudSync.swift"
+PROJECT_STORE="$REPO_ROOT/OpenWriting/ProjectFileStore.swift"
+ENTITLEMENTS="$REPO_ROOT/OpenWriting/OpenWriting.entitlements"
+PROJECT_FILE="$REPO_ROOT/OpenWriting.xcodeproj/project.pbxproj"
+RUN_ALL="$REPO_ROOT/scripts/run-all-checks.sh"
+RUN_EVALS="$REPO_ROOT/scripts/run-longform-evals.sh"
+EVAL_RUNNER="$REPO_ROOT/LongformEvals/run_mock_eval.py"
+EVAL_SEEDS="$REPO_ROOT/LongformEvals/seeds.json"
+TEST_PACKAGE="$REPO_ROOT/Tests/Package.swift"
+TEST_README="$REPO_ROOT/Tests/README.md"
+SHARED_SCHEME="$REPO_ROOT/OpenWriting.xcodeproj/xcshareddata/xcschemes/OpenWriting.xcscheme"
 
 fail() {
     echo "error: $1" >&2
@@ -20,7 +35,7 @@ require_text() {
     local pattern="$2"
     local message="$3"
 
-    if ! rg -q --fixed-strings "$pattern" "$file"; then
+    if ! rg -q --fixed-strings -- "$pattern" "$file"; then
         fail "$message"
     fi
 }
@@ -56,8 +71,18 @@ require_text "$LONGFORM" "let qualityTrend = buildQualityTrend(for: project)" \
     "runtime health must include quality trends"
 require_text "$LONGFORM" 'recentScores.filter { $0 < minimumAcceptedScore }.count' \
     "quality trend low-score counts must use the active minimum review score"
-require_text "$LONGFORM" "minimumAcceptedScore: minimumAcceptedScore(for: project.storyLength)" \
+require_text "$LONGFORM" "minimumAcceptedScore: minimumAcceptedScore," \
     "quality trend must carry the active minimum review score"
+require_text "$LONGFORM" "qualityDebtTargets: uniqueOrderedStrings(qualityDebtTargets, limit: 6)" \
+    "quality trend must convert low-score reviews into actionable quality debt targets"
+require_text "$LONGFORM" "低分章节续写约束" \
+    "generation prompts must expose low-score quality debt as writing constraints"
+require_text "$LONGFORM" "struct LongformNextChapterBrief" \
+    "longform system must expose a next-chapter brief data layer"
+require_text "$LONGFORM" "buildNextChapterBrief(for project: NovelProject)" \
+    "next-chapter brief must be derived from the active project"
+require_text "$LONGFORM" "var longformNextChapterBrief" \
+    "NovelProject must expose the next-chapter brief"
 if rg -q --fixed-strings 'recentScores.filter { $0 < 75 }' "$LONGFORM"; then
     fail "quality trend low-score counts must not hard-code the long-form threshold"
 fi
@@ -93,6 +118,23 @@ require_text "$REVIEWER" "return .critical" \
     "unknown or unsafe review severities must default to critical"
 require_text "$REVIEWER" "ChapterReviewResult(" \
     "review parser must return unified review results"
+require_text "$REVIEWER" "validatedDimensionScores" \
+    "review parser must validate all required dimension scores"
+require_text "$REVIEWER" "审查结果结构不完整" \
+    "review parser must turn malformed AI review JSON into a blocking result"
+require_text "$REVIEWER" "reviewSchemaIssues" \
+    "review parser must surface missing summary or evidence as schema issues"
+require_text "$REVIEWER" "localHeuristicIssues" \
+    "reviewer must merge local heuristic issues with AI review output"
+require_text "$REVIEWER" "mergeLocalHeuristicIssues" \
+    "reviewer must expose local heuristic merge logic"
+require_text "$ENHANCED" "mergeLocalHeuristicIssues" \
+    "enhanced candidate review must also merge local heuristic issues"
+
+require_text "$MEMORY_BUCKETS" "restoringLatestActiveItems" \
+    "memory rollback must restore the latest previous active memory after deleting a chapter"
+require_text "$MEMORY_BUCKETS" "restoredItems[restorationIndex].status = .active" \
+    "memory rollback must explicitly reactivate the restored memory item"
 
 require_text "$WRITING_DESK" "latestAISuggestionAcceptanceContext == acceptanceContext(for: project)" \
     "candidate acceptance must bind to generation context"
@@ -122,15 +164,98 @@ require_text "$WRITING_DESK" "parsedVolumeNumber(in:" \
     "missing saved volume repair must parse volume numbers"
 require_text "$WRITING_DESK" "&& max(project.currentChapterNumber, 1) == 1" \
     "missing saved volume repair must only allow the first chapter of the missing volume"
+require_text "$WRITING_DESK" "保存并下一章" \
+    "writing desk must expose save-and-next for longform chapter flow"
+require_text "$WRITING_DESK" "advanceToNextChapter: true" \
+    "save-and-next control must call the advancing save path"
+require_text "$WRITING_DESK" "writingDeskStatusStrip" \
+    "writing desk must expose the heavy-author status strip"
+require_text "$WRITING_DESK" "nextChapterBriefPanel" \
+    "writing desk must expose the next-chapter brief panel"
+require_text "$WRITING_DESK" "qualityDebtPanel" \
+    "writing desk must expose unresolved quality debt"
+require_text "$WRITING_DESK" "storageHealthPanel" \
+    "writing desk must expose storage health and recovery actions"
+require_text "$WRITING_DESK" "ChapterLoadDiffSheet" \
+    "writing desk chapter loads must show a diff/confirmation sheet"
+require_text "$WRITING_DESK" "pendingChapterLoad" \
+    "writing desk chapter navigator must track pending chapter loads"
+require_text "$WRITING_DESK" "载入并覆盖当前草稿" \
+    "writing desk chapter navigator must confirm destructive chapter loads"
+require_text "$WRITING_DESK" "先保存当前草稿" \
+    "writing desk chapter navigator must offer a save-before-load path"
+require_text "$SAVED_CHAPTERS_SHEET" "pendingChapterLoad" \
+    "saved chapters sheet must track pending chapter loads"
+require_text "$SAVED_CHAPTERS_SHEET" "ProjectSavedChapterLoadDiffSheet" \
+    "saved chapters sheet must show a diff/confirmation sheet"
+require_text "$SAVED_CHAPTERS_SHEET" "载入并覆盖当前草稿" \
+    "saved chapters sheet must confirm destructive chapter loads"
+require_text "$SAVED_CHAPTERS_SHEET" "先保存当前草稿" \
+    "saved chapters sheet must offer a save-before-load path"
+require_text "$ENTITLEMENTS" "com.apple.security.files.user-selected.read-write" \
+    "sandbox export entitlement must allow writing user-selected files"
+require_text "$PROJECT_FILE" "ENABLE_USER_SELECTED_FILES = readwrite;" \
+    "Xcode project must allow read/write access for user-selected export files"
 
-require_text "$REPO_ROOT/OpenWriting/AppState.swift" "nextExistingChapterMetadata(after: chapterDraft, in: project)" \
+require_text "$APP_STATE" "nextExistingChapterMetadata(after: chapterDraft, in: project)" \
     "beginNextChapter must detect existing cross-volume successor chapters"
-require_text "$REPO_ROOT/OpenWriting/AppState.swift" "nextExistingChapterDraft(after: chapterDraft, in: project.chapterDrafts)" \
+require_text "$APP_STATE" "nextExistingChapterDraft(after: chapterDraft, in: project.chapterDrafts)" \
     "beginNextChapter must load existing successor chapter drafts before creating a new chapter"
+require_text "$APP_STATE" "loadChapterDraftReport" \
+    "persistence snapshots must inspect chapter load completeness"
+require_text "$APP_STATE" "catalogChapterIDs.isSubset(of: hydratedChapterIDs)" \
+    "persistence snapshots must not rebuild chapter catalogs from partial draft loads"
+require_text "$APP_STATE" "persistRecentProjects(recentProjects, for: currentStorageScope)" \
+    "chapter save must synchronously persist the local project store before reporting success"
+require_text "$APP_STATE" "storageHealthReport(for projectID: NovelProject.ID)" \
+    "AppState must expose project storage health"
+require_text "$APP_STATE" "recoverStorageIssue" \
+    "AppState must expose explicit storage recovery actions"
+require_text "$PROJECT_STORE" "missingChapterIDs" \
+    "sharded chapter loading must report missing or corrupt chapter files"
+require_text "$PROJECT_STORE" "loadChapterDraftReport" \
+    "project store must expose explicit chapter load completeness"
+require_text "$PROJECT_STORE" "StorageHealthReport" \
+    "project store must expose storage health reports"
+require_text "$PROJECT_STORE" "ProjectStorageIssue" \
+    "project store must expose storage issue records"
+require_text "$PROJECT_STORE" "orphanChapterFileNames" \
+    "storage health must detect orphan chapter files"
+require_text "$PROJECT_STORE" "preserveMissingChapterPlaceholder" \
+    "storage recovery must preserve missing chapter placeholders"
+require_text "$APP_STATE_ICLOUD" "preservedCloudSelection" \
+    "iCloud snapshot application must preserve valid local project selection"
 
 require_text "$PROMPTS" "writingExecutionContractPrompt" \
     "generation prompts must include the longform execution contract"
+require_text "$PROMPTS" "下一章 brief" \
+    "generation prompts must inject the next-chapter brief"
 require_text "$PROMPTS" "近期质量趋势" \
     "generation prompts must include recent quality trend feedback"
+
+require_text "$RUN_ALL" "run-smoke-checks.sh" \
+    "run-all checks must include smoke checks"
+require_text "$RUN_ALL" "swiftc -typecheck" \
+    "run-all checks must include Swift typecheck"
+require_text "$RUN_ALL" "build-debug.sh" \
+    "run-all checks must include Debug build"
+require_text "$RUN_ALL" "-target OpenWritingTests" \
+    "run-all checks must build the OpenWritingTests target"
+require_text "$RUN_ALL" "-scheme OpenWriting" \
+    "run-all checks must run the shared OpenWriting scheme tests"
+require_text "$SHARED_SCHEME" "OpenWritingTests.xctest" \
+    "shared Xcode scheme must include OpenWritingTests"
+require_text "$TEST_PACKAGE" "XcodeOnlyPlaceholder" \
+    "Tests Package.swift must not advertise a broken SwiftPM app-test target"
+require_text "$TEST_README" '不要用 `swift test`' \
+    "tests README must document the Xcode-only test entry"
+require_text "$RUN_EVALS" "run_mock_eval.py" \
+    "longform eval script must invoke the deterministic runner"
+require_text "$EVAL_RUNNER" "average_score_at_least" \
+    "longform eval runner must enforce the 90-point scorecard threshold"
+require_text "$EVAL_RUNNER" "foreshadowing_miss_rate_below" \
+    "longform eval runner must enforce foreshadowing miss-rate thresholds"
+require_text "$EVAL_SEEDS" "long_foreshadowing" \
+    "longform eval fixtures must include long foreshadowing seeds"
 
 echo "Longform quality gates passed"

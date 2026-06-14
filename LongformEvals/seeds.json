@@ -1,0 +1,92 @@
+[
+  {
+    "id": "xuanhuan_oath_city",
+    "genre": "玄幻",
+    "world": "九座誓城以契约维持灵脉，违誓者会被城市本身追索。",
+    "protagonist": "沈砚，失去宗门身份的契约修补师，擅长从旧誓词里找漏洞。",
+    "core_conflict": "主角必须修复逐城崩坏的誓约，同时查清师门被灭的真正契约方。",
+    "long_foreshadowing": "每座誓城城门上的缺字会拼成幕后主使的真名。",
+    "chapter_goal": "推进一座誓城的危机，兑现一个契约线索，并留下下一城入口。"
+  },
+  {
+    "id": "urban_memory_clinic",
+    "genre": "都市奇幻",
+    "world": "记忆可以被合法租赁，但每次租赁都会改变城市公共记忆账本。",
+    "protagonist": "林照，前记忆审计员，能听见被篡改记忆的噪声。",
+    "core_conflict": "主角要追查连续失忆案，却发现自己的童年也被写进租赁合同。",
+    "long_foreshadowing": "每个失忆者都会留下同一句童谣的不同半句。",
+    "chapter_goal": "解决一个记忆租赁案件，推进童谣拼图，并暴露主角记忆缺口。"
+  },
+  {
+    "id": "sci_fi_tide_archive",
+    "genre": "科幻",
+    "world": "潮汐星上的档案馆按海潮开放，人类殖民地只能在退潮时读取历史。",
+    "protagonist": "周临，低阶档案潜水员，能在海水噪声中识别旧 AI 的谎言。",
+    "core_conflict": "殖民地即将投票迁离，主角必须证明星球历史被舰队公司篡改。",
+    "long_foreshadowing": "每次退潮露出的坐标都指向同一艘失踪母舰。",
+    "chapter_goal": "读取一段潮汐档案，推进迁离投票压力，并留下母舰坐标。"
+  },
+  {
+    "id": "wuxia_snow_register",
+    "genre": "武侠",
+    "world": "江湖门派的生死债都记在雪册上，雪化则债消，人也会被遗忘。",
+    "protagonist": "谢无寒，替人销债的落魄刀客，记得所有被雪册抹去的人。",
+    "core_conflict": "主角要阻止盟主融尽雪册，却必须先偿还自己欠下的旧债。",
+    "long_foreshadowing": "每个被遗忘者的刀痕都指向同一种失传刀法。",
+    "chapter_goal": "完成一笔江湖债，暴露一处雪册漏洞，并推进失传刀法线索。"
+  },
+  {
+    "id": "romance_lighthouse_letters",
+    "genre": "现言",
+    "world": "海边旧灯塔会把未寄出的信投递到十年前的同一天。",
+    "protagonist": "许南枝，负责拆迁评估的建筑师，收到未来自己的退婚信。",
+    "core_conflict": "主角要判断该不该保住灯塔，同时面对亲密关系里的重复逃离。",
+    "long_foreshadowing": "每封信的邮戳都少了一枚潮汐刻度。",
+    "chapter_goal": "推进灯塔拆迁节点，兑现一封信的情感后果，并留下新邮戳异常。"
+  },
+  {
+    "id": "mystery_silent_orchestra",
+    "genre": "悬疑",
+    "world": "一座剧院每逢无声演出就会重演一桩未破旧案。",
+    "protagonist": "陈砚秋，失聪的前刑警，能从观众动作里读出缺失台词。",
+    "core_conflict": "主角要破获连续剧院案，同时证明自己当年被迫离队的真相。",
+    "long_foreshadowing": "每场无声演出都会缺席同一个座位号。",
+    "chapter_goal": "破解一场演出的动作线索，推进旧案关系网，并留下座位号反常。"
+  },
+  {
+    "id": "fantasy_botany_empire",
+    "genre": "西幻",
+    "world": "帝国靠会说话的植物维持法律，所有判决都由根系投票。",
+    "protagonist": "艾琳，流放园丁，能听懂被剪掉根须后的植物遗言。",
+    "core_conflict": "主角要推翻根系议会的假判决，却会动摇帝国法律根基。",
+    "long_foreshadowing": "每株遗言植物都提到同一片不存在的地下花园。",
+    "chapter_goal": "调查一株遗言植物，推进帝国审判压力，并留下地下花园坐标。"
+  },
+  {
+    "id": "historical_salt_road",
+    "genre": "历史架空",
+    "world": "盐道既是商路也是军报线，盐票能调动边军粮草。",
+    "protagonist": "姜怀玉，盐商遗孤，擅长用账本识别军报暗号。",
+    "core_conflict": "主角要保住家族盐引，同时阻止边军被假军报引入死局。",
+    "long_foreshadowing": "每张假盐票背面的水印都来自同一家旧纸坊。",
+    "chapter_goal": "破解一张盐票，推进边军危机，并留下纸坊线索。"
+  },
+  {
+    "id": "post_apocalypse_weather_tower",
+    "genre": "末世",
+    "world": "灾后城市靠天气塔分配阳光，阴影区居民必须购买晴天配额。",
+    "protagonist": "闻青，阴影区修塔工，能预判天气塔的失控周期。",
+    "core_conflict": "主角要修复即将坠落的主塔，却发现塔本身在选择牺牲区。",
+    "long_foreshadowing": "每次失控前，塔顶都会出现同一组逆向云纹。",
+    "chapter_goal": "处理一次天气塔事故，推进晴天配额冲突，并留下逆向云纹。"
+  },
+  {
+    "id": "campus_time_debate",
+    "genre": "青春校园",
+    "world": "辩论社拥有一只会回拨十分钟的计时器，但每次回拨都会删除一句真心话。",
+    "protagonist": "顾星澜，替补辩手，记得所有被删除的真心话。",
+    "core_conflict": "主角要带队赢下校际赛，同时找回被计时器吞掉的告白与友情裂痕。",
+    "long_foreshadowing": "每次回拨后黑板上都会多出一个没人写过的论点。",
+    "chapter_goal": "推进一场辩论训练，兑现一句被删真心话，并留下新论点。"
+  }
+]

@@ -1,5 +1,6 @@
 .DS_Store
 .build/
+build/
 .swiftpm/
 DerivedData/
 xcuserdata/
@@ -8,3 +9,4 @@ xcuserdata/
 .claude/
 dist/
 *.dmg
+LongformEvals/runs/
