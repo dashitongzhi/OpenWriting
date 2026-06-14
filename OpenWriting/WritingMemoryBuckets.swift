@@ -207,8 +207,42 @@ struct MemoryBuckets: Codable, Hashable {
             let filtered = bucket(for: category).filter { item in
                 !(item.sourceVolumeNumber == normalizedVolume && item.sourceChapter == sourceChapter)
             }
-            setBucket(filtered, for: category)
+            setBucket(Self.restoringLatestActiveItems(in: filtered), for: category)
         }
+    }
+
+    private static func restoringLatestActiveItems(in items: [MemoryItem]) -> [MemoryItem] {
+        var restoredItems = items
+        let keys = Set(restoredItems.map(\.dedupKey))
+
+        for key in keys {
+            let matchingIndices = restoredItems.indices.filter { restoredItems[$0].dedupKey == key }
+            guard !matchingIndices.contains(where: { restoredItems[$0].status == .active }) else {
+                continue
+            }
+
+            guard let restorationIndex = matchingIndices
+                .filter({ restoredItems[$0].status == .outdated })
+                .max(by: { lhs, rhs in
+                    let left = restoredItems[lhs]
+                    let right = restoredItems[rhs]
+                    if left.sourceVolumeNumber != right.sourceVolumeNumber {
+                        return left.sourceVolumeNumber < right.sourceVolumeNumber
+                    }
+                    if left.sourceChapter != right.sourceChapter {
+                        return left.sourceChapter < right.sourceChapter
+                    }
+                    return left.updatedAt < right.updatedAt
+                })
+            else {
+                continue
+            }
+
+            restoredItems[restorationIndex].status = .active
+            restoredItems[restorationIndex].updatedAt = Date()
+        }
+
+        return restoredItems
     }
 
     // MARK: - Upsert (Dedup + Status Transition)

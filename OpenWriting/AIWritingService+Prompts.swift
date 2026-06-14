@@ -748,14 +748,19 @@ extension AIWritingService {
         let qualityTrendText = qualityTrend.hasSignals
             ? qualityTrend.formattedForPrompt
             : "- 暂无跨章节质量趋势。"
+        let nextChapterBrief = project.longformNextChapterBrief
 
         return """
         执行优先级：
         - 先承接草稿箱最后一句和当前场景状态。
         - 再逐条落实后台合同里的“本章必须执行”。
+        - 下一章 brief 中列出的必须延续、伏笔、禁区和质量债必须进入正文决策，不得只在总结里提到。
         - 如果存在后台健康诊断阻断项，本次正文必须优先修复当前章可修复部分，不要绕到下一章。
         - 如果近期质量趋势显示反复失分或 AI 味反模式，本次正文必须在生成阶段主动避开。
         - 输出前自检：是否推进了本章目标、是否覆盖必须节点、是否没有违背禁区与风险。
+
+        下一章 brief：
+        \(nextChapterBrief.formattedForPrompt)
 
         后台合同正文：
         \(contractContext)

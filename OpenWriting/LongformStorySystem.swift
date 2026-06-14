@@ -131,6 +131,7 @@ struct LongformQualityTrend {
     var recentScores: [Int]
     var minimumAcceptedScore: Int
     var recurringDimensions: [(dimension: ReviewDimension, count: Int)]
+    var qualityDebtTargets: [String]
     var priorityIssues: [String]
     var antiPatterns: [String]
     var revisionHints: [String]
@@ -138,6 +139,7 @@ struct LongformQualityTrend {
     var hasSignals: Bool {
         !recentScores.isEmpty
             || !recurringDimensions.isEmpty
+            || !qualityDebtTargets.isEmpty
             || !priorityIssues.isEmpty
             || !antiPatterns.isEmpty
             || !revisionHints.isEmpty
@@ -173,6 +175,10 @@ struct LongformQualityTrend {
             lines.append("- 反复失分维度：\(dimensions)。")
         }
 
+        if !qualityDebtTargets.isEmpty {
+            lines.append("- 低分章节续写约束：\(qualityDebtTargets.prefix(4).joined(separator: "；"))")
+        }
+
         if !priorityIssues.isEmpty {
             lines.append("- 下章必须主动修复：\(priorityIssues.prefix(4).joined(separator: "；"))")
         }
@@ -186,6 +192,45 @@ struct LongformQualityTrend {
         }
 
         return lines.joined(separator: "\n")
+    }
+}
+
+struct LongformNextChapterBrief: Codable, Hashable {
+    var chapterGoal: String
+    var mandatoryContinuities: [String]
+    var foreshadowingPromises: [String]
+    var forbiddenContradictions: [String]
+    var qualityDebts: [String]
+    var repairTasks: [String]
+    var risks: [String]
+
+    var hasActionableSignals: Bool {
+        !mandatoryContinuities.isEmpty
+            || !foreshadowingPromises.isEmpty
+            || !forbiddenContradictions.isEmpty
+            || !qualityDebts.isEmpty
+            || !repairTasks.isEmpty
+            || !risks.isEmpty
+    }
+
+    var formattedForPrompt: String {
+        var lines: [String] = []
+        lines.append("本章目标：\(chapterGoal.isEmpty ? "推进当前章节一个实质变化。" : chapterGoal)")
+        lines.append("必须延续的记忆：\(Self.formatList(mandatoryContinuities, fallback: "暂无命中的结构化记忆，请承接草稿箱最后状态。"))")
+        lines.append("必须兑现或推进的伏笔：\(Self.formatList(foreshadowingPromises, fallback: "暂无明确活跃伏笔。"))")
+        lines.append("禁止违反的设定：\(Self.formatList(forbiddenContradictions, fallback: "不得违背已有设定、时间线、人物状态和章节目标。"))")
+        lines.append("当前质量债：\(Self.formatList(qualityDebts, fallback: "暂无未解决质量债。"))")
+        lines.append("本章修复任务：\(Self.formatList(repairTasks, fallback: "暂无额外修复任务。"))")
+        lines.append("风险提醒：\(Self.formatList(risks, fallback: "保持章末期待、人物动机和信息密度。"))")
+        return lines.joined(separator: "\n")
+    }
+
+    private static func formatList(_ values: [String], fallback: String) -> String {
+        let cleaned = values
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !cleaned.isEmpty else { return fallback }
+        return cleaned.prefix(6).joined(separator: "；")
     }
 }
 
@@ -1079,6 +1124,7 @@ enum LongformStorySystem {
     static func buildQualityTrend(for project: NovelProject) -> LongformQualityTrend {
         var reviewResults: [ChapterReviewResult] = []
         var seenReviewKeys = Set<String>()
+        let minimumAcceptedScore = minimumAcceptedScore(for: project.storyLength)
 
         func appendReview(_ review: ChapterReviewResult?) {
             guard let review else { return }
@@ -1109,6 +1155,7 @@ enum LongformStorySystem {
         let recentScores = Array((reviewScores + commitScores).prefix(8))
 
         var dimensionCounts: [ReviewDimension: Int] = [:]
+        var qualityDebtTargets: [String] = []
         var priorityIssues: [String] = []
         for review in reviewResults.prefix(8) {
             for issue in review.issues where issue.isBlocking || issue.severity == .high {
@@ -1118,6 +1165,41 @@ enum LongformStorySystem {
                 let detail = fixHint.isEmpty ? description : fixHint
                 if !detail.isEmpty {
                     priorityIssues.append("[\(issue.dimension.displayName)] \(detail)")
+                }
+            }
+
+            if review.overallScore < minimumAcceptedScore || review.dimensionScores.values.contains(where: { $0 <= 6 }) {
+                let weakDimensions = review.dimensionScores
+                    .filter { $0.value <= 7 }
+                    .sorted {
+                        if $0.value == $1.value {
+                            return $0.key.displayName < $1.key.displayName
+                        }
+                        return $0.value < $1.value
+                    }
+                    .prefix(3)
+                    .map { "\($0.key.displayName)\($0.value)/10" }
+                    .joined(separator: "、")
+                let issueHints = review.issues
+                    .filter { $0.severity == .critical || $0.severity == .high || $0.severity == .medium }
+                    .prefix(3)
+                    .compactMap { issue -> String? in
+                        let fixHint = issue.fixHint.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let description = issue.description.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let detail = fixHint.isEmpty ? description : fixHint
+                        guard !detail.isEmpty else { return nil }
+                        return "[\(issue.dimension.displayName)] \(detail)"
+                    }
+                    .joined(separator: "；")
+                let summary = review.overallSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+                let debtParts = [
+                    review.overallScore < minimumAcceptedScore ? "审查 \(review.overallScore)/100 低于最低线 \(minimumAcceptedScore)" : nil,
+                    weakDimensions.isEmpty ? nil : "薄弱维度 \(weakDimensions)",
+                    issueHints.isEmpty ? nil : issueHints,
+                    summary.isEmpty ? nil : summary
+                ].compactMap { $0 }
+                if !debtParts.isEmpty {
+                    qualityDebtTargets.append(debtParts.prefix(3).joined(separator: "，"))
                 }
             }
         }
@@ -1148,11 +1230,56 @@ enum LongformStorySystem {
 
         return LongformQualityTrend(
             recentScores: recentScores,
-            minimumAcceptedScore: minimumAcceptedScore(for: project.storyLength),
+            minimumAcceptedScore: minimumAcceptedScore,
             recurringDimensions: Array(recurringDimensions.prefix(6)),
+            qualityDebtTargets: uniqueOrderedStrings(qualityDebtTargets, limit: 6),
             priorityIssues: uniqueOrderedStrings(priorityIssues, limit: 8),
             antiPatterns: antiPatterns,
             revisionHints: uniqueOrderedStrings(revisionHints, limit: 8)
+        )
+    }
+
+    static func buildNextChapterBrief(for project: NovelProject) -> LongformNextChapterBrief {
+        let chapterGoal = firstUsefulText([project.chapterFocus, project.currentChapterSummary])
+        let chapterNodePlan = chapterRelevantLines(
+            from: [project.outlineText, project.structureNotes],
+            volume: project.currentVolumeNumber,
+            chapter: project.currentChapterNumber,
+            fallback: chapterGoal
+        )
+        let memoryItems = project.memoryBuckets.relevantActiveItems(
+            for: [chapterGoal, project.draftText, project.outlineText, project.structureNotes].joined(separator: " "),
+            limit: 12
+        )
+        let memoryContinuities = memoryItems.map {
+            "[\($0.category.displayName)] \($0.subject) / \($0.field)：\($0.value)"
+        }
+        let qualityTrend = buildQualityTrend(for: project)
+        let health = buildRuntimeHealth(for: project)
+        let healthRepairTasks = health.issues
+            .filter { $0.title != "长篇合同尚未落盘" }
+            .map { "\($0.title)：\($0.repairHint)" }
+        let healthRisks = health.issues
+            .filter { $0.status != .passed && $0.title != "长篇合同尚未落盘" }
+            .map { "\($0.title)：\($0.detail)" }
+
+        return LongformNextChapterBrief(
+            chapterGoal: chapterGoal,
+            mandatoryContinuities: uniqueOrderedStrings(chapterNodePlan.lines + memoryContinuities, limit: 8),
+            foreshadowingPromises: uniqueOrderedStrings(activeForeshadowingLines(for: project), limit: 8),
+            forbiddenContradictions: uniqueOrderedStrings(forbiddenZones(for: project), limit: 8),
+            qualityDebts: uniqueOrderedStrings(
+                qualityTrend.qualityDebtTargets + qualityTrend.priorityIssues,
+                limit: 8
+            ),
+            repairTasks: uniqueOrderedStrings(
+                qualityTrend.revisionHints + healthRepairTasks,
+                limit: 8
+            ),
+            risks: uniqueOrderedStrings(
+                genreRisks(for: project) + qualityTrend.antiPatterns + healthRisks,
+                limit: 10
+            )
         )
     }
 
@@ -1955,6 +2082,10 @@ extension NovelProject {
 
     var longformQualityTrend: LongformQualityTrend {
         LongformStorySystem.buildQualityTrend(for: self)
+    }
+
+    var longformNextChapterBrief: LongformNextChapterBrief {
+        LongformStorySystem.buildNextChapterBrief(for: self)
     }
 }
 
