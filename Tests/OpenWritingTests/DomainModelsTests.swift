@@ -24,6 +24,27 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(ModelProvider.custom.title, "自定义")
     }
 
+    @MainActor
+    func testOpenWDefaultConnectionUsesKralAPIBackend() {
+        let userDefaults = makeIsolatedUserDefaults()
+
+        XCTAssertEqual(AppState.defaultModelName(for: .openAICompatible), "gpt-5.4-mini")
+        XCTAssertEqual(AppState.defaultBaseURL(for: .openAICompatible), "https://kralapi.kralai.tech/v1")
+        XCTAssertEqual(AppState.loadBaseURL(for: .openAICompatible, userDefaults: userDefaults), "https://kralapi.kralai.tech/v1")
+    }
+
+    @MainActor
+    func testRetiredOpenWDefaultBaseURLMigratesToKralAPIBackend() {
+        let userDefaults = makeIsolatedUserDefaults()
+        let retiredDefaultBaseURL = "https://ai." + "xxread.top/v1"
+        userDefaults.set(retiredDefaultBaseURL, forKey: AppState.StorageKey.baseURL)
+
+        AppState.migrateRetiredOpenAICompatibleDefaults(userDefaults)
+
+        XCTAssertEqual(userDefaults.string(forKey: AppState.StorageKey.baseURL), "https://kralapi.kralai.tech/v1")
+        XCTAssertEqual(AppState.loadBaseURL(for: .openAICompatible, userDefaults: userDefaults), "https://kralapi.kralai.tech/v1")
+    }
+
     // MARK: - ConnectionStatus Tests
 
     func testConnectionStatusIdle() {
@@ -214,5 +235,12 @@ final class DomainModelsTests: XCTestCase {
         )
 
         XCTAssertEqual(profile.filledOptionalFieldCount, 7)
+    }
+
+    private func makeIsolatedUserDefaults() -> UserDefaults {
+        let suiteName = "OpenWritingTests.\(UUID().uuidString)"
+        let userDefaults = UserDefaults(suiteName: suiteName)!
+        userDefaults.removePersistentDomain(forName: suiteName)
+        return userDefaults
     }
 }

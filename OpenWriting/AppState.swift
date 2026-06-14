@@ -128,6 +128,7 @@ final class AppState {
     ) {
         let projectStore = projectStore ?? ProjectFileStore()
         Self.migrateLegacyUserDefaultsIfNeeded(userDefaults, projectStore: projectStore)
+        Self.migrateRetiredOpenAICompatibleDefaults(userDefaults)
         Self.migrateLegacyEmailScopeIfNeeded(userDefaults, projectStore: projectStore)
         Self.migrateAPIKeysToKeychainIfNeeded(userDefaults)
         self.userDefaults = userDefaults

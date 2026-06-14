@@ -231,6 +231,12 @@ struct ModelConnectionSettingsForm: View {
                     SecureField("sk-...", text: $appState.apiKey)
                         .textFieldStyle(.roundedBorder)
                 }
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    connectionSummaryRow(label: "Base URL", value: displayBaseURL)
+                    connectionSummaryRow(label: "模型 ID", value: displayModelName)
+                }
+                .padding(.vertical, 4)
             }
 
             Toggle("启动时自动检查格式", isOn: $appState.autoValidateOnLaunch)
@@ -256,9 +262,39 @@ struct ModelConnectionSettingsForm: View {
                 Text("自定义使用 OpenAI 格式：Base URL 通常以 /v1 结尾，填写模型 ID 与 API Key；API Key 单独存放在系统 Keychain，不写入仓库。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            } else {
+                Text("OpenW 默认使用 OpenAI 兼容接口；Base URL 与模型 ID 已内置，API Key 仍单独存放在系统 Keychain。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 6)
+    }
+
+    private var displayBaseURL: String {
+        let trimmedBaseURL = appState.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedBaseURL.isEmpty ? AppState.defaultBaseURL(for: .openAICompatible) : trimmedBaseURL
+    }
+
+    private var displayModelName: String {
+        let trimmedModelName = appState.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedModelName.isEmpty ? AppState.defaultModelName(for: .openAICompatible) : trimmedModelName
+    }
+
+    @ViewBuilder
+    private func connectionSummaryRow(label: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+                .font(.subheadline.weight(.semibold))
+
+            Spacer()
+
+            Text(value)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
     }
 
     private var statusColor: Color {

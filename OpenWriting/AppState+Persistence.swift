@@ -46,6 +46,10 @@ extension AppState {
         static let customAccount = "apiKey.custom"
     }
 
+    static let defaultOpenWModelName = "gpt-5.4-mini"
+    static let defaultOpenWBaseURL = "https://kralapi.kralai.tech/v1"
+    private static let retiredOpenWBaseURL = "https://ai." + "xxread.top/v1"
+
     var currentStorageScope: String? {
         activeAccount?.userID
     }
@@ -96,14 +100,14 @@ extension AppState {
 
     static func defaultModelName(for provider: ModelProvider) -> String {
         switch provider {
-        case .openAICompatible: return "gpt-5.4-mini"
+        case .openAICompatible: return defaultOpenWModelName
         case .custom: return ""
         }
     }
 
     static func defaultBaseURL(for provider: ModelProvider) -> String {
         switch provider {
-        case .openAICompatible: return "https://ai.xxread.top/v1"
+        case .openAICompatible: return defaultOpenWBaseURL
         case .custom: return ""
         }
     }
@@ -114,8 +118,9 @@ extension AppState {
     }
 
     static func loadBaseURL(for provider: ModelProvider, userDefaults: UserDefaults) -> String {
-        stringValue(forKey: baseURLStorageKey(for: provider), userDefaults: userDefaults)
+        let storedBaseURL = stringValue(forKey: baseURLStorageKey(for: provider), userDefaults: userDefaults)
             ?? defaultBaseURL(for: provider)
+        return baseURLReplacingRetiredDefault(storedBaseURL, for: provider)
     }
 
     static func normalizedBaseURLString(from rawValue: String) -> String? {
@@ -132,6 +137,18 @@ extension AppState {
         }
 
         return components.url?.absoluteString
+    }
+
+    static func baseURLReplacingRetiredDefault(_ rawValue: String, for provider: ModelProvider) -> String {
+        guard provider == .openAICompatible,
+              isRetiredOpenWBaseURL(rawValue)
+        else { return rawValue }
+
+        return defaultOpenWBaseURL
+    }
+
+    static func isRetiredOpenWBaseURL(_ rawValue: String) -> Bool {
+        normalizedBaseURLString(from: rawValue) == retiredOpenWBaseURL
     }
 
     static func validationFailureMessage(for error: Error) -> String {
@@ -336,6 +353,19 @@ extension AppState {
         // API Key intentionally stays out of automatic legacy migration so app launch never
         // touches old keychain entries or triggers repeated password prompts.
         userDefaults.set(true, forKey: StorageKey.didMigrateLegacyDefaults)
+    }
+
+    static func migrateRetiredOpenAICompatibleDefaults(_ userDefaults: UserDefaults) {
+        replaceRetiredOpenWBaseURLIfNeeded(forKey: StorageKey.baseURL, userDefaults: userDefaults)
+        replaceRetiredOpenWBaseURLIfNeeded(forKey: LegacyStorageKey.baseURL, userDefaults: userDefaults)
+    }
+
+    private static func replaceRetiredOpenWBaseURLIfNeeded(forKey key: String, userDefaults: UserDefaults) {
+        guard let storedBaseURL = stringValue(forKey: key, userDefaults: userDefaults),
+              isRetiredOpenWBaseURL(storedBaseURL)
+        else { return }
+
+        userDefaults.set(defaultOpenWBaseURL, forKey: key)
     }
 
     static func migrateAPIKeysToKeychainIfNeeded(_ userDefaults: UserDefaults) {

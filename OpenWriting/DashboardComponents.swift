@@ -175,16 +175,10 @@ struct ModelConnectionSummaryCard: View {
             }
 
             summaryRow(label: "模型选择", value: appState.selectedProvider.title)
+            summaryRow(label: "Base URL", value: displayBaseURL)
+            summaryRow(label: "模型 ID", value: displayModelName)
 
             if appState.selectedProvider == .custom {
-                summaryRow(
-                    label: "Base URL",
-                    value: appState.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未填写" : appState.baseURL
-                )
-                summaryRow(
-                    label: "模型 ID",
-                    value: appState.modelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未填写" : appState.modelName
-                )
                 summaryRow(
                     label: "API Key",
                     value: appState.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未填写" : "已填写"
@@ -213,6 +207,28 @@ struct ModelConnectionSummaryCard: View {
         case .needsAttention:
             return palette.warningAccent
         }
+    }
+
+    private var displayBaseURL: String {
+        let trimmedBaseURL = appState.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedBaseURL.isEmpty {
+            return trimmedBaseURL
+        }
+
+        return appState.selectedProvider == .openAICompatible
+            ? AppState.defaultBaseURL(for: .openAICompatible)
+            : "未填写"
+    }
+
+    private var displayModelName: String {
+        let trimmedModelName = appState.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedModelName.isEmpty {
+            return trimmedModelName
+        }
+
+        return appState.selectedProvider == .openAICompatible
+            ? AppState.defaultModelName(for: .openAICompatible)
+            : "未填写"
     }
 
     @ViewBuilder
