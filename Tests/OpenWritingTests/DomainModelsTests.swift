@@ -243,4 +243,119 @@ final class DomainModelsTests: XCTestCase {
         userDefaults.removePersistentDomain(forName: suiteName)
         return userDefaults
     }
+
+    // MARK: - Quality Review Schema Tests
+
+    func testQualityReviewerRejectsMissingDimensionScore() {
+        let json = reviewJSON(dimensionScores: [
+            "setting": 90,
+            "timeline": 90,
+            "continuity": 90,
+            "character": 90,
+            "logic": 90,
+            "high_point": 90,
+            "pacing": 90,
+            "reader_pull": 90
+        ])
+
+        let result = ChapterQualityReviewer.parseReviewResult(from: json)
+
+        XCTAssertTrue(result.hasBlockingIssues)
+        XCTAssertEqual(result.overallScore, 0)
+        XCTAssertTrue(result.blockingIssues.contains { $0.description.contains("缺少维度") })
+    }
+
+    func testQualityReviewerRejectsUnknownDimensionScore() {
+        var scores = completeReviewDimensionScores()
+        scores["mystery"] = 90
+
+        let result = ChapterQualityReviewer.parseReviewResult(from: reviewJSON(dimensionScores: scores))
+
+        XCTAssertTrue(result.hasBlockingIssues)
+        XCTAssertEqual(result.overallScore, 0)
+        XCTAssertTrue(result.blockingIssues.contains { $0.description.contains("未知审查维度") })
+    }
+
+    func testQualityReviewerRejectsOutOfRangeOverallScore() {
+        let result = ChapterQualityReviewer.parseReviewResult(from: reviewJSON(overallScore: 120))
+
+        XCTAssertTrue(result.hasBlockingIssues)
+        XCTAssertEqual(result.overallScore, 0)
+        XCTAssertTrue(result.blockingIssues.contains { $0.description.contains("总体分数超出") })
+    }
+
+    func testQualityReviewerRequiresEvidenceForHighPriorityIssues() {
+        let json = reviewJSON(issues: """
+        [
+          {
+            "dimension": "logic",
+            "severity": "high",
+            "blocking": false,
+            "description": "因果关系缺少铺垫",
+            "evidence": "",
+            "fix_hint": "补一段决策动机",
+            "location": "第3段"
+          }
+        ]
+        """)
+
+        let result = ChapterQualityReviewer.parseReviewResult(from: json)
+
+        XCTAssertTrue(result.hasBlockingIssues)
+        XCTAssertTrue(result.blockingIssues.contains { $0.description.contains("缺少原文证据") })
+    }
+
+    func testQualityReviewerLocalHeuristicsAddActionableIssueForShortLongformChapter() {
+        let project = NovelProject(
+            title: "长篇项目",
+            genre: "玄幻",
+            summary: "主角要寻找失落的城。",
+            storyLength: .long
+        )
+        let issues = ChapterQualityReviewer.localHeuristicIssues(
+            text: "他推开门，看见远处的灯。",
+            project: project
+        )
+
+        XCTAssertTrue(issues.contains { $0.dimension == .pacing })
+        XCTAssertTrue(issues.contains { $0.dimension == .readerPull })
+    }
+
+    private func completeReviewDimensionScores() -> [String: Int] {
+        [
+            "setting": 90,
+            "timeline": 90,
+            "continuity": 90,
+            "character": 90,
+            "logic": 90,
+            "high_point": 90,
+            "pacing": 90,
+            "reader_pull": 90,
+            "ai_flavor": 90
+        ]
+    }
+
+    private func reviewJSON(
+        overallScore: Int = 95,
+        dimensionScores: [String: Int]? = nil,
+        issues: String = "[]",
+        summary: String = "整体可用。"
+    ) -> String {
+        let scores = dimensionScores ?? completeReviewDimensionScores()
+        let scorePairs = scores
+            .sorted { $0.key < $1.key }
+            .map { "\"\($0.key)\": \($0.value)" }
+            .joined(separator: ",\n")
+        return """
+        {
+          "overall_score": \(overallScore),
+          "dimension_scores": {
+            \(scorePairs)
+          },
+          "issues": \(issues),
+          "anti_patterns": [],
+          "overall_summary": "\(summary)"
+        }
+        """
+    }
 }

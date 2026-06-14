@@ -422,6 +422,7 @@ enum UnifiedQualityReviewer {
     ) async throws -> ChapterReviewResult {
         // Quick local AI-flavor pre-check (no API call)
         let localPatterns = quickAIFlavorCheck(text: chapterDraft)
+        let localIssues = localHeuristicIssues(text: chapterDraft, project: project)
 
         // Full AI review
         let reviewResponse = try await AIWritingService.generateText(
@@ -438,7 +439,10 @@ enum UnifiedQualityReviewer {
 
         let result = parseReviewResult(from: reviewResponse)
 
-        return mergeLocalAntiPatterns(into: result, localPatterns: localPatterns)
+        return mergeLocalHeuristicIssues(
+            into: mergeLocalAntiPatterns(into: result, localPatterns: localPatterns),
+            localIssues: localIssues
+        )
     }
 
     private static func reviewDraftContext(project: NovelProject, chapterDraft: String) -> String {
@@ -484,15 +488,24 @@ enum UnifiedQualityReviewer {
             return fallbackParse(from: cleaned)
         }
 
-        // Map dimension scores
-        var dimensionScores: [ReviewDimension: Int] = [:]
-        for dim in ReviewDimension.allCases {
-            dimensionScores[dim] = response.dimension_scores[dim.rawValue] ?? 80
+        guard (0...100).contains(response.overall_score) else {
+            return invalidReviewResult(
+                reason: "审查总体分数超出 0...100 范围：\(response.overall_score)",
+                evidence: cleaned
+            )
+        }
+
+        let dimensionValidation = validatedDimensionScores(response.dimension_scores)
+        if !dimensionValidation.errors.isEmpty {
+            return invalidReviewResult(
+                reason: dimensionValidation.errors.prefix(4).joined(separator: "；"),
+                evidence: cleaned
+            )
         }
 
         // Map issues
-        let issues: [ReviewIssue] = response.issues.map { issue in
-            let dimension = reviewDimension(from: issue.dimension)
+        var issues: [ReviewIssue] = response.issues.map { issue in
+            let dimension = strictReviewDimension(from: issue.dimension) ?? reviewDimension(from: issue.dimension)
             let severity = issue.blocking == true
                 ? .critical
                 : reviewSeverity(from: issue.severity)
@@ -508,6 +521,10 @@ enum UnifiedQualityReviewer {
 
         let antiPatterns = response.anti_patterns ?? []
         let overallSummary = response.overall_summary ?? ""
+        issues.append(contentsOf: reviewSchemaIssues(
+            issues: response.issues,
+            overallSummary: overallSummary
+        ))
 
         // Compute overall score using webnovel-writer penalty methodology:
         // 100 - sum(penalties for all issues), clamped to 0...100.
@@ -520,7 +537,7 @@ enum UnifiedQualityReviewer {
 
         return ChapterReviewResult(
             overallScore: finalScore,
-            dimensionScores: dimensionScores,
+            dimensionScores: dimensionValidation.scores,
             issues: issues,
             hasBlockingIssues: hasBlocking,
             antiPatterns: antiPatterns,
@@ -547,6 +564,10 @@ enum UnifiedQualityReviewer {
     }
 
     private static func reviewDimension(from rawValue: String) -> ReviewDimension {
+        strictReviewDimension(from: rawValue) ?? .logicIntegrity
+    }
+
+    private static func strictReviewDimension(from rawValue: String) -> ReviewDimension? {
         let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if let dimension = ReviewDimension(rawValue: normalized) {
             return dimension
@@ -573,7 +594,96 @@ enum UnifiedQualityReviewer {
             return dimension
         }
 
-        return .logicIntegrity
+        return nil
+    }
+
+    private static func validatedDimensionScores(
+        _ rawScores: [String: Int]
+    ) -> (scores: [ReviewDimension: Int], errors: [String]) {
+        var scores: [ReviewDimension: Int] = [:]
+        var errors: [String] = []
+
+        for (rawDimension, rawScore) in rawScores {
+            guard let dimension = strictReviewDimension(from: rawDimension) else {
+                errors.append("未知审查维度 \(rawDimension)")
+                continue
+            }
+
+            guard (0...100).contains(rawScore) else {
+                errors.append("\(dimension.displayName) 分数 \(rawScore) 超出 0...100 范围")
+                continue
+            }
+
+            let normalizedScore = rawScore > 10
+                ? Int((Double(rawScore) / 10.0).rounded())
+                : rawScore
+            scores[dimension] = min(max(normalizedScore, 0), 10)
+        }
+
+        let missingDimensions = ReviewDimension.allCases.filter { scores[$0] == nil }
+        if !missingDimensions.isEmpty {
+            let labels = missingDimensions.map(\.displayName).joined(separator: "、")
+            errors.append("审查结果缺少维度：\(labels)")
+        }
+
+        return (scores, errors)
+    }
+
+    private static func reviewSchemaIssues(
+        issues: [AIReviewIssue],
+        overallSummary: String
+    ) -> [ReviewIssue] {
+        var schemaIssues: [ReviewIssue] = []
+
+        if overallSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            schemaIssues.append(ReviewIssue(
+                dimension: .logicIntegrity,
+                severity: .critical,
+                description: "审查结果缺少整体评价，无法确认九维审查是否真实完成。",
+                evidence: "",
+                fixHint: "请重新运行质量审查，要求模型返回 overall_summary。",
+                location: "质量审查 JSON"
+            ))
+        }
+
+        let priorityIssuesMissingEvidence = issues.filter { issue in
+            let severity = issue.blocking == true ? ReviewSeverity.critical : reviewSeverity(from: issue.severity)
+            let evidence = (issue.evidence ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return (severity == .critical || severity == .high) && evidence.isEmpty
+        }
+        if !priorityIssuesMissingEvidence.isEmpty {
+            schemaIssues.append(ReviewIssue(
+                dimension: .logicIntegrity,
+                severity: .critical,
+                description: "审查结果里有严重或高优先级问题缺少原文证据，门禁不能安全信任。",
+                evidence: priorityIssuesMissingEvidence
+                    .prefix(3)
+                    .map(\.description)
+                    .joined(separator: "；"),
+                fixHint: "请重新运行质量审查，要求每个 critical/high issue 都提供 evidence。",
+                location: "质量审查 JSON"
+            ))
+        }
+
+        return schemaIssues
+    }
+
+    private static func invalidReviewResult(reason: String, evidence: String) -> ChapterReviewResult {
+        ChapterReviewResult(
+            overallScore: 0,
+            dimensionScores: [:],
+            issues: [ReviewIssue(
+                dimension: .logicIntegrity,
+                severity: .critical,
+                description: "审查结果结构不完整：\(reason)",
+                evidence: String(evidence.prefix(240)),
+                fixHint: "请重新运行质量审查，确认模型返回完整九维 JSON 后再保存或接受候选稿。",
+                location: "质量审查响应"
+            )],
+            hasBlockingIssues: true,
+            antiPatterns: [],
+            overallSummary: "审查结构不完整，请重新运行。"
+        )
     }
 
     private static func reviewSeverity(from rawValue: String) -> ReviewSeverity {
@@ -642,11 +752,83 @@ enum UnifiedQualityReviewer {
         )
     }
 
+    static func localHeuristicIssues(text: String, project: NovelProject) -> [ReviewIssue] {
+        let normalizedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedText.isEmpty else { return [] }
+
+        var issues: [ReviewIssue] = []
+        if project.storyLength.supportsVolumePlanning,
+           normalizedText.count < 900 {
+            issues.append(ReviewIssue(
+                dimension: .pacing,
+                severity: .medium,
+                description: "长篇章节正文偏短，可能不足以完成本章目标、微兑现和章末期待。",
+                evidence: "当前正文约 \(normalizedText.count) 字符。",
+                fixHint: "补足一个清晰场景推进、一次信息兑现和一个自然章末钩子。",
+                location: "本地启发式检查"
+            ))
+        }
+
+        let draftTail = String(project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).suffix(120))
+        if !draftTail.isEmpty,
+           normalizedText.hasPrefix(draftTail) {
+            issues.append(ReviewIssue(
+                dimension: .narrativeContinuity,
+                severity: .high,
+                description: "候选正文疑似重复草稿箱末尾内容，可能形成倒退或重复承接。",
+                evidence: String(draftTail.prefix(80)),
+                fixHint: "从草稿箱最后状态之后继续写，不要整段复刻已有正文。",
+                location: "本地启发式检查"
+            ))
+        }
+
+        if project.storyLength.supportsVolumePlanning,
+           !hasReaderPullEnding(normalizedText) {
+            issues.append(ReviewIssue(
+                dimension: .readerPull,
+                severity: .medium,
+                description: "章末缺少明显期待点或未完动作，追读力可能不足。",
+                evidence: String(normalizedText.suffix(90)),
+                fixHint: "结尾保留一个选择、压力、发现或未兑现动作，让下一章有自然入口。",
+                location: "本地启发式检查"
+            ))
+        }
+
+        return issues
+    }
+
+    static func mergeLocalHeuristicIssues(
+        into result: ChapterReviewResult,
+        localIssues: [ReviewIssue]
+    ) -> ChapterReviewResult {
+        guard !localIssues.isEmpty else { return result }
+
+        let mergedIssues = result.issues + localIssues
+        let penaltyScore = computePenaltyScore(issues: mergedIssues)
+        return ChapterReviewResult(
+            overallScore: min(result.overallScore, penaltyScore),
+            dimensionScores: result.dimensionScores,
+            issues: mergedIssues,
+            hasBlockingIssues: result.hasBlockingIssues || mergedIssues.contains { $0.isBlocking },
+            antiPatterns: result.antiPatterns,
+            overallSummary: result.overallSummary
+        )
+    }
+
     private static func localPatternSeverity(_ pattern: String) -> ReviewSeverity {
         if pattern.contains("连续") || pattern.contains("模板表达") || pattern.contains("情绪标签化") {
             return .high
         }
         return .medium
+    }
+
+    private static func hasReaderPullEnding(_ text: String) -> Bool {
+        let tail = String(text.suffix(180))
+        let hooks = [
+            "？", "?", "！", "!", "突然", "就在这时", "下一刻", "门外", "身后",
+            "传来", "响起", "抬头", "发现", "终于", "还没结束", "不能", "必须"
+        ]
+        return hooks.contains { tail.contains($0) }
     }
 
     private static func uniqueStrings(_ values: [String]) -> [String] {

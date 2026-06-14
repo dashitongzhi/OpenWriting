@@ -461,6 +461,7 @@ extension AIWritingService {
         configuration: AIConnectionConfiguration
     ) async throws -> ChapterReviewResult {
         let localPatterns = ChapterQualityReviewer.quickAIFlavorCheck(text: text)
+        let localIssues = ChapterQualityReviewer.localHeuristicIssues(text: text, project: project)
         let reviewPrompt = ChapterQualityReviewer.reviewUserPrompt(
             project: project,
             chapterDraft: text,
@@ -474,9 +475,12 @@ extension AIWritingService {
             maxTokens: 2_000
         )
         let review = ChapterQualityReviewer.parseReviewResult(from: reviewResponse)
-        return ChapterQualityReviewer.mergeLocalAntiPatterns(
-            into: review,
-            localPatterns: localPatterns
+        return ChapterQualityReviewer.mergeLocalHeuristicIssues(
+            into: ChapterQualityReviewer.mergeLocalAntiPatterns(
+                into: review,
+                localPatterns: localPatterns
+            ),
+            localIssues: localIssues
         )
     }
 
