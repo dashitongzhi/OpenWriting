@@ -267,12 +267,19 @@ extension AppState {
         }
     }
 
-    func persistRecentProjects(_ projects: [NovelProject], for scope: String?) {
+    @discardableResult
+    func persistRecentProjects(_ projects: [NovelProject], for scope: String?) -> Bool {
         do {
             try projectStore.saveProjects(projects, for: scope)
             Self.clearLegacyRecentProjectsFromUserDefaults(for: scope, userDefaults: userDefaults)
+            return true
         } catch {
-            return
+            setCloudSyncStatus(
+                title: "保存失败",
+                symbolName: "exclamationmark.triangle",
+                message: error.localizedDescription
+            )
+            return false
         }
     }
 

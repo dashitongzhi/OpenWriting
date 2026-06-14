@@ -191,13 +191,38 @@ extension AppState {
     }
 
     func applyCloudSnapshot(_ snapshot: AccountProjectSnapshot) {
+        let previousActiveProjectID = activeProjectID
+        let previousSelectedProjectID = selectedProjectID
+        let snapshotProjectIDs = Set(snapshot.recentProjects.map(\.id))
+        let preservedSelection = Self.preservedCloudSelection(
+            selectedProjectID: previousSelectedProjectID,
+            activeProjectID: previousActiveProjectID,
+            snapshotActiveProjectID: snapshot.activeProjectID,
+            projectIDs: snapshotProjectIDs
+        )
+
         currentProjectSnapshotTimestamp = snapshot.updatedAt.timeIntervalSince1970
         isHydratingAccountScopedData = true
         recentProjects = snapshot.recentProjects
-        activeProjectID = snapshot.activeProjectID
-        selectedProjectID = snapshot.activeProjectID
+        activeProjectID = preservedSelection
+        selectedProjectID = preservedSelection
         normalizeProjectSelection()
         isHydratingAccountScopedData = false
+    }
+
+    static func preservedCloudSelection(
+        selectedProjectID: NovelProject.ID?,
+        activeProjectID: NovelProject.ID?,
+        snapshotActiveProjectID: NovelProject.ID?,
+        projectIDs: Set<NovelProject.ID>
+    ) -> NovelProject.ID? {
+        [
+            selectedProjectID,
+            activeProjectID,
+            snapshotActiveProjectID
+        ]
+        .compactMap { $0 }
+        .first { projectIDs.contains($0) }
     }
 
     func setCloudSyncStatus(title: String, symbolName: String, message: String) {

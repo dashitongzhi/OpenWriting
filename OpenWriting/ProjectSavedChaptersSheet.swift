@@ -8,6 +8,7 @@ struct ProjectSavedChaptersSheet: View {
 
     @State private var selectedChapterID: ChapterDraft.ID?
     @State private var searchText = ""
+    @State private var pendingChapterLoad: ChapterDraft?
     @State private var pendingRestore: (chapter: ChapterDraft, version: ChapterDraftVersion)?
 
     private var palette: DashboardPalette {
@@ -116,9 +117,7 @@ struct ProjectSavedChaptersSheet: View {
                                 loadButtonStyle: .prominent(tint: palette.coolAccent),
                                 previewStyle: SavedChapterPreviewStyle(previewMinHeight: 0),
                                 onLoadChapter: { chapterDraft in
-                                    appState.loadChapterDraft(chapterDraft.id, for: project.id)
-                                    appState.openWritingDesk(for: project.id)
-                                    dismiss()
+                                    requestChapterLoad(chapterDraft, project: project)
                                 },
                                 onRestoreVersion: { chapterDraft, version in
                                     pendingRestore = (chapterDraft, version)
@@ -147,9 +146,7 @@ struct ProjectSavedChaptersSheet: View {
                                 loadButtonStyle: .prominent(tint: palette.coolAccent),
                                 previewStyle: SavedChapterPreviewStyle(previewMinHeight: 0),
                                 onLoadChapter: { chapterDraft in
-                                    appState.loadChapterDraft(chapterDraft.id, for: project.id)
-                                    appState.openWritingDesk(for: project.id)
-                                    dismiss()
+                                    requestChapterLoad(chapterDraft, project: project)
                                 },
                                 onRestoreVersion: { chapterDraft, version in
                                     pendingRestore = (chapterDraft, version)
@@ -224,6 +221,24 @@ struct ProjectSavedChaptersSheet: View {
             }
         }
         .frame(minWidth: 720, minHeight: 540, alignment: .topLeading)
+        .sheet(item: $pendingChapterLoad) { chapterDraft in
+            if let project {
+                ProjectSavedChapterLoadDiffSheet(
+                    project: project,
+                    targetChapter: chapterDraft,
+                    onOverwrite: {
+                        performChapterLoad(chapterDraft, projectID: project.id)
+                    },
+                    onSaveFirst: {
+                        pendingChapterLoad = nil
+                        _ = appState.saveCurrentChapterDraft(for: project.id)
+                    },
+                    onCancel: {
+                        pendingChapterLoad = nil
+                    }
+                )
+            }
+        }
         .confirmationDialog(
             "回滚章节版本",
             isPresented: Binding(
@@ -256,5 +271,130 @@ struct ProjectSavedChaptersSheet: View {
                 Text("将《\(pendingRestore.chapter.chapterSummary)》恢复为历史版本《\(pendingRestore.version.chapterTitle)》。当前版本会先自动保存到历史中。")
             }
         }
+    }
+
+    private func requestChapterLoad(_ chapterDraft: ChapterDraft, project: NovelProject) {
+        if shouldConfirmChapterLoad(chapterDraft, in: project) {
+            pendingChapterLoad = chapterDraft
+            return
+        }
+
+        performChapterLoad(chapterDraft, projectID: project.id)
+    }
+
+    private func performChapterLoad(_ chapterDraft: ChapterDraft, projectID: NovelProject.ID) {
+        appState.loadChapterDraft(chapterDraft.id, for: projectID)
+        appState.openWritingDesk(for: projectID)
+        pendingChapterLoad = nil
+        dismiss()
+    }
+
+    private func shouldConfirmChapterLoad(_ chapterDraft: ChapterDraft, in project: NovelProject) -> Bool {
+        let currentDraft = project.draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !currentDraft.isEmpty else { return false }
+
+        let currentSavedDraft = project.chapterDrafts.first {
+            $0.volumeNumber == max(project.currentVolumeNumber, 1)
+                && $0.chapterNumber == max(project.currentChapterNumber, 1)
+        }
+        let savedText = currentSavedDraft?.content.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if savedText == currentDraft {
+            return false
+        }
+
+        return true
+    }
+}
+
+private struct ProjectSavedChapterLoadDiffSheet: View {
+    let project: NovelProject
+    let targetChapter: ChapterDraft
+    let onOverwrite: () -> Void
+    let onSaveFirst: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("载入已保存章节")
+                    .font(.title3.weight(.bold))
+                Text("载入《\(targetChapter.chapterSummary)》会替换当前草稿箱正文。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(alignment: .top, spacing: 14) {
+                SavedChapterLoadPreviewColumn(
+                    title: "当前草稿",
+                    subtitle: project.currentChapterSummary,
+                    text: project.draftText
+                )
+
+                SavedChapterLoadPreviewColumn(
+                    title: "目标章节",
+                    subtitle: "\(targetChapter.savedAt) · \(targetChapter.wordCount) 字",
+                    text: targetChapter.content
+                )
+            }
+
+            HStack {
+                Button("取消", role: .cancel) {
+                    onCancel()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Spacer()
+
+                Button("先保存当前草稿") {
+                    onSaveFirst()
+                }
+                .buttonStyle(.bordered)
+
+                Button("载入并覆盖当前草稿", role: .destructive) {
+                    onOverwrite()
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 760, minHeight: 460)
+    }
+}
+
+private struct SavedChapterLoadPreviewColumn: View {
+    let title: String
+    let subtitle: String
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+
+            ScrollView {
+                Text(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "暂无正文。" : text)
+                    .font(.system(size: 13, weight: .regular, design: .serif))
+                    .lineSpacing(4)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .textSelection(.enabled)
+                    .padding(12)
+            }
+            .frame(maxWidth: .infinity, minHeight: 300)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.secondary.opacity(0.07))
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 }
