@@ -916,6 +916,90 @@ final class AppState {
         return project
     }
 
+    func storageHealthReport(for projectID: NovelProject.ID) -> StorageHealthReport {
+        var report = projectStore.storageHealthReport(
+            for: projectID,
+            scope: currentStorageScope
+        )
+
+        if let activeProjectID,
+           activeProjectID != projectID,
+           recentProjects.contains(where: { $0.id == projectID }) {
+            let conflictIssue = ProjectStorageIssue(
+                id: "cloud-selection-\(projectID)",
+                kind: .cloudSelectionConflict,
+                status: .warning,
+                projectID: projectID,
+                chapterID: nil,
+                title: "当前项目选择与本地活跃项不同",
+                detail: "iCloud 或本机选择仍指向另一个项目。同步前建议确认是否要切换活跃项目。",
+                recoveryActions: [.exportDiagnostics, .markCloudConflict]
+            )
+            report.issues.append(conflictIssue)
+            if report.status == .passed {
+                report.status = .warning
+                report.summary = "存储文件健康，但项目选择存在同步提醒。"
+                report.nextAction = "确认活跃项目后再继续同步或写作。"
+            }
+        }
+
+        return report
+    }
+
+    @discardableResult
+    func recoverStorageIssue(
+        _ issue: ProjectStorageIssue,
+        action: StorageRecoveryAction
+    ) -> StorageRecoveryResult? {
+        do {
+            let result = try projectStore.recoverStorageIssue(
+                issue,
+                action: action,
+                project: project(for: issue.projectID),
+                scope: currentStorageScope
+            )
+
+            if result.didChangeStore {
+                if let reloadedProjects = Self.loadRecentProjects(
+                    for: currentStorageScope,
+                    from: userDefaults,
+                    projectStore: projectStore
+                ) {
+                    let preservedActiveProjectID = activeProjectID
+                    let preservedSelectedProjectID = selectedProjectID
+                    isHydratingAccountScopedData = true
+                    recentProjects = reloadedProjects
+                    if let preservedActiveProjectID,
+                       recentProjects.contains(where: { $0.id == preservedActiveProjectID }) {
+                        activeProjectID = preservedActiveProjectID
+                        selectedProjectID = preservedSelectedProjectID.flatMap { selectedID in
+                            recentProjects.contains(where: { $0.id == selectedID }) ? selectedID : nil
+                        } ?? preservedActiveProjectID
+                    } else {
+                        normalizeProjectSelection()
+                    }
+                    isHydratingAccountScopedData = false
+                }
+                noteLocalProjectMutation()
+                scheduleCloudSnapshotSave()
+            }
+
+            setCloudSyncStatus(
+                title: "存储恢复",
+                symbolName: result.didChangeStore ? "wrench.and.screwdriver" : "doc.text.magnifyingglass",
+                message: result.message
+            )
+            return result
+        } catch {
+            setCloudSyncStatus(
+                title: "恢复失败",
+                symbolName: "exclamationmark.triangle",
+                message: error.localizedDescription
+            )
+            return nil
+        }
+    }
+
     @discardableResult
     func ensureContinuationChapterDraftsLoaded(
         for projectID: NovelProject.ID,
@@ -944,12 +1028,12 @@ final class AppState {
     func hydratedProjectsForPersistenceSnapshot(_ projects: [NovelProject]) -> [NovelProject] {
         projects.map { project in
             var hydratedProject = project
-            let storedDrafts = projectStore.loadChapterDrafts(
+            let storedDraftReport = projectStore.loadChapterDraftReport(
                 for: project.id,
                 scope: currentStorageScope
             )
 
-            var draftByID = Dictionary(uniqueKeysWithValues: storedDrafts.map { ($0.id, $0) })
+            var draftByID = Dictionary(uniqueKeysWithValues: storedDraftReport.drafts.map { ($0.id, $0) })
             for chapterDraft in project.chapterDrafts {
                 draftByID[chapterDraft.id] = chapterDraft
             }
@@ -961,10 +1045,15 @@ final class AppState {
             }
 
             hydratedProject.chapterDrafts = draftByID.values.sorted(by: ChapterDraft.sortDescending)
-            if !hydratedProject.chapterDrafts.isEmpty {
+            let hydratedChapterIDs = Set(hydratedProject.chapterDrafts.map(\.id))
+            let catalogChapterIDs = Set(project.chapterCatalog.map(\.id))
+            if !hydratedProject.chapterDrafts.isEmpty,
+               catalogChapterIDs.isSubset(of: hydratedChapterIDs) {
                 hydratedProject.chapterCatalog = hydratedProject.chapterDrafts
                     .map(ChapterDraftMetadata.init)
                     .sorted(by: ChapterDraftMetadata.sortDescending)
+            } else if !storedDraftReport.isComplete, !project.chapterCatalog.isEmpty {
+                hydratedProject.chapterCatalog = project.chapterCatalog
             }
             return hydratedProject
         }
@@ -1031,6 +1120,10 @@ final class AppState {
             project.updatedAt = timestamp
         }
 
+        guard result != nil else { return nil }
+        guard persistRecentProjects(recentProjects, for: currentStorageScope) else {
+            return nil
+        }
         return result
     }
 

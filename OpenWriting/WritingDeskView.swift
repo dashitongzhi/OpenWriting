@@ -50,6 +50,7 @@ struct WritingDeskView: View {
     @State private var latestReviewedAISuggestionText = ""
     @State private var latestAISuggestionAcceptanceContext: AISuggestionAcceptanceContext?
     @State private var latestStrandWarning: StrandWeaveState.PacingWarning?
+    @State private var pendingChapterLoad: ChapterDraftMetadata?
 
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
@@ -134,6 +135,24 @@ struct WritingDeskView: View {
                 )
             }
         }
+        .sheet(item: $pendingChapterLoad) { metadata in
+            if let activeProject {
+                ChapterLoadDiffSheet(
+                    project: activeProject,
+                    targetMetadata: metadata,
+                    onOverwrite: {
+                        loadChapterFromNavigator(metadata, for: activeProject)
+                    },
+                    onSaveFirst: {
+                        pendingChapterLoad = nil
+                        saveCurrentChapterDraft(for: activeProject)
+                    },
+                    onCancel: {
+                        pendingChapterLoad = nil
+                    }
+                )
+            }
+        }
         .onChange(of: draftSelection) { _, selection in
             if !selection.hasSelection && selectionPolishTarget == nil {
                 isSelectionPolishPopoverPresented = false
@@ -158,6 +177,7 @@ struct WritingDeskView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: workspaceSpacing) {
                             writingDeskConfigurationRow(for: activeProject)
+                            writingDeskStatusStrip(for: activeProject)
                             writingDeskCreationRow(for: activeProject)
                         }
                         .padding(.top, contentTopPadding)
@@ -200,6 +220,7 @@ struct WritingDeskView: View {
 
         return VStack(alignment: .leading, spacing: workspaceSpacing) {
             writingDeskConfigurationRow(for: project, isCollapsed: true)
+            writingDeskStatusStrip(for: project)
             writingDeskCreationRow(for: project, layout: layout)
         }
         .padding(.top, contentTopPadding)
@@ -236,6 +257,95 @@ struct WritingDeskView: View {
                 }
             }
         }
+    }
+
+    private func writingDeskStatusStrip(for project: NovelProject) -> some View {
+        let review = displayedChapterReview(for: project)
+        let minimumScore = LongformStorySystem.minimumAcceptedScore(for: project.storyLength)
+        let qualityTrend = project.longformQualityTrend
+        let storageHealth = appState.storageHealthReport(for: project.id)
+
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                WritingDeskStatusPill(
+                    title: "保存",
+                    value: saveMessage,
+                    symbolName: "tray.and.arrow.down",
+                    tint: .secondary
+                )
+
+                WritingDeskStatusPill(
+                    title: "同步",
+                    value: appState.cloudSyncTitle,
+                    symbolName: appState.cloudSyncSymbolName,
+                    tint: appState.cloudSyncTitle.contains("失败") ? .red : palette.activeAccent
+                )
+
+                WritingDeskStatusPill(
+                    title: "质量",
+                    value: review.map { "\($0.overallScore)/100 · 最低 \(minimumScore)" } ?? "待审查",
+                    symbolName: review?.passes(minimumScore: minimumScore) == true ? "checkmark.seal.fill" : "exclamationmark.circle",
+                    tint: review?.passes(minimumScore: minimumScore) == true ? palette.readyAccent : palette.warningAccent
+                )
+
+                WritingDeskStatusPill(
+                    title: "质量债",
+                    value: "\(qualityTrend.qualityDebtTargets.count + qualityTrend.revisionHints.count) 项",
+                    symbolName: "list.bullet.clipboard",
+                    tint: qualityTrend.qualityDebtTargets.isEmpty && qualityTrend.revisionHints.isEmpty ? .secondary : palette.warningAccent
+                )
+
+                WritingDeskStatusPill(
+                    title: "存储",
+                    value: storageHealth.status.displayName,
+                    symbolName: storageHealth.status == .blocked ? "externaldrive.badge.exclamationmark" : "externaldrive",
+                    tint: storageHealthColor(storageHealth.status)
+                )
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    WritingDeskStatusPill(
+                        title: "保存",
+                        value: saveMessage,
+                        symbolName: "tray.and.arrow.down",
+                        tint: .secondary
+                    )
+                    WritingDeskStatusPill(
+                        title: "同步",
+                        value: appState.cloudSyncTitle,
+                        symbolName: appState.cloudSyncSymbolName,
+                        tint: palette.activeAccent
+                    )
+                }
+
+                HStack(spacing: 8) {
+                    WritingDeskStatusPill(
+                        title: "质量",
+                        value: review.map { "\($0.overallScore)/100" } ?? "待审查",
+                        symbolName: "checklist",
+                        tint: review?.passes(minimumScore: minimumScore) == true ? palette.readyAccent : palette.warningAccent
+                    )
+                    WritingDeskStatusPill(
+                        title: "存储",
+                        value: storageHealth.status.displayName,
+                        symbolName: "externaldrive",
+                        tint: storageHealthColor(storageHealth.status)
+                    )
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(palette.panelBase.opacity(palette.isDark ? 0.64 : 0.58))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(palette.editorBorder, lineWidth: 1)
+        )
     }
 
     private func writingDeskCreationRow(for project: NovelProject, layout: WritingDeskCollapsedLayout? = nil) -> some View {
@@ -393,10 +503,7 @@ struct WritingDeskView: View {
                             project: project,
                             searchText: $chapterNavigationSearchText,
                             onSelectChapter: { metadata in
-                                appState.loadChapterDraft(metadata.id, for: project.id)
-                                saveMessage = "已载入 \(metadata.chapterSummary)，可以继续编辑。"
-                                isChapterNavigatorPresented = false
-                                focusDraftEditor()
+                                requestChapterLoadFromNavigator(metadata, for: project)
                             }
                         )
                         .frame(width: 420)
@@ -577,7 +684,10 @@ struct WritingDeskView: View {
 
             genreTemplateSelector(for: project)
             strandWeaveIndicator(for: project)
+            nextChapterBriefPanel(for: project)
+            qualityDebtPanel(for: project)
             longformRuntimePanel(for: project)
+            storageHealthPanel(for: project)
 
             Text(aiStatusMessage)
                 .font(.subheadline)
@@ -804,6 +914,170 @@ struct WritingDeskView: View {
 
     private func strandPercent(_ value: Double?) -> String {
         "\(Int(((value ?? 0) * 100).rounded()))%"
+    }
+
+    private func nextChapterBriefPanel(for project: NovelProject) -> some View {
+        let brief = project.longformNextChapterBrief
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("下一章 brief", systemImage: "arrow.forward.doc.on.clipboard")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Text(brief.hasActionableSignals ? "已约束" : "基础")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(brief.hasActionableSignals ? palette.activeAccent : .secondary)
+            }
+
+            Text(brief.chapterGoal)
+                .font(.caption)
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+
+            WritingDeskBriefRows(
+                rows: [
+                    ("必须延续", brief.mandatoryContinuities),
+                    ("伏笔推进", brief.foreshadowingPromises),
+                    ("禁止违反", brief.forbiddenContradictions),
+                    ("风险", brief.risks)
+                ]
+            )
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.secondary.opacity(0.07))
+        )
+    }
+
+    private func qualityDebtPanel(for project: NovelProject) -> some View {
+        let trend = project.longformQualityTrend
+        let debts = Array((trend.qualityDebtTargets + trend.revisionHints + trend.priorityIssues).prefix(6))
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("质量债", systemImage: debts.isEmpty ? "checkmark.circle" : "exclamationmark.triangle")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                if let averageScore = trend.averageScore {
+                    Text("最近 \(averageScore)/100")
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(averageScore >= trend.minimumAcceptedScore ? palette.readyAccent : palette.warningAccent)
+                } else {
+                    Text("待积累")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if debts.isEmpty {
+                Text("暂无未解决质量债。保存并审查章节后，这里会显示下一章必须修复的问题。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            } else {
+                ForEach(Array(debts.enumerated()), id: \.offset) { _, debt in
+                    Text("· \(debt)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.secondary.opacity(0.07))
+        )
+    }
+
+    private func storageHealthPanel(for project: NovelProject) -> some View {
+        let report = appState.storageHealthReport(for: project.id)
+        let sortedIssues = report.issues.sorted(by: storageIssueDisplayPrecedence)
+        let visibleIssues = Array(sortedIssues.prefix(3))
+        let hiddenIssueCount = max(sortedIssues.count - visibleIssues.count, 0)
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("存储健康", systemImage: report.status == .blocked ? "externaldrive.badge.exclamationmark" : "externaldrive")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Text(report.status.displayName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(storageHealthColor(report.status))
+            }
+
+            Text(report.summary)
+                .font(.caption)
+                .foregroundStyle(storageHealthColor(report.status))
+                .lineLimit(2)
+
+            Text(report.nextAction)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+
+            if visibleIssues.isEmpty {
+                Text("项目索引、metadata、章节目录和正文文件一致。")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            } else {
+                ForEach(visibleIssues) { issue in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("· \(issue.title)：\(issue.detail)")
+                            .font(.caption)
+                            .foregroundStyle(issue.status == .blocked ? .red : .orange)
+                            .lineLimit(2)
+
+                        HStack(spacing: 8) {
+                            ForEach(issue.recoveryActions.prefix(3), id: \.self) { action in
+                                Button {
+                                    performStorageRecovery(issue: issue, action: action)
+                                } label: {
+                                    Label(action.title, systemImage: storageRecoverySymbol(for: action))
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .accessibilityLabel("\(action.title)：\(issue.title)")
+                            }
+                        }
+                    }
+                }
+
+                if hiddenIssueCount > 0 {
+                    Text("另有 \(hiddenIssueCount) 个存储提醒；优先处理上方阻断项后重新检查。")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            let metricSummary = report.metrics
+                .sorted { $0.key < $1.key }
+                .map { "\($0.key): \($0.value)" }
+                .joined(separator: " · ")
+            if !metricSummary.isEmpty {
+                Text(metricSummary)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.secondary.opacity(0.07))
+        )
     }
 
     private func longformRuntimePanel(for project: NovelProject) -> some View {
@@ -1059,6 +1333,42 @@ struct WritingDeskView: View {
             : palette.readyAccent
     }
 
+    private func storageHealthColor(_ status: StorageHealthStatus) -> Color {
+        switch status {
+        case .passed: return palette.readyAccent
+        case .warning: return palette.warningAccent
+        case .blocked: return .red
+        }
+    }
+
+    private func storageIssueDisplayPrecedence(_ lhs: ProjectStorageIssue, _ rhs: ProjectStorageIssue) -> Bool {
+        let lhsRank = storageIssueStatusRank(lhs.status)
+        let rhsRank = storageIssueStatusRank(rhs.status)
+        if lhsRank != rhsRank {
+            return lhsRank < rhsRank
+        }
+
+        return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+    }
+
+    private func storageIssueStatusRank(_ status: StorageHealthStatus) -> Int {
+        switch status {
+        case .blocked: return 0
+        case .warning: return 1
+        case .passed: return 2
+        }
+    }
+
+    private func storageRecoverySymbol(for action: StorageRecoveryAction) -> String {
+        switch action {
+        case .exportDiagnostics: return "doc.text.magnifyingglass"
+        case .rebuildChapterCatalog: return "arrow.triangle.2.circlepath"
+        case .preserveMissingChapterPlaceholder: return "bookmark"
+        case .recoverMetadataShell: return "shippingbox"
+        case .markCloudConflict: return "icloud.and.arrow.down"
+        }
+    }
+
     private var currentThinkingState: AIWriterThinkingState {
         AIWriterThinkingState(
             title: writingRunState == .stopping ? "正在停止本次写作" : thinkingMode.title,
@@ -1173,6 +1483,12 @@ struct WritingDeskView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isSavingChapter || isGenerating || project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                Button("保存并下一章") {
+                    saveCurrentChapterDraft(for: project, advanceToNextChapter: true)
+                }
+                .buttonStyle(.bordered)
+                .disabled(isSavingChapter || isGenerating || project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
 
             VStack(alignment: .leading, spacing: 10) {
@@ -1195,6 +1511,12 @@ struct WritingDeskView: View {
                         saveCurrentChapterDraft(for: project)
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(isSavingChapter || isGenerating || project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                    Button("保存并下一章") {
+                        saveCurrentChapterDraft(for: project, advanceToNextChapter: true)
+                    }
+                    .buttonStyle(.bordered)
                     .disabled(isSavingChapter || isGenerating || project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
 
@@ -2875,10 +3197,65 @@ struct WritingDeskView: View {
         latestReviewedAISuggestionText = ""
         latestAISuggestionAcceptanceContext = nil
         latestStrandWarning = nil
+        pendingChapterLoad = nil
         isSelectionPolishPopoverPresented = false
         saveMessage = "自动保存已开启，可按章节收录"
         aiStatusMessage = "准备就绪，可先补大纲、参考文本和特殊要求，再开始当前章节写作。"
         focusDraftEditor()
+    }
+
+    private func requestChapterLoadFromNavigator(_ metadata: ChapterDraftMetadata, for project: NovelProject) {
+        if shouldConfirmChapterLoad(metadata, in: project) {
+            pendingChapterLoad = metadata
+            return
+        }
+
+        loadChapterFromNavigator(metadata, for: project)
+    }
+
+    private func loadChapterFromNavigator(_ metadata: ChapterDraftMetadata, for project: NovelProject) {
+        appState.loadChapterDraft(metadata.id, for: project.id)
+        saveMessage = "已载入 \(metadata.chapterSummary)，可以继续编辑。"
+        isChapterNavigatorPresented = false
+        pendingChapterLoad = nil
+        focusDraftEditor()
+    }
+
+    private func performStorageRecovery(issue: ProjectStorageIssue, action: StorageRecoveryAction) {
+        if let result = appState.recoverStorageIssue(issue, action: action) {
+            if let outputURL = result.outputURL {
+                aiStatusMessage = "\(result.message)（\(outputURL.lastPathComponent)）"
+            } else {
+                aiStatusMessage = result.message
+            }
+            if result.didChangeStore {
+                saveMessage = "存储恢复已完成，已重新检查项目文件。"
+            }
+        } else {
+            aiStatusMessage = appState.cloudSyncStatusMessage
+        }
+    }
+
+    private func shouldConfirmChapterLoad(_ metadata: ChapterDraftMetadata, in project: NovelProject) -> Bool {
+        let currentDraft = project.draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !currentDraft.isEmpty else { return false }
+
+        let currentSavedDraft = project.chapterDrafts.first {
+            $0.volumeNumber == max(project.currentVolumeNumber, 1)
+                && $0.chapterNumber == max(project.currentChapterNumber, 1)
+        }
+        let savedText = currentSavedDraft?.content.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if savedText == currentDraft {
+            return false
+        }
+
+        if metadata.volumeNumber == max(project.currentVolumeNumber, 1),
+           metadata.chapterNumber == max(project.currentChapterNumber, 1) {
+            return true
+        }
+
+        return true
     }
 
     private func outlineGenerationContext(
@@ -4198,6 +4575,161 @@ private struct StrandRatioBar: View {
     }
 }
 
+private struct WritingDeskStatusPill: View {
+    let title: String
+    let value: String
+    let symbolName: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbolName)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(tint)
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            Capsule(style: .continuous)
+                .fill(Color.secondary.opacity(0.08))
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title)：\(value)")
+    }
+}
+
+private struct WritingDeskBriefRows: View {
+    let rows: [(String, [String])]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                let values = row.1
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(row.0)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 58, alignment: .leading)
+
+                    Text(values.isEmpty ? "暂无" : values.prefix(2).joined(separator: "；"))
+                        .font(.caption)
+                        .foregroundStyle(values.isEmpty ? .tertiary : .secondary)
+                        .lineLimit(2)
+                }
+            }
+        }
+    }
+}
+
+private struct ChapterLoadDiffSheet: View {
+    let project: NovelProject
+    let targetMetadata: ChapterDraftMetadata
+    let onOverwrite: () -> Void
+    let onSaveFirst: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("载入已保存章节")
+                        .font(.title3.weight(.bold))
+                    Text("载入《\(targetMetadata.chapterSummary)》会替换当前草稿箱正文。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+            }
+
+            HStack(alignment: .top, spacing: 14) {
+                ChapterLoadPreviewColumn(
+                    title: "当前草稿",
+                    subtitle: project.currentChapterSummary,
+                    text: project.draftText
+                )
+
+                ChapterLoadPreviewColumn(
+                    title: "目标章节",
+                    subtitle: "\(targetMetadata.savedAt) · \(targetMetadata.wordCount) 字",
+                    text: targetMetadata.previewText
+                )
+            }
+
+            HStack {
+                Button("取消", role: .cancel) {
+                    onCancel()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Spacer()
+
+                Button("先保存当前草稿") {
+                    onSaveFirst()
+                }
+                .buttonStyle(.bordered)
+
+                Button("载入并覆盖当前草稿", role: .destructive) {
+                    onOverwrite()
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 760, minHeight: 460)
+    }
+}
+
+private struct ChapterLoadPreviewColumn: View {
+    let title: String
+    let subtitle: String
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+
+            ScrollView {
+                Text(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "暂无正文。" : text)
+                    .font(.system(size: 13, weight: .regular, design: .serif))
+                    .lineSpacing(4)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .textSelection(.enabled)
+                    .padding(12)
+            }
+            .frame(maxWidth: .infinity, minHeight: 300)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.secondary.opacity(0.07))
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+}
+
 private struct ChapterQualityReviewPanel: View {
     let review: ChapterReviewResult
     let minimumAcceptedScore: Int
@@ -4375,6 +4907,7 @@ private struct WritingDeskSectionCard<Content: View>: View {
                     .buttonStyle(.plain)
                     .disabled(!action.isEnabled)
                     .help(action.accessibilityLabel)
+                    .accessibilityLabel(action.accessibilityLabel)
                     .opacity(action.isEnabled ? 1 : 0.45)
                 }
             }
