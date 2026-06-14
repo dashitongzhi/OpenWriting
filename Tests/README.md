@@ -68,6 +68,8 @@ AD9EB9XX2F8676DB005D3EBC /* OpenWritingTests */ = {
 
 ## 运行测试
 
+OpenWriting 的测试入口以 Xcode project 为准；`Tests/Package.swift` 只保留为空 manifest，防止误把 app target 当成 SwiftPM library。不要用 `swift test` 判断本仓库测试状态。
+
 在 Xcode 中：
 - Product → Test (⌘U)
 - 或使用 Test Navigator (⌘6)
@@ -75,7 +77,11 @@ AD9EB9XX2F8676DB005D3EBC /* OpenWritingTests */ = {
 或通过命令行：
 ```bash
 cd /Users/kral/Desktop/OpenWriting
-xcodebuild test -scheme OpenWritingTests -destination 'platform=macOS'
+/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild test \
+  -project OpenWriting.xcodeproj \
+  -scheme OpenWriting \
+  -destination 'platform=macOS' \
+  CODE_SIGNING_ALLOWED=NO
 ```
 
 ## 扩展测试覆盖

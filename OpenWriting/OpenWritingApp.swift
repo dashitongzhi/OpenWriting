@@ -3,7 +3,6 @@ import SwiftUI
 @main
 struct OpenWritingApp: App {
     @NSApplicationDelegateAdaptor(OpenWritingAppDelegate.self) private var appDelegate
-    private let runtime = AppRuntime.shared
 
     var body: some Scene {
         Settings {
@@ -12,7 +11,7 @@ struct OpenWritingApp: App {
         .commands {
             CommandGroup(replacing: .appSettings) {
                 Button("设置...") {
-                    runtime.windowCoordinator.showSettingsWindow()
+                    AppRuntime.shared.windowCoordinator.showSettingsWindow()
                 }
                 .keyboardShortcut(",", modifiers: .command)
             }
@@ -22,11 +21,29 @@ struct OpenWritingApp: App {
 
 @MainActor
 final class OpenWritingAppDelegate: NSObject, NSApplicationDelegate {
+    private static var isRunningUnitTests: Bool {
+        let environment = ProcessInfo.processInfo.environment
+
+        return environment["OPENWRITING_XCTEST"] == "1"
+            || environment["XCTestConfigurationFilePath"] != nil
+            || environment["XCTestBundlePath"] != nil
+            || Bundle.allBundles.contains { $0.bundlePath.hasSuffix(".xctest") }
+            || NSClassFromString("XCTest.XCTestCase") != nil
+            || NSClassFromString("XCTestCase") != nil
+    }
+
     func applicationWillFinishLaunching(_ notification: Notification) {
+        guard !Self.isRunningUnitTests else {
+            NSApp.setActivationPolicy(.prohibited)
+            return
+        }
+
         NSApp.setActivationPolicy(.regular)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard !Self.isRunningUnitTests else { return }
+
         NSApp.setActivationPolicy(.regular)
         NSApp.unhide(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -39,6 +56,8 @@ final class OpenWritingAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !Self.isRunningUnitTests else { return false }
+
         if !flag {
             AppRuntime.shared.windowCoordinator.showMainWindow()
         }
