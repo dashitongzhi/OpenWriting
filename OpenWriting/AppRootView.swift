@@ -75,15 +75,17 @@ struct AppRootView: View {
         ForEach(items) { item in
             Label {
                 Text(item.title)
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
             } icon: {
                 Image(systemName: item.symbolName)
-                    .font(.system(size: 18, weight: .medium))
-                    .frame(width: 24)
+                    .font(.system(size: 16, weight: .medium))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22)
             }
                 .tag(item)
-                .padding(.vertical, 8)
-                .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
+                .padding(.vertical, 6)
+                .listRowInsets(EdgeInsets(top: 1, leading: 16, bottom: 1, trailing: 16))
         }
     }
 
@@ -719,8 +721,9 @@ private struct SidebarSectionHeader: View {
 
     var body: some View {
         Text(title)
-            .font(.system(size: 13, weight: .semibold))
+            .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(.secondary)
+            .tracking(0.6)
             .textCase(nil)
             .padding(.top, 10)
     }

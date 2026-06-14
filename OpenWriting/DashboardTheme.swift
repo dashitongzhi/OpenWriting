@@ -44,12 +44,12 @@ struct DashboardPalette {
             stroke = Color.white.opacity(0.12)
             shadow = Color.black.opacity(0.52)
         } else {
-            backgroundTop = Color(red: 0.98, green: 0.96, blue: 0.93)
-            backgroundBottom = Color(red: 0.92, green: 0.95, blue: 0.99)
-            panelBase = Color.white.opacity(0.70)
-            panelSecondary = Color(red: 0.94, green: 0.96, blue: 0.99).opacity(0.72)
-            insetPanel = Color.white.opacity(0.82)
-            selectedPanel = Color.white.opacity(0.82)
+            backgroundTop = Color(red: 0.98, green: 0.98, blue: 0.97)
+            backgroundBottom = Color(red: 0.92, green: 0.96, blue: 0.98)
+            panelBase = Color.white.opacity(0.78)
+            panelSecondary = Color(red: 0.94, green: 0.96, blue: 0.99).opacity(0.74)
+            insetPanel = Color.white.opacity(0.90)
+            selectedPanel = Color.white.opacity(0.88)
             textPrimary = Color(red: 0.12, green: 0.13, blue: 0.20)
             textSecondary = Color(red: 0.30, green: 0.34, blue: 0.43)
             warmAccent = Color(red: 0.92, green: 0.55, blue: 0.30)
@@ -57,7 +57,7 @@ struct DashboardPalette {
             successAccent = Color(red: 0.26, green: 0.68, blue: 0.52)
             badgeFill = Color.white.opacity(0.18)
             badgeFillSelected = Color.white.opacity(0.32)
-            glassUnderlay = Color.white.opacity(0.44)
+            glassUnderlay = Color.white.opacity(0.50)
             glassHighlightStrong = Color.white.opacity(0.38)
             glassHighlightSoft = Color.white.opacity(0.12)
             stroke = Color.white.opacity(0.58)
@@ -78,11 +78,11 @@ struct DashboardPalette {
     }
 
     var editorBorder: Color {
-        isDark ? Color.white.opacity(0.10) : Color.white.opacity(0.16)
+        isDark ? Color.white.opacity(0.12) : Color(red: 0.18, green: 0.22, blue: 0.30).opacity(0.10)
     }
 
     var panelBorder: Color {
-        isDark ? Color.white.opacity(0.10) : Color.white.opacity(0.18)
+        isDark ? Color.white.opacity(0.10) : Color(red: 0.18, green: 0.22, blue: 0.30).opacity(0.08)
     }
 
     var toolbarButtonFill: Color {

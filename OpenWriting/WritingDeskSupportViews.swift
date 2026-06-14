@@ -66,15 +66,19 @@ struct WritingDeskTextSurface: View {
     let placeholder: String
     let minHeight: CGFloat
 
+    private var palette: DashboardPalette {
+        DashboardPalette(colorScheme: colorScheme)
+    }
+
     var body: some View {
         TextEditor(text: $text)
             .font(.system(size: 14, weight: .regular))
+            .foregroundStyle(palette.textPrimary)
             .scrollContentBackground(.hidden)
             .padding(14)
             .frame(minHeight: minHeight, alignment: .topLeading)
             .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                DashboardInsetPanelBackground(cornerRadius: 22, palette: palette)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -93,7 +97,7 @@ struct WritingDeskTextSurface: View {
     }
 
     private var borderColor: Color {
-        DashboardPalette(colorScheme: colorScheme).editorBorder
+        palette.editorBorder
     }
 }
 
@@ -325,10 +329,15 @@ struct WritingDeskCacheSurface: View {
     let placeholder: String
     let minHeight: CGFloat
 
+    private var palette: DashboardPalette {
+        DashboardPalette(colorScheme: colorScheme)
+    }
+
     var body: some View {
         ScrollView {
             Text(text)
                 .font(.system(size: 15, weight: .regular, design: .serif))
+                .foregroundStyle(palette.textPrimary)
                 .lineSpacing(4)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
@@ -337,8 +346,7 @@ struct WritingDeskCacheSurface: View {
         .frame(minHeight: minHeight, alignment: .topLeading)
         .scrollIndicators(.visible)
         .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(.ultraThinMaterial)
+            DashboardInsetPanelBackground(cornerRadius: 22, palette: palette)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -357,7 +365,7 @@ struct WritingDeskCacheSurface: View {
     }
 
     private var borderColor: Color {
-        DashboardPalette(colorScheme: colorScheme).editorBorder
+        palette.editorBorder
     }
 }
 

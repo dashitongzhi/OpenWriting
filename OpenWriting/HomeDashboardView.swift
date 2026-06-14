@@ -134,7 +134,7 @@ struct HomeDashboardView: View {
                 .foregroundStyle(palette.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text("首页现在承担当天的起手台角色：顶部工具栏保留系统风格的全局操作与设置入口，左侧边栏负责工作区导航，主区直接接通创作概览、项目续写、设定导入和写作骨架入口。")
+            Text("把今天要写的章节、项目资料和 AI 协作状态放在一个起手台里。先确认作品方向，再回到正文继续推进。")
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(palette.textSecondary)
                 .frame(maxWidth: 720, alignment: .leading)
@@ -182,7 +182,7 @@ struct HomeDashboardView: View {
 
             HStack(spacing: 10) {
                 PillTag(text: "长篇写作")
-                PillTag(text: "本地原型")
+                PillTag(text: "章节结构")
                 PillTag(text: "AI 协作")
             }
         }
@@ -408,11 +408,11 @@ struct HomeDashboardView: View {
                 }
             }
 
-                HStack(spacing: 12) {
-                    WorkspaceMetricBadge(label: "全部项目", value: "\(appState.recentProjects.count)")
-                    WorkspaceMetricBadge(label: "已创作章节", value: "\(appState.totalWrittenChapters) 章")
-                    WorkspaceMetricBadge(label: "已保存字数", value: "\(appState.totalSavedChapterWordCount)")
-                }
+            HStack(spacing: 12) {
+                WorkspaceMetricBadge(label: "全部项目", value: "\(appState.recentProjects.count)")
+                WorkspaceMetricBadge(label: "已创作章节", value: "\(appState.totalWrittenChapters) 章")
+                WorkspaceMetricBadge(label: "已保存字数", value: "\(appState.totalSavedChapterWordCount)")
+            }
 
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) {
@@ -1308,12 +1308,12 @@ struct PlaceholderWorkspaceView: View {
         } else {
             DashboardPanel(
                 title: "下一步规划",
-                subtitle: "主页已经先把信息架构立住，下面这些区域可以继续扩展。"
+                subtitle: "先从当前项目和章节树开始，把创作推进接回主线。"
             ) {
                 VStack(alignment: .leading, spacing: 12) {
-                    Label("保留当前侧边栏结构，方便后续把页面逐个补齐。", systemImage: "checkmark.circle")
-                    Label("模型连接已收进原生设置窗口，和外观模式一起管理。", systemImage: "gearshape")
-                    Label("项目页下一步建议优先接章节编辑器与项目列表。", systemImage: "square.grid.2x2")
+                    Label("先选中一本正在推进的作品。", systemImage: "checkmark.circle")
+                    Label("在设置里确认模型连接和外观模式。", systemImage: "gearshape")
+                    Label("回到写作台继续正文、素材和章节结构。", systemImage: "square.grid.2x2")
                 }
                 .font(.subheadline)
                 .foregroundStyle(palette.textPrimary)

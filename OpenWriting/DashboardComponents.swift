@@ -334,6 +334,7 @@ struct QuickActionRow: View {
     let subtitle: String
     let symbolName: String
     let action: () -> Void
+    @State private var isHovered = false
 
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
@@ -359,8 +360,8 @@ struct QuickActionRow: View {
                             .font(.title3.weight(.semibold))
                             .foregroundStyle(.white.opacity(0.95))
                     )
-                    .rotation3DEffect(.degrees(18), axis: (x: 1, y: -1, z: 0))
-                    .shadow(color: palette.coolAccent.opacity(0.28), radius: 12, y: 8)
+                    .rotation3DEffect(.degrees(isHovered ? 0 : 8), axis: (x: 1, y: -1, z: 0))
+                    .shadow(color: palette.coolAccent.opacity(isHovered ? 0.34 : 0.22), radius: isHovered ? 14 : 10, y: 7)
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text(title)
@@ -374,6 +375,11 @@ struct QuickActionRow: View {
                 }
 
                 Spacer(minLength: 0)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(palette.coolAccent.opacity(isHovered ? 0.88 : 0.42))
+                    .padding(.top, 13)
             }
             .padding(16)
             .background(
@@ -382,7 +388,8 @@ struct QuickActionRow: View {
                     palette: palette,
                     tint: LinearGradient(
                         colors: [
-                            palette.successAccent.opacity(palette.isDark ? 0.10 : 0.06),
+                            palette.successAccent.opacity(isHovered ? (palette.isDark ? 0.16 : 0.10) : (palette.isDark ? 0.10 : 0.06)),
+                            palette.coolAccent.opacity(isHovered ? (palette.isDark ? 0.12 : 0.07) : 0),
                             .clear
                         ],
                         startPoint: .topLeading,
@@ -392,10 +399,11 @@ struct QuickActionRow: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .strokeBorder(palette.stroke, lineWidth: 1)
+                    .strokeBorder(isHovered ? palette.coolAccent.opacity(0.26) : palette.stroke, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
     }
 }
 
@@ -482,8 +490,7 @@ struct ProjectChapterPill: View {
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(palette.panelBase.opacity(palette.isDark ? 0.82 : 0.72))
+            DashboardInsetPanelBackground(cornerRadius: 18, palette: palette)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -516,8 +523,7 @@ struct WorkspaceMetricBadge: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(palette.panelBase.opacity(palette.isDark ? 0.82 : 0.72))
+            DashboardInsetPanelBackground(cornerRadius: 18, palette: palette)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
