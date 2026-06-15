@@ -53,6 +53,7 @@ case "$mode" in
             "$REPO_ROOT/OpenWriting/NovelProject+WebnovelIntegration.swift"
             "$REPO_ROOT/OpenWriting/PrewriteValidator.swift"
             "$REPO_ROOT/OpenWriting/QualityReviewService.swift"
+            "$REPO_ROOT/OpenWriting/SidebarItem.swift"
             "$REPO_ROOT/OpenWriting/StrandWeaveTracker.swift"
             "$REPO_ROOT/OpenWriting/WritingMemoryBuckets.swift"
         )

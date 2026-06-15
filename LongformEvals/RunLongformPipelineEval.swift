@@ -2,16 +2,6 @@ import Foundation
 
 private let supportedChapterCounts: Set<Int> = [10, 30, 80]
 
-enum SidebarItem: String, CaseIterable, Identifiable {
-    case home
-    case projects
-    case writingDesk
-    case outline
-    case library
-
-    var id: Self { self }
-}
-
 @main
 struct LongformPipelineEvalCLI {
     static func main() throws {
@@ -192,6 +182,12 @@ private final class LocalLongformPipelineRunner {
         )
         try PromptAssertions.require(revisionPrompt, contains: "本章执行验收", label: "revision prompt execution contract")
         let revisedDraft = LocalModel.revision(of: draft)
+        let contract = LongformStorySystem.buildRuntimeContract(for: project)
+        let missingNodes = LongformStorySystem.missingMandatoryNodes(
+            for: project,
+            additionalText: revisedDraft,
+            contract: contract
+        )
 
         let reviewPrompt = ChapterQualityReviewer.reviewUserPrompt(
             project: project,
@@ -201,7 +197,15 @@ private final class LocalLongformPipelineRunner {
         try PromptAssertions.require(reviewPrompt, contains: "输出格式（严格 JSON）", label: "review prompt JSON schema")
         try PromptAssertions.require(reviewPrompt, contains: "后台长篇合同", label: "review prompt longform contract")
 
-        var review = ChapterQualityReviewer.parseReviewResult(from: LocalModel.reviewJSON(score: LocalModel.score(globalChapter: globalChapter)))
+        var review = ChapterQualityReviewer.parseReviewResult(
+            from: try LocalLongformJudge.reviewJSON(
+                seed: seed,
+                project: project,
+                draft: revisedDraft,
+                contract: contract,
+                missingNodes: missingNodes
+            )
+        )
         review = ChapterQualityReviewer.mergeLocalAntiPatterns(
             into: review,
             localPatterns: ChapterQualityReviewer.quickAIFlavorCheck(text: revisedDraft)
@@ -223,18 +227,12 @@ private final class LocalLongformPipelineRunner {
         )
         try PromptAssertions.require(repairProbePrompt, contains: "质量审查反馈", label: "repair prompt review feedback")
 
-        let contract = LongformStorySystem.buildRuntimeContract(for: project)
         let chapterDraft = ChapterDraft(
             volumeNumber: project.currentVolumeNumber,
             chapterNumber: project.currentChapterNumber,
             chapterTitle: project.currentChapterTitle,
             content: revisedDraft,
             savedAt: EvalClock.timestamp(globalChapter)
-        )
-        let missingNodes = LongformStorySystem.missingMandatoryNodes(
-            for: project,
-            additionalText: revisedDraft,
-            contract: contract
         )
         let commit = LongformStorySystem.buildCommit(
             project: project,
@@ -271,6 +269,7 @@ private final class LocalLongformPipelineRunner {
             projectChapter: project.currentChapterNumber,
             prewriteReady: validation.isReady,
             promptMetrics: promptMetrics,
+            contract: ContractArtifact(contract: contract),
             prewriteBrief: PrewriteBrief(project: project),
             chapterDraft: revisedDraft,
             reviewJSON: ReviewJSON(review: review),
@@ -315,10 +314,6 @@ private enum LocalModel {
         "本次 eval 必须推进「\(seed.chapterGoal)」，并显式维护「\(seed.longForeshadowing)」。"
     }
 
-    static func score(globalChapter: Int) -> Int {
-        94 + (globalChapter % 4)
-    }
-
     static func plan(seed: EvalSeed, project: NovelProject) -> String {
         """
         - 承接第 \(max(project.currentChapterNumber - 1, 1)) 章末尾压力，让\(seed.protagonist)先处理眼前阻力。
@@ -347,28 +342,6 @@ private enum LocalModel {
 
     static func revision(of draft: String) -> String {
         draft + "\n\n他把最后一枚证据收进掌心，没有解释胜负，只确认下一步行动：先追上标记，再回头清算这场误导。"
-    }
-
-    static func reviewJSON(score: Int) -> String {
-        """
-        {
-          "overall_score": \(score),
-          "dimension_scores": {
-            "setting": 96,
-            "timeline": 95,
-            "continuity": 96,
-            "character": 95,
-            "logic": 96,
-            "high_point": 95,
-            "pacing": 96,
-            "reader_pull": 96,
-            "ai_flavor": 96
-          },
-          "issues": [],
-          "anti_patterns": [],
-          "overall_summary": "local pipeline review passed: chapter goal, continuity, long foreshadowing state, and reader pull are all present."
-        }
-        """
     }
 
     static func repairProbeReview() -> ChapterReviewResult {
@@ -419,6 +392,238 @@ private enum LocalModel {
                 sourceChapter: chapter
             )
         ]
+    }
+}
+
+private enum LocalLongformJudge {
+    static func reviewJSON(
+        seed: EvalSeed,
+        project: NovelProject,
+        draft: String,
+        contract: LongformStoryContractBundle,
+        missingNodes: [String]
+    ) throws -> String {
+        let issues = reviewIssues(
+            seed: seed,
+            project: project,
+            draft: draft,
+            contract: contract,
+            missingNodes: missingNodes
+        )
+        let response = LocalReviewResponse(
+            overallScore: overallScore(for: issues),
+            dimensionScores: dimensionScores(for: issues),
+            issues: issues,
+            antiPatterns: ChapterQualityReviewer.quickAIFlavorCheck(text: draft),
+            overallSummary: issues.isEmpty
+                ? "local judge passed: draft covers the chapter contract, seed continuity, foreshadowing state, and reader-pull handoff."
+                : "local judge found \(issues.count) contract or quality issue(s); inspect issues before trusting this run."
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(response)
+        guard let json = String(data: data, encoding: .utf8) else {
+            throw EvalError.message("local judge could not encode review JSON")
+        }
+        return json
+    }
+
+    private static func reviewIssues(
+        seed: EvalSeed,
+        project: NovelProject,
+        draft: String,
+        contract: LongformStoryContractBundle,
+        missingNodes: [String]
+    ) -> [LocalReviewIssue] {
+        let normalizedDraft = normalized(draft)
+        let paragraphs = draft.components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        var issues: [LocalReviewIssue] = []
+
+        if !missingNodes.isEmpty {
+            issues.append(LocalReviewIssue(
+                dimension: .narrativeContinuity,
+                severity: .critical,
+                description: "本章没有覆盖后台合同要求的必走节点。",
+                evidence: missingNodes.prefix(3).joined(separator: "；"),
+                fixHint: "补写缺失节点对应的行动、证据或状态变化后再提交。",
+                location: "长篇合同节点",
+                blocking: true
+            ))
+        }
+        if !covers(seed.chapterGoal, in: normalizedDraft) {
+            issues.append(LocalReviewIssue(
+                dimension: .logicIntegrity,
+                severity: .high,
+                description: "正文没有可验证地推进 seed 的本章目标。",
+                evidence: seed.chapterGoal,
+                fixHint: "让正文出现本章目标中的关键行动或信息增量。",
+                location: "本章目标"
+            ))
+        }
+        if !covers(seed.longForeshadowing, in: normalizedDraft) {
+            issues.append(LocalReviewIssue(
+                dimension: .readerPull,
+                severity: .high,
+                description: "长期伏笔没有获得可追踪的新状态。",
+                evidence: seed.longForeshadowing,
+                fixHint: "补出伏笔的新编号、地点、证人、代价或下一步入口。",
+                location: "伏笔线"
+            ))
+        }
+        if !covers(seed.protagonist, in: normalizedDraft) {
+            issues.append(LocalReviewIssue(
+                dimension: .characterConsistency,
+                severity: .high,
+                description: "主角状态没有在正文中明确承接。",
+                evidence: seed.protagonist,
+                fixHint: "让主角以符合 seed 设定的行动推进本章，而不是只描述局势。",
+                location: "人物线"
+            ))
+        }
+        if !covers(seed.world, in: normalizedDraft) {
+            issues.append(LocalReviewIssue(
+                dimension: .settingConsistency,
+                severity: .medium,
+                description: "世界规则没有在本章行动中形成约束。",
+                evidence: seed.world,
+                fixHint: "补出世界规则如何限制选择或制造代价。",
+                location: "世界规则"
+            ))
+        }
+        if !containsAny(["代价", "失去", "风险", "交换", "逼迫"], in: normalizedDraft) {
+            issues.append(LocalReviewIssue(
+                dimension: .highPointDensity,
+                severity: .medium,
+                description: "章节推进缺少代价或压力，微兑现可能偏轻。",
+                evidence: String(draft.prefix(140)),
+                fixHint: "给本章胜利附带损失、交换或下一章压力。",
+                location: "冲突推进"
+            ))
+        }
+        if paragraphs.count < 6 {
+            issues.append(LocalReviewIssue(
+                dimension: .pacing,
+                severity: .medium,
+                description: "正文段落过少，难以覆盖长篇章节的承接、推进、兑现和钩子。",
+                evidence: "段落数 \(paragraphs.count)",
+                fixHint: "至少拆出承接、调查、对抗、代价、伏笔状态和章末入口。",
+                location: "篇幅结构"
+            ))
+        }
+        if !hasReaderPullEnding(draft) {
+            issues.append(LocalReviewIssue(
+                dimension: .readerPull,
+                severity: .medium,
+                description: "章末缺少下一章入口或未完成压力。",
+                evidence: String(draft.suffix(120)),
+                fixHint: "以新发现、未完成行动、尖锐问题或更高压力收束。",
+                location: "末段"
+            ))
+        }
+        if contract.review.requiresPostwriteReview == true,
+           contract.review.minimumAcceptedScore <= 0 {
+            issues.append(LocalReviewIssue(
+                dimension: .logicIntegrity,
+                severity: .critical,
+                description: "长篇合同要求写后审查，但最低通过线无效。",
+                evidence: "\(contract.review.minimumAcceptedScore)",
+                fixHint: "修复 LongformStorySystem 的审查合同生成逻辑。",
+                location: "审查合同",
+                blocking: true
+            ))
+        }
+
+        return issues
+    }
+
+    private static func overallScore(for issues: [LocalReviewIssue]) -> Int {
+        max(0, min(96, 100 - issues.map { $0.severity.penalty }.reduce(0, +)))
+    }
+
+    private static func dimensionScores(for issues: [LocalReviewIssue]) -> [String: Int] {
+        var scores = Dictionary(uniqueKeysWithValues: ReviewDimension.allUnifiedDimensions.map { ($0.rawValue, 10) })
+        for issue in issues {
+            let penalty: Int
+            switch issue.severity {
+            case .critical:
+                penalty = 4
+            case .high:
+                penalty = 3
+            case .medium:
+                penalty = 1
+            case .low:
+                penalty = 1
+            }
+            scores[issue.dimension.rawValue] = max(1, (scores[issue.dimension.rawValue] ?? 10) - penalty)
+        }
+        return scores
+    }
+
+    private static func covers(_ expected: String, in normalizedDraft: String) -> Bool {
+        anchorTokens(from: expected).contains { normalizedDraft.contains($0) }
+    }
+
+    private static func anchorTokens(from value: String) -> [String] {
+        normalized(value)
+            .components(separatedBy: CharacterSet(charactersIn: "，。；：、,. ;:「」“”\"()（）\n"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.count >= 4 }
+            .prefix(4)
+            .map(normalized)
+    }
+
+    private static func containsAny(_ candidates: [String], in normalizedDraft: String) -> Bool {
+        candidates.contains { normalizedDraft.contains(normalized($0)) }
+    }
+
+    private static func hasReaderPullEnding(_ draft: String) -> Bool {
+        let tail = String(draft.suffix(180))
+        return containsAny(["？", "?", "下一", "入口", "追上", "阻止", "为什么", "标记", "还来得及"], in: normalized(tail))
+    }
+
+    private static func normalized(_ value: String) -> String {
+        value
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+private struct LocalReviewResponse: Encodable {
+    let overallScore: Int
+    let dimensionScores: [String: Int]
+    let issues: [LocalReviewIssue]
+    let antiPatterns: [String]
+    let overallSummary: String
+
+    enum CodingKeys: String, CodingKey {
+        case overallScore = "overall_score"
+        case dimensionScores = "dimension_scores"
+        case issues
+        case antiPatterns = "anti_patterns"
+        case overallSummary = "overall_summary"
+    }
+}
+
+private struct LocalReviewIssue: Encodable {
+    let dimension: ReviewDimension
+    let severity: ReviewSeverity
+    let description: String
+    let evidence: String
+    let fixHint: String
+    let location: String
+    var blocking = false
+
+    enum CodingKeys: String, CodingKey {
+        case dimension
+        case severity
+        case description
+        case evidence
+        case fixHint = "fix_hint"
+        case location
+        case blocking
     }
 }
 
@@ -657,6 +862,33 @@ private struct PrewriteBrief: Encodable {
     }
 }
 
+private struct ContractArtifact: Encodable {
+    let minimumAcceptedScore: Int
+    let requiresPostwriteReview: Bool
+    let mandatoryNodes: [String]
+    let activeForeshadowing: [String]
+    let prewriteBlocked: Bool
+    let prewriteWarnings: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case minimumAcceptedScore = "minimum_accepted_score"
+        case requiresPostwriteReview = "requires_postwrite_review"
+        case mandatoryNodes = "mandatory_nodes"
+        case activeForeshadowing = "active_foreshadowing"
+        case prewriteBlocked = "prewrite_blocked"
+        case prewriteWarnings = "prewrite_warnings"
+    }
+
+    init(contract: LongformStoryContractBundle) {
+        minimumAcceptedScore = contract.review.minimumAcceptedScore
+        requiresPostwriteReview = contract.review.requiresPostwriteReview ?? false
+        mandatoryNodes = contract.chapter.mandatoryNodes
+        activeForeshadowing = contract.chapter.activeForeshadowing
+        prewriteBlocked = contract.prewrite.isBlocked
+        prewriteWarnings = contract.prewrite.warnings
+    }
+}
+
 private struct ReviewJSON: Encodable {
     let overallScore: Int
     let dimensionScores: [String: Int]
@@ -740,12 +972,18 @@ private struct RuntimeHealthArtifact: Encodable {
     let continuityFailures: Int
     let characterDrift: Int
     let foreshadowingForgotten: Int
+    let blockingGateChecks: [String]
+    let warningGateChecks: [String]
+    let healthStatus: String
     let saveRoundtripOK: Bool
 
     enum CodingKeys: String, CodingKey {
         case continuityFailures = "continuity_failures"
         case characterDrift = "character_drift"
         case foreshadowingForgotten = "foreshadowing_forgotten"
+        case blockingGateChecks = "blocking_gate_checks"
+        case warningGateChecks = "warning_gate_checks"
+        case healthStatus = "health_status"
         case saveRoundtripOK = "save_roundtrip_ok"
     }
 
@@ -754,7 +992,17 @@ private struct RuntimeHealthArtifact: Encodable {
         continuityFailures = health.issues.filter { $0.title.contains("断章") || $0.title.contains("落后") }.count
         characterDrift = health.issues.filter { $0.title.contains("角色") || $0.detail.contains("角色") }.count
         foreshadowingForgotten = health.issues.filter { $0.title.contains("伏笔") || $0.detail.contains("伏笔") }.count
+        blockingGateChecks = project.longformRuntimeState.latestWriteGate?.blockingChecks.map(Self.formatGateCheck) ?? []
+        warningGateChecks = project.longformRuntimeState.latestWriteGate?.warningChecks.map(Self.formatGateCheck) ?? []
+        healthStatus = health.status.rawValue
         self.saveRoundtripOK = saveRoundtripOK
+    }
+
+    private static func formatGateCheck(_ check: LongformWriteGateCheck) -> String {
+        [check.stage.displayName, check.message, check.detail]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "：")
     }
 }
 
@@ -780,6 +1028,7 @@ private struct ChapterArtifact: Encodable {
     let projectChapter: Int
     let prewriteReady: Bool
     let promptMetrics: PromptMetrics
+    let contract: ContractArtifact
     let prewriteBrief: PrewriteBrief
     let chapterDraft: String
     let reviewJSON: ReviewJSON
@@ -796,6 +1045,7 @@ private struct ChapterArtifact: Encodable {
         case projectChapter = "project_chapter"
         case prewriteReady = "prewrite_ready"
         case promptMetrics = "prompt_metrics"
+        case contract
         case prewriteBrief = "prewrite_brief"
         case chapterDraft = "chapter_draft"
         case reviewJSON = "review_json"
@@ -827,6 +1077,7 @@ private struct Scorecard: Encodable {
     let rejectedCommits: Int
     let passThresholds: PassThresholds
     let passed: Bool
+    private let writeGateBlockingFailures: Int
 
     enum CodingKeys: String, CodingKey {
         case mode
@@ -880,12 +1131,14 @@ private struct Scorecard: Encodable {
         acceptedCommits = artifacts.count - rejectedCommits
         retryRejectionRate = Scorecard.round(Double(rejectedCommits) / Double(max(chapters, 1)), places: 4)
         saveRoundtripFailures = artifacts.filter { !$0.runtimeHealth.saveRoundtripOK }.count
+        writeGateBlockingFailures = artifacts.map(\.runtimeHealth.blockingGateChecks.count).reduce(0, +)
         passThresholds = PassThresholds()
         passed = averageScore >= Double(passThresholds.averageScoreAtLeast)
             && lowestScore >= passThresholds.lowestScoreAtLeast
             && continuityFailures == passThresholds.continuityFailures
             && foreshadowingMissRate < passThresholds.foreshadowingMissRateBelow
             && saveRoundtripFailures == 0
+            && writeGateBlockingFailures == 0
             && rejectedCommits == 0
     }
 

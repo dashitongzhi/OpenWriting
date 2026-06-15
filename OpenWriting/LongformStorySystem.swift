@@ -705,7 +705,7 @@ enum LongformStorySystem {
 
         let unsettledProjectionItems = commit.projectionStatus
             .filter { _, value in
-                value != "done" && value != "skipped"
+                !Self.isSettledProjectionStatus(value)
             }
             .sorted { $0.key < $1.key }
             .map { "\($0.key)=\($0.value)" }
@@ -772,6 +772,15 @@ enum LongformStorySystem {
             overallStatus: overallStatus,
             checks: checks
         )
+    }
+
+    private static func isSettledProjectionStatus(_ value: String) -> Bool {
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "done", "skipped", "passed", "rejected", "invalidated":
+            return true
+        default:
+            return false
+        }
     }
 
     static func buildRuntimeHealth(for project: NovelProject) -> LongformRuntimeHealthReport {
