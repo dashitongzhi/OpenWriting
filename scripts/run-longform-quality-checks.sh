@@ -41,6 +41,16 @@ require_text() {
     fi
 }
 
+reject_text() {
+    local file="$1"
+    local pattern="$2"
+    local message="$3"
+
+    if rg -q --fixed-strings -- "$pattern" "$file"; then
+        fail "$message"
+    fi
+}
+
 require_regex() {
     local file="$1"
     local pattern="$2"
@@ -240,8 +250,22 @@ require_text "$RUN_ALL" "swiftc -typecheck" \
     "run-all checks must include Swift typecheck"
 require_text "$RUN_ALL" "build-debug.sh" \
     "run-all checks must include Debug build"
-require_text "$RUN_ALL" "-target OpenWritingTests" \
-    "run-all checks must build the OpenWritingTests target"
+require_text "$RUN_ALL" "test \\" \
+    "run-all checks must run hosted OpenWritingTests by default"
+require_text "$RUN_ALL" "TEST_CLASSES" \
+    "run-all checks must target hosted OpenWritingTests classes explicitly"
+require_text "$RUN_ALL" "Tests/OpenWritingTests" \
+    "run-all checks must discover hosted tests from the OpenWritingTests directory"
+require_text "$RUN_ALL" "XCTestCase" \
+    "run-all checks must discover hosted XCTestCase classes"
+require_text "$RUN_ALL" "no hosted OpenWritingTests classes discovered" \
+    "run-all checks must fail loudly if hosted test discovery returns no classes"
+require_text "$RUN_ALL" '"-only-testing:OpenWritingTests/$test_class"' \
+    "run-all checks must run each hosted test class through xcodebuild"
+require_text "$RUN_ALL" 'rm -rf "$DERIVED_DATA_PATH"' \
+    "run-all checks must clear stale hosted XCTest DerivedData before running tests"
+reject_text "$RUN_ALL" "RUN_HOSTED_XCTEST" \
+    "run-all checks must not hide hosted tests behind RUN_HOSTED_XCTEST"
 require_text "$RUN_ALL" "-scheme OpenWriting" \
     "run-all checks must run the shared OpenWriting scheme tests"
 require_text "$SHARED_SCHEME" "OpenWritingTests.xctest" \

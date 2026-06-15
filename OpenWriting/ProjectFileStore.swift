@@ -600,7 +600,9 @@ struct ProjectFileStore {
     private func writeIfChanged(_ data: Data, to url: URL) throws {
         let fingerprint = ProjectFileFingerprint(size: data.count, hash: stableHash(data))
         if writeCache.fingerprint(for: url) == fingerprint {
-            return
+            if let existingData = try? Data(contentsOf: url), existingData == data {
+                return
+            }
         }
 
         if let existingData = try? Data(contentsOf: url), existingData == data {
@@ -792,9 +794,12 @@ struct ProjectFileStore {
             scope: scope
         )
         try writeIfChanged(try encoder.encode(placeholder), to: chapterURL)
+
+        var recoveryProject = project
+        recoveryProject?.chapterDrafts.removeAll { $0.id == chapterID }
         try rebuildChapterIndexPreservingFiles(
             for: projectID,
-            project: project,
+            project: recoveryProject,
             scope: scope,
             includeCatalogEntriesWithoutReadableFiles: true
         )

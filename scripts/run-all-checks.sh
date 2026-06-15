@@ -4,7 +4,28 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-XCODEBUILD="/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild"
+DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-/tmp/OpenWritingChecksDerivedData}"
+XCODEBUILD="$DEVELOPER_DIR/usr/bin/xcodebuild"
+HOST_ARCH="$(uname -m)"
+MACOS_DESTINATION="platform=macOS,arch=$HOST_ARCH"
+XCTEST_CLASS_PATTERN='^[[:space:]]*(final[[:space:]]+)?class[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:[^{]*XCTestCase'
+
+discover_hosted_test_classes() {
+  rg --no-filename "$XCTEST_CLASS_PATTERN" "$REPO_ROOT/Tests/OpenWritingTests" -g '*Tests.swift' \
+    | sed -E 's/^[[:space:]]*(final[[:space:]]+)?class[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\2/' \
+    | sort -u
+}
+
+TEST_CLASSES=("${(@f)$(discover_hosted_test_classes)}")
+
+export DEVELOPER_DIR
+export DERIVED_DATA_PATH
+
+if (( ${#TEST_CLASSES[@]} == 0 )); then
+  echo "error: no hosted OpenWritingTests classes discovered" >&2
+  exit 1
+fi
 
 echo "Checking diff whitespace"
 git -C "$REPO_ROOT" diff --check
@@ -21,32 +42,19 @@ xcrun swiftc -typecheck -parse-as-library -sdk "$SDK_PATH" "$swift_files[@]"
 echo "Running Debug build"
 zsh "$SCRIPT_DIR/build-debug.sh"
 
-echo "Building OpenWritingTests target"
-"$XCODEBUILD" \
-  -project "$REPO_ROOT/OpenWriting.xcodeproj" \
-  -target OpenWritingTests \
-  -configuration Debug \
-  CODE_SIGNING_ALLOWED=NO \
-  build
-
-echo "Building OpenWritingTests for testing"
-"$XCODEBUILD" \
-  build-for-testing \
-  -project "$REPO_ROOT/OpenWriting.xcodeproj" \
-  -scheme OpenWriting \
-  -destination 'platform=macOS' \
-  CODE_SIGNING_ALLOWED=NO \
-  ENABLE_DEBUG_DYLIB=NO
-
-if [[ "${RUN_HOSTED_XCTEST:-0}" == "1" ]]; then
-  echo "Running hosted Xcode tests"
+echo "Running hosted Xcode tests"
+rm -rf "$DERIVED_DATA_PATH"
+for test_class in "${TEST_CLASSES[@]}"; do
+  echo "Running OpenWritingTests/$test_class"
   "$XCODEBUILD" \
-    test-without-building \
+    test \
     -project "$REPO_ROOT/OpenWriting.xcodeproj" \
     -scheme OpenWriting \
-    -destination 'platform=macOS' \
+    -destination "$MACOS_DESTINATION" \
+    -derivedDataPath "$DERIVED_DATA_PATH" \
+    "-only-testing:OpenWritingTests/$test_class" \
     CODE_SIGNING_ALLOWED=NO \
     ENABLE_DEBUG_DYLIB=NO
-fi
+done
 
 echo "All checks passed"
