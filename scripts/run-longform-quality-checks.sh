@@ -20,6 +20,7 @@ PROJECT_FILE="$REPO_ROOT/OpenWriting.xcodeproj/project.pbxproj"
 RUN_ALL="$REPO_ROOT/scripts/run-all-checks.sh"
 RUN_EVALS="$REPO_ROOT/scripts/run-longform-evals.sh"
 EVAL_RUNNER="$REPO_ROOT/LongformEvals/run_mock_eval.py"
+PIPELINE_EVAL_RUNNER="$REPO_ROOT/LongformEvals/RunLongformPipelineEval.swift"
 EVAL_SEEDS="$REPO_ROOT/LongformEvals/seeds.json"
 TEST_PACKAGE="$REPO_ROOT/Tests/Package.swift"
 TEST_README="$REPO_ROOT/Tests/README.md"
@@ -251,10 +252,30 @@ require_text "$TEST_README" '不要用 `swift test`' \
     "tests README must document the Xcode-only test entry"
 require_text "$RUN_EVALS" "run_mock_eval.py" \
     "longform eval script must invoke the deterministic runner"
+require_text "$RUN_EVALS" "RunLongformPipelineEval.swift" \
+    "longform eval script must compile the real Swift pipeline runner"
+require_text "$RUN_EVALS" "--mode local" \
+    "longform eval script must expose a local real-pipeline mode"
+require_text "$RUN_EVALS" "xcrun swiftc" \
+    "longform eval script must compile the local Swift eval runner"
 require_text "$EVAL_RUNNER" "average_score_at_least" \
     "longform eval runner must enforce the 90-point scorecard threshold"
 require_text "$EVAL_RUNNER" "foreshadowing_miss_rate_below" \
     "longform eval runner must enforce foreshadowing miss-rate thresholds"
+require_text "$PIPELINE_EVAL_RUNNER" "AIWritingService.writingPlanUserPrompt" \
+    "local longform eval must exercise the real writing plan prompt"
+require_text "$PIPELINE_EVAL_RUNNER" "AIWritingService.userPrompt" \
+    "local longform eval must exercise the real generation prompt"
+require_text "$PIPELINE_EVAL_RUNNER" "ChapterQualityReviewer.reviewUserPrompt" \
+    "local longform eval must exercise the real review prompt"
+require_text "$PIPELINE_EVAL_RUNNER" "ChapterQualityReviewer.parseReviewResult" \
+    "local longform eval must exercise the real review parser"
+require_text "$PIPELINE_EVAL_RUNNER" "ChapterQualityReviewer.mergeLocalHeuristicIssues" \
+    "local longform eval must merge local review heuristics"
+require_text "$PIPELINE_EVAL_RUNNER" "LongformStorySystem.buildCommit" \
+    "local longform eval must exercise longform commit gating"
+require_text "$PIPELINE_EVAL_RUNNER" "LongformStorySystem.apply" \
+    "local longform eval must exercise longform runtime projection"
 require_text "$EVAL_SEEDS" "long_foreshadowing" \
     "longform eval fixtures must include long foreshadowing seeds"
 

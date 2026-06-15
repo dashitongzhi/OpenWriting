@@ -103,8 +103,8 @@ def chapter_payload(seed, seed_index: int, chapter: int):
 def build_run(chapters: int, mode: str, seeds_path: Path, output_root: Path):
     if chapters not in {10, 30, 80}:
         raise SystemExit("--chapters must be one of 10, 30, or 80")
-    if mode == "real":
-        raise SystemExit("real mode is intentionally explicit but not part of the default gate; wire a model runner before using it.")
+    if mode != "mock":
+        raise SystemExit("run_mock_eval.py only supports --mode mock; use scripts/run-longform-evals.sh --mode local for the Swift pipeline runner.")
 
     seeds = load_seeds(seeds_path)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -189,9 +189,9 @@ def build_run(chapters: int, mode: str, seeds_path: Path, output_root: Path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run deterministic OpenWriting longform evaluations.")
+    parser = argparse.ArgumentParser(description="Run deterministic mock OpenWriting longform evaluations.")
     parser.add_argument("--chapters", type=int, default=30)
-    parser.add_argument("--mode", choices=["mock", "local", "real"], default="mock")
+    parser.add_argument("--mode", choices=["mock"], default="mock")
     parser.add_argument("--seeds", type=Path, default=Path(__file__).with_name("seeds.json"))
     parser.add_argument("--output", type=Path, default=Path(__file__).with_name("runs"))
     args = parser.parse_args()
