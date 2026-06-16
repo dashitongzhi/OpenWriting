@@ -278,10 +278,22 @@ require_text "$RUN_EVALS" "run_mock_eval.py" \
     "longform eval script must invoke the deterministic runner"
 require_text "$RUN_EVALS" "RunLongformPipelineEval.swift" \
     "longform eval script must compile the real Swift pipeline runner"
-require_text "$RUN_EVALS" "--mode local" \
-    "longform eval script must expose a local real-pipeline mode"
+require_text "$RUN_EVALS" '--mode "$mode"' \
+    "longform eval script must forward the selected Swift pipeline mode"
+require_text "$RUN_EVALS" 'local|real)' \
+    "longform eval script must expose a network-backed real mode"
+require_text "$RUN_EVALS" "ModelConnectionConfigurationStore.swift" \
+    "longform eval script must compile the shared OpenWriting model configuration resolver"
 require_text "$RUN_EVALS" "xcrun swiftc" \
     "longform eval script must compile the local Swift eval runner"
+require_text "$PIPELINE_EVAL_RUNNER" "ModelConnectionConfigurationStore.loadConnectionConfiguration" \
+    "real longform eval must reuse OpenWriting model/provider configuration"
+require_text "$PIPELINE_EVAL_RUNNER" 'fputs("error:' \
+    "real longform eval must fail through a guarded CLI error path"
+require_text "$PIPELINE_EVAL_RUNNER" '\(timestamp)-\(options.mode)-\(options.chapters)' \
+    "longform eval artifacts must be emitted beside mock/local runs with the active mode in the directory name"
+require_text "$PIPELINE_EVAL_RUNNER" "failure.json" \
+    "longform eval failures must leave a useful artifact in the run directory"
 require_text "$EVAL_RUNNER" "average_score_at_least" \
     "longform eval runner must enforce the 90-point scorecard threshold"
 require_text "$EVAL_RUNNER" "foreshadowing_miss_rate_below" \

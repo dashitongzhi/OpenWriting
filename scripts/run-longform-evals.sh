@@ -33,7 +33,7 @@ case "$mode" in
             --seeds "$REPO_ROOT/LongformEvals/seeds.json" \
             --output "$REPO_ROOT/LongformEvals/runs"
         ;;
-    local)
+    local|real)
         build_dir="$REPO_ROOT/LongformEvals/.build"
         runner="$build_dir/longform-pipeline-eval"
         mkdir -p "$build_dir"
@@ -50,6 +50,7 @@ case "$mode" in
             "$REPO_ROOT/OpenWriting/GenreTemplates.swift"
             "$REPO_ROOT/OpenWriting/LongformStorySystem.swift"
             "$REPO_ROOT/OpenWriting/MemorySystem.swift"
+            "$REPO_ROOT/OpenWriting/ModelConnectionConfigurationStore.swift"
             "$REPO_ROOT/OpenWriting/NovelProject+WebnovelIntegration.swift"
             "$REPO_ROOT/OpenWriting/PrewriteValidator.swift"
             "$REPO_ROOT/OpenWriting/QualityReviewService.swift"
@@ -62,13 +63,9 @@ case "$mode" in
         xcrun swiftc -sdk "$sdk_path" -o "$runner" "$source_files[@]"
         "$runner" \
             --chapters "$chapters" \
-            --mode local \
+            --mode "$mode" \
             --seeds "$REPO_ROOT/LongformEvals/seeds.json" \
             --output "$REPO_ROOT/LongformEvals/runs"
-        ;;
-    real)
-        echo "error: --mode real is not wired yet. Use --mode local for the real Swift prompt/review pipeline without network calls." >&2
-        exit 2
         ;;
     *)
         echo "error: --mode must be mock, local, or real" >&2

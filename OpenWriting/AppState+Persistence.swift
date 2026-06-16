@@ -5,12 +5,12 @@ import Security
 
 extension AppState {
     enum StorageKey {
-        static let selectedProvider = "OpenWriting.selectedProvider"
-        static let modelName = "OpenWriting.modelName"
-        static let apiKey = "OpenWriting.apiKey"
-        static let baseURL = "OpenWriting.baseURL"
-        static let customModelName = "OpenWriting.custom.modelName"
-        static let customBaseURL = "OpenWriting.custom.baseURL"
+        static let selectedProvider = ModelConnectionConfigurationStore.StorageKey.selectedProvider
+        static let modelName = ModelConnectionConfigurationStore.StorageKey.modelName
+        static let apiKey = ModelConnectionConfigurationStore.StorageKey.apiKey
+        static let baseURL = ModelConnectionConfigurationStore.StorageKey.baseURL
+        static let customModelName = ModelConnectionConfigurationStore.StorageKey.customModelName
+        static let customBaseURL = ModelConnectionConfigurationStore.StorageKey.customBaseURL
         static let autoValidateOnLaunch = "OpenWriting.autoValidateOnLaunch"
         static let showWritingDeskCachePanel = "OpenWriting.showWritingDeskCachePanel"
         static let showWritingDeskTimeline = "OpenWriting.showWritingDeskTimeline"
@@ -41,14 +41,13 @@ extension AppState {
     }
 
     enum KeychainKey {
-        static let service = "CHZ.Kral.OpenWriting.ModelConnection"
-        static let openWAccount = "apiKey.openw"
-        static let customAccount = "apiKey.custom"
+        static let service = ModelConnectionConfigurationStore.KeychainKey.service
+        static let openWAccount = ModelConnectionConfigurationStore.KeychainKey.openWAccount
+        static let customAccount = ModelConnectionConfigurationStore.KeychainKey.customAccount
     }
 
-    static let defaultOpenWModelName = "gpt-5.4-mini"
-    static let defaultOpenWBaseURL = "https://kralapi.kralai.tech/v1"
-    private static let retiredOpenWBaseURL = "https://ai." + "xxread.top/v1"
+    static let defaultOpenWModelName = ModelConnectionConfigurationStore.defaultOpenWModelName
+    static let defaultOpenWBaseURL = ModelConnectionConfigurationStore.defaultOpenWBaseURL
 
     var currentStorageScope: String? {
         activeAccount?.userID
@@ -59,7 +58,7 @@ extension AppState {
 
 extension AppState {
     static func stringValue(forKey key: String, userDefaults: UserDefaults) -> String? {
-        userDefaults.string(forKey: key)
+        ModelConnectionConfigurationStore.stringValue(forKey: key, userDefaults: userDefaults)
     }
 
     static func boolValue(forKey key: String, userDefaults: UserDefaults) -> Bool? {
@@ -78,77 +77,43 @@ extension AppState {
     }
 
     static func modelNameStorageKey(for provider: ModelProvider) -> String {
-        switch provider {
-        case .openAICompatible: return StorageKey.modelName
-        case .custom: return StorageKey.customModelName
-        }
+        ModelConnectionConfigurationStore.modelNameStorageKey(for: provider)
     }
 
     static func baseURLStorageKey(for provider: ModelProvider) -> String {
-        switch provider {
-        case .openAICompatible: return StorageKey.baseURL
-        case .custom: return StorageKey.customBaseURL
-        }
+        ModelConnectionConfigurationStore.baseURLStorageKey(for: provider)
     }
 
     static func keychainAccount(for provider: ModelProvider) -> String {
-        switch provider {
-        case .openAICompatible: return KeychainKey.openWAccount
-        case .custom: return KeychainKey.customAccount
-        }
+        ModelConnectionConfigurationStore.keychainAccount(for: provider)
     }
 
     static func defaultModelName(for provider: ModelProvider) -> String {
-        switch provider {
-        case .openAICompatible: return defaultOpenWModelName
-        case .custom: return ""
-        }
+        ModelConnectionConfigurationStore.defaultModelName(for: provider)
     }
 
     static func defaultBaseURL(for provider: ModelProvider) -> String {
-        switch provider {
-        case .openAICompatible: return defaultOpenWBaseURL
-        case .custom: return ""
-        }
+        ModelConnectionConfigurationStore.defaultBaseURL(for: provider)
     }
 
     static func loadModelName(for provider: ModelProvider, userDefaults: UserDefaults) -> String {
-        stringValue(forKey: modelNameStorageKey(for: provider), userDefaults: userDefaults)
-            ?? defaultModelName(for: provider)
+        ModelConnectionConfigurationStore.loadModelName(for: provider, userDefaults: userDefaults)
     }
 
     static func loadBaseURL(for provider: ModelProvider, userDefaults: UserDefaults) -> String {
-        let storedBaseURL = stringValue(forKey: baseURLStorageKey(for: provider), userDefaults: userDefaults)
-            ?? defaultBaseURL(for: provider)
-        return baseURLReplacingRetiredDefault(storedBaseURL, for: provider)
+        ModelConnectionConfigurationStore.loadBaseURL(for: provider, userDefaults: userDefaults)
     }
 
     static func normalizedBaseURLString(from rawValue: String) -> String? {
-        let trimmedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedValue.isEmpty,
-              var components = URLComponents(string: trimmedValue)
-        else { return nil }
-
-        let trimmedPath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        if trimmedPath.isEmpty {
-            components.path = "/v1"
-        } else {
-            components.path = "/" + trimmedPath
-        }
-
-        return components.url?.absoluteString
+        ModelConnectionConfigurationStore.normalizedBaseURLString(from: rawValue)
     }
 
     static func baseURLReplacingRetiredDefault(_ rawValue: String, for provider: ModelProvider) -> String {
-        guard provider == .openAICompatible,
-              isRetiredOpenWBaseURL(rawValue)
-        else { return rawValue }
-
-        return defaultOpenWBaseURL
+        ModelConnectionConfigurationStore.baseURLReplacingRetiredDefault(rawValue, for: provider)
     }
 
     static func isRetiredOpenWBaseURL(_ rawValue: String) -> Bool {
-        normalizedBaseURLString(from: rawValue) == retiredOpenWBaseURL
+        ModelConnectionConfigurationStore.isRetiredOpenWBaseURL(rawValue)
     }
 
     static func validationFailureMessage(for error: Error) -> String {
@@ -165,51 +130,16 @@ extension AppState {
 
 extension AppState {
     static func loadAPIKeyFromKeychain(for provider: ModelProvider) -> String? {
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: KeychainKey.service,
-            kSecAttrAccount: keychainAccount(for: provider),
-            kSecReturnData: true,
-            kSecMatchLimit: kSecMatchLimitOne
-        ]
-
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess,
-              let data = item as? Data,
-              let value = String(data: data, encoding: .utf8)
-        else { return nil }
-
-        return value
+        ModelConnectionConfigurationStore.loadAPIKeyFromKeychain(for: provider)
     }
 
     @discardableResult
     static func saveAPIKeyToKeychain(_ apiKey: String, for provider: ModelProvider) -> Bool {
-        let encodedValue = Data(apiKey.utf8)
-        let account = keychainAccount(for: provider)
-        let baseQuery: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: KeychainKey.service,
-            kSecAttrAccount: account
-        ]
-
-        let attributes: [CFString: Any] = [kSecValueData: encodedValue]
-        let updateStatus = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
-        if updateStatus == errSecSuccess { return true }
-
-        var addQuery = baseQuery
-        addQuery[kSecValueData] = encodedValue
-        addQuery[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlock
-        return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
+        ModelConnectionConfigurationStore.saveAPIKeyToKeychain(apiKey, for: provider)
     }
 
     static func deleteAPIKeyFromKeychain(for provider: ModelProvider) {
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: KeychainKey.service,
-            kSecAttrAccount: keychainAccount(for: provider)
-        ]
-        SecItemDelete(query as CFDictionary)
+        ModelConnectionConfigurationStore.deleteAPIKeyFromKeychain(for: provider)
     }
 }
 

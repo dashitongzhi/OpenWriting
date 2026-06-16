@@ -4,22 +4,28 @@ private let supportedChapterCounts: Set<Int> = [10, 30, 80]
 
 @main
 struct LongformPipelineEvalCLI {
-    static func main() throws {
-        let options = try EvalOptions(arguments: Array(CommandLine.arguments.dropFirst()))
-        guard options.mode == "local" else {
-            throw EvalError.message("RunLongformPipelineEval only supports --mode local.")
-        }
-        guard supportedChapterCounts.contains(options.chapters) else {
-            throw EvalError.message("--chapters must be one of 10, 30, or 80")
-        }
+    static func main() async {
+        do {
+            let options = try EvalOptions(arguments: Array(CommandLine.arguments.dropFirst()))
+            guard options.mode == "local" || options.mode == "real" else {
+                throw EvalError.message("RunLongformPipelineEval only supports --mode local or --mode real.")
+            }
+            guard supportedChapterCounts.contains(options.chapters) else {
+                throw EvalError.message("--chapters must be one of 10, 30, or 80")
+            }
 
-        let seeds = try JSONDecoder().decode([EvalSeed].self, from: Data(contentsOf: options.seedsURL))
-        guard !seeds.isEmpty else {
-            throw EvalError.message("No eval seeds found at \(options.seedsURL.path)")
-        }
+            let seeds = try JSONDecoder().decode([EvalSeed].self, from: Data(contentsOf: options.seedsURL))
+            guard !seeds.isEmpty else {
+                throw EvalError.message("No eval seeds found at \(options.seedsURL.path)")
+            }
 
-        let runner = LocalLongformPipelineRunner(seeds: seeds, options: options)
-        try runner.run()
+            let runner = try LongformPipelineRunner(seeds: seeds, options: options)
+            try await runner.run()
+        } catch {
+            let message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+            fputs("error: \(message)\n", stderr)
+            Foundation.exit(1)
+        }
     }
 }
 
@@ -98,46 +104,54 @@ private struct ProjectEvalState {
     }
 }
 
-private final class LocalLongformPipelineRunner {
+private final class LongformPipelineRunner {
     private let seeds: [EvalSeed]
     private let options: EvalOptions
     private let encoder: JSONEncoder
+    private let realModel: RealLongformModel?
     private var states: [String: ProjectEvalState] = [:]
     private var generatedProjectIDs = Set<String>()
 
-    init(seeds: [EvalSeed], options: EvalOptions) {
+    init(seeds: [EvalSeed], options: EvalOptions) throws {
         self.seeds = seeds
         self.options = options
+        realModel = try options.mode == "real" ? RealLongformModel() : nil
         encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
     }
 
-    func run() throws {
+    func run() async throws {
         let runURL = try makeRunDirectory()
         let chaptersURL = runURL.appendingPathComponent("chapters", isDirectory: true)
         try FileManager.default.createDirectory(at: chaptersURL, withIntermediateDirectories: true)
         defer { cleanupGeneratedDefaults() }
 
-        var chapterArtifacts: [ChapterArtifact] = []
-        for globalChapter in 1...options.chapters {
-            let seed = seeds[(globalChapter - 1) % seeds.count]
-            let artifact = try runChapter(globalChapter: globalChapter, seed: seed)
-            chapterArtifacts.append(artifact)
-            let outputURL = chaptersURL.appendingPathComponent(String(format: "chapter-%03d.json", globalChapter))
-            try encoder.encode(artifact).write(to: outputURL)
-        }
+        do {
+            var chapterArtifacts: [ChapterArtifact] = []
+            for globalChapter in 1...options.chapters {
+                let seed = seeds[(globalChapter - 1) % seeds.count]
+                let artifact = try await runChapter(globalChapter: globalChapter, seed: seed)
+                chapterArtifacts.append(artifact)
+                let outputURL = chaptersURL.appendingPathComponent(String(format: "chapter-%03d.json", globalChapter))
+                try encoder.encode(artifact).write(to: outputURL)
+            }
 
-        let scorecard = Scorecard(mode: options.mode, chapters: options.chapters, seedCount: seeds.count, artifacts: chapterArtifacts)
-        try encoder.encode(scorecard).write(to: runURL.appendingPathComponent("scorecard.json"))
+            let scorecard = Scorecard(mode: options.mode, chapters: options.chapters, seedCount: seeds.count, artifacts: chapterArtifacts)
+            try encoder.encode(scorecard).write(to: runURL.appendingPathComponent("scorecard.json"))
 
-        print("Longform eval run: \(runURL.path)")
-        print("average_score=\(scorecard.averageScore) lowest_score=\(scorecard.lowestScore) passed=\(scorecard.passed)")
-        guard scorecard.passed else {
-            throw EvalError.message("local longform pipeline eval did not meet scorecard thresholds")
+            print("Longform eval run: \(runURL.path)")
+            print("average_score=\(scorecard.averageScore) lowest_score=\(scorecard.lowestScore) passed=\(scorecard.passed)")
+            guard scorecard.passed else {
+                throw EvalError.message("\(options.mode) longform pipeline eval did not meet scorecard thresholds")
+            }
+        } catch {
+            let failure = FailureArtifact(mode: options.mode, chapters: options.chapters, error: error)
+            try? encoder.encode(failure).write(to: runURL.appendingPathComponent("failure.json"))
+            throw error
         }
     }
 
-    private func runChapter(globalChapter: Int, seed: EvalSeed) throws -> ChapterArtifact {
+    private func runChapter(globalChapter: Int, seed: EvalSeed) async throws -> ChapterArtifact {
         cleanupDefaults(for: seed.projectID)
         generatedProjectIDs.insert(seed.projectID)
 
@@ -157,7 +171,7 @@ private final class LocalLongformPipelineRunner {
             support: support
         )
         try PromptAssertions.require(planPrompt, contains: "长篇后台执行合同", label: "plan prompt longform contract")
-        let plan = LocalModel.plan(seed: seed, project: project)
+        let plan = try await planText(seed: seed, project: project, prompt: planPrompt)
 
         let draftPrompt = AIWritingService.userPrompt(
             project: project,
@@ -169,7 +183,7 @@ private final class LocalLongformPipelineRunner {
         )
         try PromptAssertions.require(draftPrompt, contains: "下一章 brief", label: "draft prompt next-chapter brief")
         try PromptAssertions.require(draftPrompt, contains: "近期质量趋势", label: "draft prompt quality trend")
-        let draft = LocalModel.draft(seed: seed, project: project, writingPlan: plan)
+        let draft = try await draftText(seed: seed, project: project, writingPlan: plan, prompt: draftPrompt)
 
         let revisionPrompt = AIWritingService.writingRevisionUserPrompt(
             project: project,
@@ -181,7 +195,7 @@ private final class LocalLongformPipelineRunner {
             draft: draft
         )
         try PromptAssertions.require(revisionPrompt, contains: "本章执行验收", label: "revision prompt execution contract")
-        let revisedDraft = LocalModel.revision(of: draft)
+        let revisedDraft = try await revisedDraftText(draft: draft, prompt: revisionPrompt)
         let contract = LongformStorySystem.buildRuntimeContract(for: project)
         let missingNodes = LongformStorySystem.missingMandatoryNodes(
             for: project,
@@ -197,14 +211,13 @@ private final class LocalLongformPipelineRunner {
         try PromptAssertions.require(reviewPrompt, contains: "输出格式（严格 JSON）", label: "review prompt JSON schema")
         try PromptAssertions.require(reviewPrompt, contains: "后台长篇合同", label: "review prompt longform contract")
 
-        var review = ChapterQualityReviewer.parseReviewResult(
-            from: try LocalLongformJudge.reviewJSON(
-                seed: seed,
-                project: project,
-                draft: revisedDraft,
-                contract: contract,
-                missingNodes: missingNodes
-            )
+        var review = try await reviewResult(
+            seed: seed,
+            project: project,
+            draft: revisedDraft,
+            contract: contract,
+            missingNodes: missingNodes,
+            prompt: reviewPrompt
         )
         review = ChapterQualityReviewer.mergeLocalAntiPatterns(
             into: review,
@@ -282,9 +295,74 @@ private final class LocalLongformPipelineRunner {
         )
     }
 
+    private func planText(seed: EvalSeed, project: NovelProject, prompt: String) async throws -> String {
+        guard let realModel else {
+            return LocalModel.plan(seed: seed, project: project)
+        }
+        return try await realModel.complete(
+            systemPrompt: AIWritingService.writingPlanSystemPrompt,
+            userPrompt: prompt,
+            temperature: 0.42,
+            maxTokens: 760
+        )
+    }
+
+    private func draftText(seed: EvalSeed, project: NovelProject, writingPlan: String, prompt: String) async throws -> String {
+        guard let realModel else {
+            return LocalModel.draft(seed: seed, project: project, writingPlan: writingPlan)
+        }
+        return try await realModel.complete(
+            systemPrompt: AIWritingService.systemPrompt,
+            userPrompt: prompt,
+            temperature: 0.82,
+            maxTokens: AIWritingLength.short.maxTokens
+        )
+    }
+
+    private func revisedDraftText(draft: String, prompt: String) async throws -> String {
+        guard let realModel else {
+            return LocalModel.revision(of: draft)
+        }
+        return try await realModel.complete(
+            systemPrompt: AIWritingService.writingRevisionSystemPrompt,
+            userPrompt: prompt,
+            temperature: 0.34,
+            maxTokens: AIWritingLength.short.maxTokens + 500
+        )
+    }
+
+    private func reviewResult(
+        seed: EvalSeed,
+        project: NovelProject,
+        draft: String,
+        contract: LongformStoryContractBundle,
+        missingNodes: [String],
+        prompt: String
+    ) async throws -> ChapterReviewResult {
+        guard let realModel else {
+            return ChapterQualityReviewer.parseReviewResult(
+                from: try LocalLongformJudge.reviewJSON(
+                    seed: seed,
+                    project: project,
+                    draft: draft,
+                    contract: contract,
+                    missingNodes: missingNodes
+                )
+            )
+        }
+
+        let reviewResponse = try await realModel.complete(
+            systemPrompt: ChapterQualityReviewer.reviewSystemPrompt,
+            userPrompt: prompt,
+            temperature: 0.3,
+            maxTokens: 3_000
+        )
+        return ChapterQualityReviewer.parseReviewResult(from: reviewResponse)
+    }
+
     private func makeRunDirectory() throws -> URL {
         let timestamp = EvalClock.runTimestamp()
-        let runURL = options.outputURL.appendingPathComponent("\(timestamp)-local-\(options.chapters)", isDirectory: true)
+        let runURL = options.outputURL.appendingPathComponent("\(timestamp)-\(options.mode)-\(options.chapters)", isDirectory: true)
         try FileManager.default.createDirectory(at: runURL, withIntermediateDirectories: true)
         return runURL
     }
@@ -306,6 +384,31 @@ private final class LocalLongformPipelineRunner {
         for key in keys {
             UserDefaults.standard.removeObject(forKey: key)
         }
+    }
+}
+
+private final class RealLongformModel {
+    private let configuration: AIConnectionConfiguration
+
+    init() throws {
+        configuration = try ModelConnectionConfigurationStore.loadConnectionConfiguration()
+        let provider = ModelConnectionConfigurationStore.loadSelectedProvider()
+        fputs("Using OpenWriting \(provider.title) model configuration: \(configuration.modelName) @ \(configuration.baseURL.absoluteString)\n", stderr)
+    }
+
+    func complete(
+        systemPrompt: String,
+        userPrompt: String,
+        temperature: Double,
+        maxTokens: Int
+    ) async throws -> String {
+        try await AIWritingService.generateText(
+            configuration: configuration,
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            temperature: temperature,
+            maxTokens: maxTokens
+        )
     }
 }
 
@@ -1145,6 +1248,27 @@ private struct Scorecard: Encodable {
     private static func round(_ value: Double, places: Int = 2) -> Double {
         let scale = pow(10.0, Double(places))
         return (value * scale).rounded() / scale
+    }
+}
+
+private struct FailureArtifact: Encodable {
+    let mode: String
+    let chapters: Int
+    let failedAt: String
+    let error: String
+
+    enum CodingKeys: String, CodingKey {
+        case mode
+        case chapters
+        case failedAt = "failed_at"
+        case error
+    }
+
+    init(mode: String, chapters: Int, error: Error) {
+        self.mode = mode
+        self.chapters = chapters
+        failedAt = EvalClock.runTimestamp()
+        self.error = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
     }
 }
 
