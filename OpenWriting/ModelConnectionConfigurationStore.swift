@@ -9,17 +9,22 @@ enum ModelConnectionConfigurationStore {
         static let baseURL = "OpenWriting.baseURL"
         static let customModelName = "OpenWriting.custom.modelName"
         static let customBaseURL = "OpenWriting.custom.baseURL"
+        static let anthropicModelName = "OpenWriting.anthropic.modelName"
+        static let anthropicBaseURL = "OpenWriting.anthropic.baseURL"
     }
 
     enum KeychainKey {
         static let service = "CHZ.Kral.OpenWriting.ModelConnection"
         static let openWAccount = "apiKey.openw"
         static let customAccount = "apiKey.custom"
+        static let anthropicAccount = "apiKey.anthropic"
     }
 
     static let defaultOpenWModelName = "gpt-5.4-mini"
-    static let defaultOpenWBaseURL = "https://kralapi.kralai.tech/v1"
+    static let defaultOpenWBaseURL = "https://openwriting.kralai.tech/api/model/v1"
+    static let defaultAnthropicBaseURL = "https://api.anthropic.com/v1"
     private static let retiredOpenWBaseURL = "https://ai." + "xxread.top/v1"
+    private static let retiredKralAPIBaseURL = "https://kralapi.kralai.tech/v1"
 
     static func stringValue(forKey key: String, userDefaults: UserDefaults) -> String? {
         userDefaults.string(forKey: key)
@@ -29,6 +34,7 @@ enum ModelConnectionConfigurationStore {
         switch provider {
         case .openAICompatible: return StorageKey.modelName
         case .custom: return StorageKey.customModelName
+        case .anthropic: return StorageKey.anthropicModelName
         }
     }
 
@@ -36,6 +42,7 @@ enum ModelConnectionConfigurationStore {
         switch provider {
         case .openAICompatible: return StorageKey.baseURL
         case .custom: return StorageKey.customBaseURL
+        case .anthropic: return StorageKey.anthropicBaseURL
         }
     }
 
@@ -43,6 +50,7 @@ enum ModelConnectionConfigurationStore {
         switch provider {
         case .openAICompatible: return KeychainKey.openWAccount
         case .custom: return KeychainKey.customAccount
+        case .anthropic: return KeychainKey.anthropicAccount
         }
     }
 
@@ -50,6 +58,7 @@ enum ModelConnectionConfigurationStore {
         switch provider {
         case .openAICompatible: return defaultOpenWModelName
         case .custom: return ""
+        case .anthropic: return ""
         }
     }
 
@@ -57,13 +66,20 @@ enum ModelConnectionConfigurationStore {
         switch provider {
         case .openAICompatible: return defaultOpenWBaseURL
         case .custom: return ""
+        case .anthropic: return defaultAnthropicBaseURL
         }
     }
 
     static func loadSelectedProvider(userDefaults: UserDefaults = .standard) -> ModelProvider {
-        ModelProvider(
+        let storedProvider = ModelProvider(
             rawValue: stringValue(forKey: StorageKey.selectedProvider, userDefaults: userDefaults) ?? ""
         ) ?? .openAICompatible
+
+        if shouldTreatCustomProviderAsServerManagedOpenWriting(userDefaults: userDefaults) {
+            return .openAICompatible
+        }
+
+        return storedProvider
     }
 
     static func loadModelName(for provider: ModelProvider, userDefaults: UserDefaults) -> String {
@@ -95,7 +111,7 @@ enum ModelConnectionConfigurationStore {
 
     static func baseURLReplacingRetiredDefault(_ rawValue: String, for provider: ModelProvider) -> String {
         guard provider == .openAICompatible,
-              isRetiredOpenWBaseURL(rawValue)
+              isRetiredOpenWBaseURL(rawValue) || isRetiredKralAPIBaseURL(rawValue)
         else { return rawValue }
 
         return defaultOpenWBaseURL
@@ -103,6 +119,37 @@ enum ModelConnectionConfigurationStore {
 
     static func isRetiredOpenWBaseURL(_ rawValue: String) -> Bool {
         normalizedBaseURLString(from: rawValue) == retiredOpenWBaseURL
+    }
+
+    static func isRetiredKralAPIBaseURL(_ rawValue: String) -> Bool {
+        normalizedBaseURLString(from: rawValue) == retiredKralAPIBaseURL
+    }
+
+    static func isServerManagedOpenWritingBaseURL(_ rawValue: String) -> Bool {
+        normalizedBaseURLString(from: rawValue) == defaultOpenWBaseURL
+    }
+
+    static func shouldTreatCustomProviderAsServerManagedOpenWriting(userDefaults: UserDefaults) -> Bool {
+        let storedProvider = ModelProvider(
+            rawValue: stringValue(forKey: StorageKey.selectedProvider, userDefaults: userDefaults) ?? ""
+        )
+        guard storedProvider == .custom,
+              let customBaseURL = stringValue(forKey: StorageKey.customBaseURL, userDefaults: userDefaults)
+        else { return false }
+
+        return isRetiredKralAPIBaseURL(customBaseURL) || isServerManagedOpenWritingBaseURL(customBaseURL)
+    }
+
+    static func migrateServerManagedOpenWritingProviderIfNeeded(_ userDefaults: UserDefaults) {
+        guard shouldTreatCustomProviderAsServerManagedOpenWriting(userDefaults: userDefaults) else { return }
+
+        let customModelName = stringValue(forKey: StorageKey.customModelName, userDefaults: userDefaults)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let customModelName, !customModelName.isEmpty {
+            userDefaults.set(customModelName, forKey: StorageKey.modelName)
+        }
+        userDefaults.set(defaultOpenWBaseURL, forKey: StorageKey.baseURL)
+        userDefaults.set(ModelProvider.openAICompatible.rawValue, forKey: StorageKey.selectedProvider)
     }
 
     static func loadAPIKeyFromKeychain(for provider: ModelProvider) -> String? {
@@ -169,14 +216,15 @@ enum ModelConnectionConfigurationStore {
         else {
             throw ModelConnectionConfigurationError.invalidBaseURL(provider: provider, value: rawBaseURL)
         }
-        guard !apiKey.isEmpty else {
+        guard !provider.requiresAPIKey || !apiKey.isEmpty else {
             throw ModelConnectionConfigurationError.missingAPIKey(provider: provider)
         }
 
         return AIConnectionConfiguration(
             baseURL: baseURL,
             apiKey: apiKey,
-            modelName: modelName
+            modelName: modelName,
+            apiFormat: provider.apiFormat
         )
     }
 }

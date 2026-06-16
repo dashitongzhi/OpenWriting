@@ -11,6 +11,8 @@ extension AppState {
         static let baseURL = ModelConnectionConfigurationStore.StorageKey.baseURL
         static let customModelName = ModelConnectionConfigurationStore.StorageKey.customModelName
         static let customBaseURL = ModelConnectionConfigurationStore.StorageKey.customBaseURL
+        static let anthropicModelName = ModelConnectionConfigurationStore.StorageKey.anthropicModelName
+        static let anthropicBaseURL = ModelConnectionConfigurationStore.StorageKey.anthropicBaseURL
         static let autoValidateOnLaunch = "OpenWriting.autoValidateOnLaunch"
         static let showWritingDeskCachePanel = "OpenWriting.showWritingDeskCachePanel"
         static let showWritingDeskTimeline = "OpenWriting.showWritingDeskTimeline"
@@ -44,10 +46,12 @@ extension AppState {
         static let service = ModelConnectionConfigurationStore.KeychainKey.service
         static let openWAccount = ModelConnectionConfigurationStore.KeychainKey.openWAccount
         static let customAccount = ModelConnectionConfigurationStore.KeychainKey.customAccount
+        static let anthropicAccount = ModelConnectionConfigurationStore.KeychainKey.anthropicAccount
     }
 
     static let defaultOpenWModelName = ModelConnectionConfigurationStore.defaultOpenWModelName
     static let defaultOpenWBaseURL = ModelConnectionConfigurationStore.defaultOpenWBaseURL
+    static let defaultAnthropicBaseURL = ModelConnectionConfigurationStore.defaultAnthropicBaseURL
 
     var currentStorageScope: String? {
         activeAccount?.userID
@@ -114,6 +118,14 @@ extension AppState {
 
     static func isRetiredOpenWBaseURL(_ rawValue: String) -> Bool {
         ModelConnectionConfigurationStore.isRetiredOpenWBaseURL(rawValue)
+    }
+
+    static func isRetiredKralAPIBaseURL(_ rawValue: String) -> Bool {
+        ModelConnectionConfigurationStore.isRetiredKralAPIBaseURL(rawValue)
+    }
+
+    static func migrateServerManagedOpenWritingProviderIfNeeded(_ userDefaults: UserDefaults) {
+        ModelConnectionConfigurationStore.migrateServerManagedOpenWritingProviderIfNeeded(userDefaults)
     }
 
     static func validationFailureMessage(for error: Error) -> String {
@@ -295,11 +307,12 @@ extension AppState {
     static func migrateRetiredOpenAICompatibleDefaults(_ userDefaults: UserDefaults) {
         replaceRetiredOpenWBaseURLIfNeeded(forKey: StorageKey.baseURL, userDefaults: userDefaults)
         replaceRetiredOpenWBaseURLIfNeeded(forKey: LegacyStorageKey.baseURL, userDefaults: userDefaults)
+        migrateServerManagedOpenWritingProviderIfNeeded(userDefaults)
     }
 
     private static func replaceRetiredOpenWBaseURLIfNeeded(forKey key: String, userDefaults: UserDefaults) {
         guard let storedBaseURL = stringValue(forKey: key, userDefaults: userDefaults),
-              isRetiredOpenWBaseURL(storedBaseURL)
+              isRetiredOpenWBaseURL(storedBaseURL) || isRetiredKralAPIBaseURL(storedBaseURL)
         else { return }
 
         userDefaults.set(defaultOpenWBaseURL, forKey: key)

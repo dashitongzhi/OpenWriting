@@ -207,12 +207,12 @@ struct ModelConnectionSettingsForm: View {
             }
             .pickerStyle(.segmented)
 
-            if appState.selectedProvider == .custom {
+            if appState.selectedProvider.requiresAPIKey {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Base URL")
                         .font(.subheadline.weight(.semibold))
 
-                    TextField("https://api.openai.com/v1", text: $appState.baseURL)
+                    TextField(appState.selectedProvider.baseURLPlaceholder, text: $appState.baseURL)
                         .textFieldStyle(.roundedBorder)
                 }
 
@@ -220,7 +220,7 @@ struct ModelConnectionSettingsForm: View {
                     Text("模型 ID")
                         .font(.subheadline.weight(.semibold))
 
-                    TextField("gpt-4.1-mini", text: $appState.modelName)
+                    TextField(appState.selectedProvider.modelPlaceholder, text: $appState.modelName)
                         .textFieldStyle(.roundedBorder)
                 }
 
@@ -228,7 +228,7 @@ struct ModelConnectionSettingsForm: View {
                     Text("API Key")
                         .font(.subheadline.weight(.semibold))
 
-                    SecureField("sk-...", text: $appState.apiKey)
+                    SecureField(appState.selectedProvider.keyPlaceholder, text: $appState.apiKey)
                         .textFieldStyle(.roundedBorder)
                 }
             } else {
@@ -259,11 +259,15 @@ struct ModelConnectionSettingsForm: View {
             }
 
             if appState.selectedProvider == .custom {
-                Text("自定义使用 OpenAI 格式：Base URL 通常以 /v1 结尾，填写模型 ID 与 API Key；API Key 单独存放在系统 Keychain，不写入仓库。")
+                Text("自定义 OpenAI 使用 /v1/chat/completions 格式：Base URL 通常以 /v1 结尾，填写模型 ID 与 API Key；API Key 单独存放在系统 Keychain。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if appState.selectedProvider == .anthropic {
+                Text("自定义 Anthropic 使用 /v1/messages 格式：Base URL 通常为 https://api.anthropic.com/v1，API Key 单独存放在系统 Keychain。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                Text("OpenW 默认使用 OpenAI 兼容接口；Base URL 与模型 ID 已内置，API Key 仍单独存放在系统 Keychain。")
+                Text("OpenWriting 提供模型由服务器后端托管，客户端不保存 OpenAI API Key；高级用户可切换到自定义 OpenAI 或 Anthropic。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

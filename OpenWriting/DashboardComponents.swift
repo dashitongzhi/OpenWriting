@@ -178,7 +178,7 @@ struct ModelConnectionSummaryCard: View {
             summaryRow(label: "Base URL", value: displayBaseURL)
             summaryRow(label: "模型 ID", value: displayModelName)
 
-            if appState.selectedProvider == .custom {
+            if appState.selectedProvider.requiresAPIKey {
                 summaryRow(
                     label: "API Key",
                     value: appState.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未填写" : "已填写"
@@ -215,9 +215,9 @@ struct ModelConnectionSummaryCard: View {
             return trimmedBaseURL
         }
 
-        return appState.selectedProvider == .openAICompatible
-            ? AppState.defaultBaseURL(for: .openAICompatible)
-            : "未填写"
+        return AppState.defaultBaseURL(for: appState.selectedProvider).isEmpty
+            ? "未填写"
+            : AppState.defaultBaseURL(for: appState.selectedProvider)
     }
 
     private var displayModelName: String {
@@ -226,9 +226,9 @@ struct ModelConnectionSummaryCard: View {
             return trimmedModelName
         }
 
-        return appState.selectedProvider == .openAICompatible
-            ? AppState.defaultModelName(for: .openAICompatible)
-            : "未填写"
+        return AppState.defaultModelName(for: appState.selectedProvider).isEmpty
+            ? "未填写"
+            : AppState.defaultModelName(for: appState.selectedProvider)
     }
 
     @ViewBuilder

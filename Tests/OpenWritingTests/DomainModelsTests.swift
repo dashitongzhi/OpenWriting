@@ -20,29 +20,59 @@ final class DomainModelsTests: XCTestCase {
     // MARK: - ModelProvider Tests
 
     func testModelProviderCases() {
-        XCTAssertEqual(ModelProvider.openAICompatible.title, "OpenW")
-        XCTAssertEqual(ModelProvider.custom.title, "自定义")
+        XCTAssertEqual(ModelProvider.openAICompatible.title, "OpenWriting")
+        XCTAssertEqual(ModelProvider.custom.title, "自定义 OpenAI")
+        XCTAssertEqual(ModelProvider.anthropic.title, "自定义 Anthropic")
+        XCTAssertFalse(ModelProvider.openAICompatible.requiresAPIKey)
+        XCTAssertTrue(ModelProvider.custom.requiresAPIKey)
+        XCTAssertTrue(ModelProvider.anthropic.requiresAPIKey)
     }
 
     @MainActor
-    func testOpenWDefaultConnectionUsesKralAPIBackend() {
+    func testOpenWritingDefaultConnectionUsesServerManagedBackend() {
         let userDefaults = makeIsolatedUserDefaults()
 
         XCTAssertEqual(AppState.defaultModelName(for: .openAICompatible), "gpt-5.4-mini")
-        XCTAssertEqual(AppState.defaultBaseURL(for: .openAICompatible), "https://kralapi.kralai.tech/v1")
-        XCTAssertEqual(AppState.loadBaseURL(for: .openAICompatible, userDefaults: userDefaults), "https://kralapi.kralai.tech/v1")
+        XCTAssertEqual(AppState.defaultBaseURL(for: .openAICompatible), "https://openwriting.kralai.tech/api/model/v1")
+        XCTAssertEqual(AppState.loadBaseURL(for: .openAICompatible, userDefaults: userDefaults), "https://openwriting.kralai.tech/api/model/v1")
     }
 
     @MainActor
-    func testRetiredOpenWDefaultBaseURLMigratesToKralAPIBackend() {
+    func testRetiredOpenWDefaultBaseURLMigratesToServerManagedBackend() {
         let userDefaults = makeIsolatedUserDefaults()
         let retiredDefaultBaseURL = "https://ai." + "xxread.top/v1"
         userDefaults.set(retiredDefaultBaseURL, forKey: AppState.StorageKey.baseURL)
 
         AppState.migrateRetiredOpenAICompatibleDefaults(userDefaults)
 
-        XCTAssertEqual(userDefaults.string(forKey: AppState.StorageKey.baseURL), "https://kralapi.kralai.tech/v1")
-        XCTAssertEqual(AppState.loadBaseURL(for: .openAICompatible, userDefaults: userDefaults), "https://kralapi.kralai.tech/v1")
+        XCTAssertEqual(userDefaults.string(forKey: AppState.StorageKey.baseURL), "https://openwriting.kralai.tech/api/model/v1")
+        XCTAssertEqual(AppState.loadBaseURL(for: .openAICompatible, userDefaults: userDefaults), "https://openwriting.kralai.tech/api/model/v1")
+    }
+
+    @MainActor
+    func testPreviousKralAPIBaseURLMigratesToServerManagedBackend() {
+        let userDefaults = makeIsolatedUserDefaults()
+        userDefaults.set("https://kralapi.kralai.tech/v1", forKey: AppState.StorageKey.baseURL)
+
+        AppState.migrateRetiredOpenAICompatibleDefaults(userDefaults)
+
+        XCTAssertEqual(userDefaults.string(forKey: AppState.StorageKey.baseURL), "https://openwriting.kralai.tech/api/model/v1")
+        XCTAssertEqual(AppState.loadBaseURL(for: .openAICompatible, userDefaults: userDefaults), "https://openwriting.kralai.tech/api/model/v1")
+    }
+
+    @MainActor
+    func testLegacyCustomKralAPIProviderMigratesToServerManagedOpenWriting() {
+        let userDefaults = makeIsolatedUserDefaults()
+        userDefaults.set(ModelProvider.custom.rawValue, forKey: AppState.StorageKey.selectedProvider)
+        userDefaults.set("gpt-5.4-mini", forKey: AppState.StorageKey.customModelName)
+        userDefaults.set("https://kralapi.kralai.tech/v1", forKey: AppState.StorageKey.customBaseURL)
+
+        AppState.migrateRetiredOpenAICompatibleDefaults(userDefaults)
+
+        XCTAssertEqual(AppState.loadSelectedProvider(userDefaults: userDefaults), .openAICompatible)
+        XCTAssertEqual(userDefaults.string(forKey: AppState.StorageKey.selectedProvider), ModelProvider.openAICompatible.rawValue)
+        XCTAssertEqual(userDefaults.string(forKey: AppState.StorageKey.baseURL), "https://openwriting.kralai.tech/api/model/v1")
+        XCTAssertEqual(AppState.loadBaseURL(for: .openAICompatible, userDefaults: userDefaults), "https://openwriting.kralai.tech/api/model/v1")
     }
 
     // MARK: - ConnectionStatus Tests

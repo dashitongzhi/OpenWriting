@@ -278,7 +278,7 @@ final class AppState {
 
                 connectionStatus = .ready
                 validationMessage = providerTitle == ModelProvider.openAICompatible.title
-                    ? "已连接 OpenW 模型"
+                    ? "已连接 OpenWriting 提供模型"
                     : "已连接 \(resolvedModel)"
             } catch {
                 guard !Task.isCancelled else { return }
@@ -1958,8 +1958,8 @@ final class AppState {
     private var hasEnteredConnectionInfo: Bool {
         switch selectedProvider {
         case .openAICompatible:
-            return !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .custom:
+            return true
+        case .custom, .anthropic:
             return !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
                 !modelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
                 !baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1982,12 +1982,14 @@ final class AppState {
         connectionStatus = .idle
         switch selectedProvider {
         case .openAICompatible:
-            validationMessage = hasEnteredConnectionInfo
-                ? "OpenW 配置已保存，可点击“测试连接”以重新检查。"
-                : "OpenW 使用内置模型连接配置；当前安装未检测到本机授权凭据时不可用。"
+            validationMessage = "OpenWriting 提供模型由服务器后端托管，可点击“测试连接”检查可用性。"
         case .custom:
             validationMessage = hasEnteredConnectionInfo
-                ? "配置已保存，可点击“测试连接”以重新检查。"
+                ? "自定义 OpenAI 配置已保存，可点击“测试连接”以重新检查。"
+                : Self.emptyConfigurationMessage
+        case .anthropic:
+            validationMessage = hasEnteredConnectionInfo
+                ? "自定义 Anthropic 配置已保存，可点击“测试连接”以重新检查。"
                 : Self.emptyConfigurationMessage
         }
     }
@@ -2010,11 +2012,9 @@ final class AppState {
             return nil
         }
 
-        guard !trimmedKey.isEmpty else {
+        guard !selectedProvider.requiresAPIKey || !trimmedKey.isEmpty else {
             connectionStatus = .needsAttention
-            validationMessage = selectedProvider == .openAICompatible
-                ? "OpenW 模型连接暂不可用：当前安装未检测到本机授权凭据。"
-                : "API Key 不能为空。"
+            validationMessage = "API Key 不能为空。"
             return nil
         }
 
@@ -2043,7 +2043,8 @@ final class AppState {
         return AIConnectionConfiguration(
             baseURL: resolvedBaseURL,
             apiKey: trimmedKey,
-            modelName: trimmedModelName
+            modelName: trimmedModelName,
+            apiFormat: selectedProvider.apiFormat
         )
     }
 

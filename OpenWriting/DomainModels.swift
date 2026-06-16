@@ -280,15 +280,67 @@ enum NovelLength: String, CaseIterable, Codable, Identifiable {
 enum ModelProvider: String, CaseIterable, Identifiable {
     case openAICompatible
     case custom
+    case anthropic
 
     var id: Self { self }
 
     var title: String {
         switch self {
         case .openAICompatible:
-            return "OpenW"
+            return "OpenWriting"
         case .custom:
-            return "自定义"
+            return "自定义 OpenAI"
+        case .anthropic:
+            return "自定义 Anthropic"
+        }
+    }
+
+    var apiFormat: ModelAPIFormat {
+        switch self {
+        case .openAICompatible, .custom:
+            return .openAIChatCompletions
+        case .anthropic:
+            return .anthropicMessages
+        }
+    }
+
+    var requiresAPIKey: Bool {
+        switch self {
+        case .openAICompatible:
+            return false
+        case .custom, .anthropic:
+            return true
+        }
+    }
+
+    var baseURLPlaceholder: String {
+        switch self {
+        case .openAICompatible:
+            return "https://openwriting.kralai.tech/api/model/v1"
+        case .custom:
+            return "https://api.openai.com/v1"
+        case .anthropic:
+            return "https://api.anthropic.com/v1"
+        }
+    }
+
+    var modelPlaceholder: String {
+        switch self {
+        case .openAICompatible, .custom:
+            return "gpt-5.4-mini"
+        case .anthropic:
+            return "claude-sonnet-4-5"
+        }
+    }
+
+    var keyPlaceholder: String {
+        switch self {
+        case .openAICompatible:
+            return ""
+        case .custom:
+            return "sk-..."
+        case .anthropic:
+            return "sk-ant-..."
         }
     }
 }

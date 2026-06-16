@@ -504,78 +504,15 @@ extension AIWritingService {
         temperature: Double,
         maxTokens: Int
     ) async throws -> String {
-        let endpoint = configuration.baseURL.appendingPathComponent("chat/completions")
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 120
-
-        let payload = EnhancedChatCompletionsRequest(
-            model: configuration.modelName,
-            messages: [
-                .init(role: "system", content: systemPrompt),
-                .init(role: "user", content: userPrompt)
-            ],
+        try await AIWritingService.generateText(
+            configuration: configuration,
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
             temperature: temperature,
             maxTokens: maxTokens
         )
-
-        request.httpBody = try JSONEncoder().encode(payload)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw AIWritingError.invalidResponse
-        }
-
-        guard (200 ..< 300).contains(httpResponse.statusCode) else {
-            let message = String(data: data, encoding: .utf8) ?? "未知错误"
-            throw AIWritingError.serverError(message)
-        }
-
-        let decoded = try JSONDecoder().decode(EnhancedChatCompletionsResponse.self, from: data)
-        guard
-            let text = decoded.choices.first?.message.content?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-            !text.isEmpty
-        else {
-            throw AIWritingError.emptyResult
-        }
-
-        return text
     }
 
-}
-
-private struct EnhancedChatCompletionsRequest: Encodable {
-    struct Message: Encodable {
-        let role: String
-        let content: String
-    }
-
-    let model: String
-    let messages: [Message]
-    let temperature: Double
-    let maxTokens: Int
-
-    enum CodingKeys: String, CodingKey {
-        case model
-        case messages
-        case temperature
-        case maxTokens = "max_tokens"
-    }
-}
-
-private struct EnhancedChatCompletionsResponse: Decodable {
-    struct Choice: Decodable {
-        struct Message: Decodable {
-            let content: String?
-        }
-
-        let message: Message
-    }
-
-    let choices: [Choice]
 }
 
 // MARK: - Enhanced Writing Support Context

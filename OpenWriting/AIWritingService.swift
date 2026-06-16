@@ -1,9 +1,27 @@
 import Foundation
 
+enum ModelAPIFormat: String, Codable {
+    case openAIChatCompletions
+    case anthropicMessages
+}
+
 struct AIConnectionConfiguration {
     let baseURL: URL
     let apiKey: String
     let modelName: String
+    let apiFormat: ModelAPIFormat
+
+    init(
+        baseURL: URL,
+        apiKey: String,
+        modelName: String,
+        apiFormat: ModelAPIFormat = .openAIChatCompletions
+    ) {
+        self.baseURL = baseURL
+        self.apiKey = apiKey
+        self.modelName = modelName
+        self.apiFormat = apiFormat
+    }
 }
 
 enum AIWritingMode: String, CaseIterable, Identifiable {
@@ -316,11 +334,40 @@ enum AIWritingService {
         temperature: Double,
         maxTokens: Int
     ) async throws -> String {
+        switch configuration.apiFormat {
+        case .openAIChatCompletions:
+            return try await completeOpenAIText(
+                configuration: configuration,
+                systemPrompt: systemPrompt,
+                userPrompt: userPrompt,
+                temperature: temperature,
+                maxTokens: maxTokens
+            )
+        case .anthropicMessages:
+            return try await completeAnthropicText(
+                configuration: configuration,
+                systemPrompt: systemPrompt,
+                userPrompt: userPrompt,
+                temperature: temperature,
+                maxTokens: maxTokens
+            )
+        }
+    }
+
+    private static func completeOpenAIText(
+        configuration: AIConnectionConfiguration,
+        systemPrompt: String,
+        userPrompt: String,
+        temperature: Double,
+        maxTokens: Int
+    ) async throws -> String {
         let endpoint = configuration.baseURL.appendingPathComponent("chat/completions")
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
+        if !configuration.apiKey.isEmpty {
+            request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
+        }
         request.timeoutInterval = 120
 
         let payload = ChatCompletionsRequest(
@@ -351,6 +398,60 @@ enum AIWritingService {
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             !text.isEmpty
         else {
+            throw AIWritingError.emptyResult
+        }
+
+        return text
+    }
+
+    private static func completeAnthropicText(
+        configuration: AIConnectionConfiguration,
+        systemPrompt: String,
+        userPrompt: String,
+        temperature: Double,
+        maxTokens: Int
+    ) async throws -> String {
+        let endpoint = configuration.baseURL.appendingPathComponent("messages")
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(configuration.apiKey, forHTTPHeaderField: "x-api-key")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        request.timeoutInterval = 120
+
+        let payload = AnthropicMessagesRequest(
+            model: configuration.modelName,
+            system: systemPrompt,
+            messages: [
+                .init(role: "user", content: userPrompt)
+            ],
+            temperature: temperature,
+            maxTokens: maxTokens
+        )
+
+        request.httpBody = try JSONEncoder().encode(payload)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AIWritingError.invalidResponse
+        }
+
+        guard (200 ..< 300).contains(httpResponse.statusCode) else {
+            let message = String(data: data, encoding: .utf8) ?? "未知错误"
+            throw AIWritingError.serverError(message)
+        }
+
+        let decoded = try JSONDecoder().decode(AnthropicMessagesResponse.self, from: data)
+        let text = decoded.content
+            .compactMap { block -> String? in
+                guard block.type == "text" else { return nil }
+                return block.text?.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !text.isEmpty else {
             throw AIWritingError.emptyResult
         }
 
@@ -776,4 +877,34 @@ private struct ChatCompletionsResponse: Decodable {
     }
 
     let choices: [Choice]
+}
+
+private struct AnthropicMessagesRequest: Encodable {
+    struct Message: Encodable {
+        let role: String
+        let content: String
+    }
+
+    let model: String
+    let system: String
+    let messages: [Message]
+    let temperature: Double
+    let maxTokens: Int
+
+    enum CodingKeys: String, CodingKey {
+        case model
+        case system
+        case messages
+        case temperature
+        case maxTokens = "max_tokens"
+    }
+}
+
+private struct AnthropicMessagesResponse: Decodable {
+    struct ContentBlock: Decodable {
+        let type: String
+        let text: String?
+    }
+
+    let content: [ContentBlock]
 }
