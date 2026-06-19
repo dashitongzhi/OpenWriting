@@ -18,7 +18,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .outline:
             return "章节树"
         case .library:
-            return "素材库"
+            return "创作资源"
         }
     }
 
@@ -48,7 +48,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .outline:
             return "这里会放章节树、场景卡片和剧情推进视图。"
         case .library:
-            return "这里会集中管理人物、地点、组织和世界观素材。"
+            return "这里会集中管理人物、地点、世界观素材和写作 Skill。"
         }
     }
 }

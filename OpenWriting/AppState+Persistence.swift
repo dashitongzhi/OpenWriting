@@ -22,6 +22,7 @@ extension AppState {
         static let activeAppleUserName = "OpenWriting.activeAppleUserName"
         static let activeProjectID = "OpenWriting.activeProjectID"
         static let recentProjects = "OpenWriting.recentProjects"
+        static let writingSkills = "OpenWriting.writingSkills"
         static let projectSnapshotTimestamp = "OpenWriting.projectSnapshotTimestamp"
         static let didMigrateLegacyDefaults = "OpenWriting.didMigrateLegacyDefaults"
         static let didMigrateLegacyEmailScope = "OpenWriting.didMigrateLegacyEmailScope"

@@ -515,23 +515,24 @@ private struct WorkspaceUtilityCard: View {
     private var libraryUtilityContent: some View {
         VStack(alignment: .leading, spacing: 16) {
             utilityFeatureCard(
-                eyebrow: "当前素材焦点",
+                eyebrow: "当前资源焦点",
                 title: appState.activeWorkspaceName,
-                subtitle: activeProject?.summary ?? "把人物、地点、组织和世界观素材集中收纳。",
-                trailing: activeProject?.genre ?? "世界观整理"
+                subtitle: activeProject?.summary ?? "把人物、地点、组织、世界观素材和写作 Skill 集中收纳。",
+                trailing: activeProject?.genre ?? "创作资源"
             )
 
             HStack(spacing: 12) {
                 WorkspaceMetricBadge(label: "素材总数", value: "\(activeProject?.referenceDocuments.count ?? 0)")
-                WorkspaceMetricBadge(label: "分类数", value: "\(activeProject?.materialCategoriesWithContent.count ?? 0)")
+                WorkspaceMetricBadge(label: "Skill", value: "\(appState.writingSkills.count)")
+                WorkspaceMetricBadge(label: "已启用", value: "\(appState.enabledWritingSkills.count)")
             }
 
             WorkspaceChecklist(
                 title: "优先建库",
                 items: [
                     "先把人物、地点、组织和世界观素材分开归类",
-                    "剧情草案和外部考据单独存放，避免和风格参考混杂",
-                    "需要续写时再从素材库回到写作台调用这些资料"
+                    "把常用文风、结构、修订规则整理成可启用 Skill",
+                    "需要续写时再从创作资源回到写作台调用这些资料"
                 ]
             )
         }
@@ -546,7 +547,7 @@ private struct WorkspaceUtilityCard: View {
         case .outline:
             return "结构导航"
         case .library:
-            return "素材整理"
+            return "创作资源"
         case .home:
             return "工作卡"
         }
@@ -561,7 +562,7 @@ private struct WorkspaceUtilityCard: View {
         case .outline:
             return "快速看结构分布、章节推进和回收节点。"
         case .library:
-            return "优先补齐对当前创作最有用的人物与世界观资料。"
+            return "优先补齐对当前创作最有用的素材与写作 Skill。"
         case .home:
             return "首页概览。"
         }
@@ -779,6 +780,7 @@ private struct LibraryWorkspacePanel: View {
 
     @State private var selectedDocumentID: ReferenceDocument.ID?
     @State private var selectedCategory: ReferenceMaterialCategory?
+    @State private var selectedResourceMode: LibraryResourceMode = .materials
     @State private var isImportingMaterials = false
     @State private var libraryStatusMessage = "素材库会按分类集中管理当前项目的用户素材。"
 
@@ -795,19 +797,32 @@ private struct LibraryWorkspacePanel: View {
     }
 
     var body: some View {
-        Group {
-            if let project = activeProject {
-                libraryPanel(for: project)
-            } else {
-                DashboardPanel(
-                    title: "素材库",
-                    subtitle: "当前还没有选中的项目，先去项目空间选择一本书，再把素材按分类整理起来。"
-                ) {
-                    Button("前往项目空间") {
-                        appState.openProjectSpace()
-                    }
-                    .buttonStyle(.borderedProminent)
+        VStack(alignment: .leading, spacing: 16) {
+            Picker("资源类型", selection: $selectedResourceMode) {
+                ForEach(LibraryResourceMode.allCases) { mode in
+                    Label(mode.title, systemImage: mode.symbolName).tag(mode)
                 }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 420)
+
+            switch selectedResourceMode {
+            case .materials:
+                if let project = activeProject {
+                    libraryPanel(for: project)
+                } else {
+                    DashboardPanel(
+                        title: "素材库",
+                        subtitle: "当前还没有选中的项目，先去项目空间选择一本书，再把素材按分类整理起来。"
+                    ) {
+                        Button("前往项目空间") {
+                            appState.openProjectSpace()
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                }
+            case .skills:
+                WritingSkillLibraryView(appState: appState)
             }
         }
         .task(id: activeProject?.id) {
@@ -1101,6 +1116,31 @@ private struct LibraryWorkspacePanel: View {
         }
     }
 
+}
+
+private enum LibraryResourceMode: String, CaseIterable, Identifiable {
+    case materials
+    case skills
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .materials:
+            return "素材库"
+        case .skills:
+            return "Skill 广场"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .materials:
+            return "books.vertical"
+        case .skills:
+            return "wand.and.stars"
+        }
+    }
 }
 
 private struct LibraryCategoryChip: View {

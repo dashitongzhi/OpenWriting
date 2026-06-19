@@ -11,6 +11,7 @@ enum ModelConnectionConfigurationStore {
         static let customBaseURL = "OpenWriting.custom.baseURL"
         static let anthropicModelName = "OpenWriting.anthropic.modelName"
         static let anthropicBaseURL = "OpenWriting.anthropic.baseURL"
+        static let didClearBundledCustomDefaults = "OpenWriting.didClearBundledCustomDefaults"
     }
 
     enum KeychainKey {
@@ -79,7 +80,35 @@ enum ModelConnectionConfigurationStore {
             return .openAICompatible
         }
 
-        return storedProvider
+        return storedProvider == .anthropic ? .custom : storedProvider
+    }
+
+    static func clearBundledCustomDefaultsIfNeeded(_ userDefaults: UserDefaults) {
+        guard !userDefaults.bool(forKey: StorageKey.didClearBundledCustomDefaults) else { return }
+
+        let bundledCustomBaseURLs = [
+            "https://api.openai.com/v1",
+            "http://api.openai.com/v1"
+        ]
+        if let customBaseURL = stringValue(forKey: StorageKey.customBaseURL, userDefaults: userDefaults),
+           let normalizedCustomBaseURL = normalizedBaseURLString(from: customBaseURL),
+           bundledCustomBaseURLs.contains(normalizedCustomBaseURL) {
+            userDefaults.removeObject(forKey: StorageKey.customBaseURL)
+        }
+
+        let bundledCustomModels = [
+            "gpt-4.1-mini",
+            "gpt-4o-mini",
+            "gpt-5.4-mini",
+            defaultOpenWModelName
+        ]
+        if let customModelName = stringValue(forKey: StorageKey.customModelName, userDefaults: userDefaults)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           bundledCustomModels.contains(customModelName) {
+            userDefaults.removeObject(forKey: StorageKey.customModelName)
+        }
+
+        userDefaults.set(true, forKey: StorageKey.didClearBundledCustomDefaults)
     }
 
     static func loadModelName(for provider: ModelProvider, userDefaults: UserDefaults) -> String {

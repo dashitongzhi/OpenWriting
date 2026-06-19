@@ -284,12 +284,14 @@ enum ModelProvider: String, CaseIterable, Identifiable {
 
     var id: Self { self }
 
+    static let visibleCases: [ModelProvider] = [.openAICompatible, .custom]
+
     var title: String {
         switch self {
         case .openAICompatible:
             return "OpenWriting"
         case .custom:
-            return "自定义 OpenAI"
+            return "自定义"
         case .anthropic:
             return "自定义 Anthropic"
         }
@@ -316,31 +318,27 @@ enum ModelProvider: String, CaseIterable, Identifiable {
     var baseURLPlaceholder: String {
         switch self {
         case .openAICompatible:
-            return "https://openwriting.kralai.tech/api/model/v1"
+            return ""
         case .custom:
-            return "https://api.openai.com/v1"
+            return ""
         case .anthropic:
-            return "https://api.anthropic.com/v1"
+            return ""
         }
     }
 
     var modelPlaceholder: String {
         switch self {
         case .openAICompatible, .custom:
-            return "gpt-5.4-mini"
+            return ""
         case .anthropic:
-            return "claude-sonnet-4-5"
+            return ""
         }
     }
 
     var keyPlaceholder: String {
         switch self {
-        case .openAICompatible:
+        case .openAICompatible, .custom, .anthropic:
             return ""
-        case .custom:
-            return "sk-..."
-        case .anthropic:
-            return "sk-ant-..."
         }
     }
 }

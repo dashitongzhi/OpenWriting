@@ -1657,6 +1657,7 @@ struct WritingDeskView: View {
             ?? project
         let profile = latestProject.outlineGenerationProfile
         let requestContext = outlineGenerationContext(for: latestProject, profile: profile)
+        let promptProject = appState.projectWithActiveWritingSkills(latestProject)
 
         guard profile.hasMinimumRequirements else {
             aiStatusMessage = "生成大纲前还差：\(profile.missingRequiredFieldLabels.joined(separator: "、"))。"
@@ -1682,7 +1683,7 @@ struct WritingDeskView: View {
             do {
                 let outline = try await AIWritingService.generateStoryOutline(
                     configuration: configuration,
-                    project: latestProject,
+                    project: promptProject,
                     profile: profile
                 )
 
@@ -1762,6 +1763,7 @@ struct WritingDeskView: View {
         }
 
         let requestContext = draftGenerationContext(for: latestProject, rejectedSuggestion: rejectedSuggestion)
+        let promptProject = appState.projectWithActiveWritingSkills(latestProject)
         writingStopTask?.cancel()
         writingStopTask = nil
         isGenerating = true
@@ -1790,7 +1792,7 @@ struct WritingDeskView: View {
             do {
                 let enhancedResult = try await AIWritingService.continueChapterEnhanced(
                     configuration: configuration,
-                    project: latestProject,
+                    project: promptProject,
                     mode: latestProject.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .advanceChapter : .continueScene,
                     additionalInstruction: generationInstruction(rejecting: rejectedSuggestion),
                     length: preferredLength(for: latestProject)

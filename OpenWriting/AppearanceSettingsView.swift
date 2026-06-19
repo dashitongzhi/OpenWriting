@@ -201,13 +201,13 @@ struct ModelConnectionSettingsForm: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Picker("模型选择", selection: $appState.selectedProvider) {
-                ForEach(ModelProvider.allCases) { provider in
+                ForEach(ModelProvider.visibleCases) { provider in
                     Text(provider.title).tag(provider)
                 }
             }
             .pickerStyle(.segmented)
 
-            if appState.selectedProvider.requiresAPIKey {
+            if appState.selectedProvider != .openAICompatible {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Base URL")
                         .font(.subheadline.weight(.semibold))
@@ -232,11 +232,15 @@ struct ModelConnectionSettingsForm: View {
                         .textFieldStyle(.roundedBorder)
                 }
             } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    connectionSummaryRow(label: "Base URL", value: displayBaseURL)
-                    connectionSummaryRow(label: "模型 ID", value: displayModelName)
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("OpenWriting 提供模型由服务器托管", systemImage: "checkmark.seal")
+                        .font(.subheadline.weight(.semibold))
+
+                    Text("客户端不显示模型 ID、Base URL 或 API Key，也不会保存 OpenAI API Key。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                .padding(.vertical, 4)
+                .padding(.vertical, 6)
             }
 
             Toggle("启动时自动检查格式", isOn: $appState.autoValidateOnLaunch)
@@ -258,47 +262,17 @@ struct ModelConnectionSettingsForm: View {
                 }
             }
 
-            if appState.selectedProvider == .custom {
+            if appState.selectedProvider != .openAICompatible {
                 Text("自定义 OpenAI 使用 /v1/chat/completions 格式：Base URL 通常以 /v1 结尾，填写模型 ID 与 API Key；API Key 单独存放在系统 Keychain。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            } else if appState.selectedProvider == .anthropic {
-                Text("自定义 Anthropic 使用 /v1/messages 格式：Base URL 通常为 https://api.anthropic.com/v1，API Key 单独存放在系统 Keychain。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             } else {
-                Text("OpenWriting 提供模型由服务器后端托管，客户端不保存 OpenAI API Key；高级用户可切换到自定义 OpenAI 或 Anthropic。")
+                Text("OpenWriting 会通过平台托管服务完成模型调用；高级用户可切换到自定义后手动填写自己的服务。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 6)
-    }
-
-    private var displayBaseURL: String {
-        let trimmedBaseURL = appState.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmedBaseURL.isEmpty ? AppState.defaultBaseURL(for: .openAICompatible) : trimmedBaseURL
-    }
-
-    private var displayModelName: String {
-        let trimmedModelName = appState.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmedModelName.isEmpty ? AppState.defaultModelName(for: .openAICompatible) : trimmedModelName
-    }
-
-    @ViewBuilder
-    private func connectionSummaryRow(label: String, value: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(label)
-                .font(.subheadline.weight(.semibold))
-
-            Spacer()
-
-            Text(value)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
     }
 
     private var statusColor: Color {

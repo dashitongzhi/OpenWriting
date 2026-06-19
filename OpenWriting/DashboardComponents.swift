@@ -175,10 +175,12 @@ struct ModelConnectionSummaryCard: View {
             }
 
             summaryRow(label: "模型选择", value: appState.selectedProvider.title)
-            summaryRow(label: "Base URL", value: displayBaseURL)
-            summaryRow(label: "模型 ID", value: displayModelName)
 
-            if appState.selectedProvider.requiresAPIKey {
+            if appState.selectedProvider == .openAICompatible {
+                summaryRow(label: "调用方式", value: "平台托管")
+            } else {
+                summaryRow(label: "Base URL", value: displayBaseURL)
+                summaryRow(label: "模型 ID", value: displayModelName)
                 summaryRow(
                     label: "API Key",
                     value: appState.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未填写" : "已填写"
@@ -189,7 +191,9 @@ struct ModelConnectionSummaryCard: View {
                 .font(.subheadline)
                 .foregroundStyle(palette.textSecondary)
 
-            Text("跟随 Apple 的原生偏好结构，供应商选择和凭证录入都放在设置窗口，不再占用首页编辑空间。")
+            Text(appState.selectedProvider == .openAICompatible
+                ? "OpenWriting 提供模型由服务器托管，客户端不显示模型 ID、Base URL 或 API Key。"
+                : "自定义供应商和凭证录入都放在设置窗口，不占用首页编辑空间。")
                 .font(.caption)
                 .foregroundStyle(palette.textSecondary)
                 .lineSpacing(3)

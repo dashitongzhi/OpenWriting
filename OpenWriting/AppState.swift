@@ -122,6 +122,12 @@ final class AppState {
         InspirationSignal(title: "章节节奏盘", description: "观察高潮、低潮与信息释放的密度。")
     ]
 
+    var writingSkills: [WritingSkill] {
+        didSet {
+            persistWritingSkills(writingSkills)
+        }
+    }
+
     init(
         userDefaults: UserDefaults = .standard,
         projectStore: ProjectFileStore? = nil
@@ -129,18 +135,14 @@ final class AppState {
         let projectStore = projectStore ?? ProjectFileStore()
         Self.migrateLegacyUserDefaultsIfNeeded(userDefaults, projectStore: projectStore)
         Self.migrateRetiredOpenAICompatibleDefaults(userDefaults)
+        ModelConnectionConfigurationStore.clearBundledCustomDefaultsIfNeeded(userDefaults)
         Self.migrateLegacyEmailScopeIfNeeded(userDefaults, projectStore: projectStore)
         Self.migrateAPIKeysToKeychainIfNeeded(userDefaults)
         self.userDefaults = userDefaults
         self.projectStore = projectStore
         let resolvedActiveAccount = Self.loadActiveAppleAccount(from: userDefaults)
         let resolvedStorageScope = resolvedActiveAccount?.userID
-        let resolvedProvider = ModelProvider(
-            rawValue: Self.stringValue(
-                forKey: StorageKey.selectedProvider,
-                userDefaults: userDefaults
-            ) ?? ""
-        ) ?? .openAICompatible
+        let resolvedProvider = ModelConnectionConfigurationStore.loadSelectedProvider(userDefaults: userDefaults)
         self.activeAccount = resolvedActiveAccount
         self.selectedProvider = resolvedProvider
         self.modelName = Self.loadModelName(for: resolvedProvider, userDefaults: userDefaults)
@@ -167,6 +169,7 @@ final class AppState {
             from: userDefaults,
             projectStore: projectStore
         ) ?? Self.defaultRecentProjects
+        self.writingSkills = Self.loadWritingSkills(from: userDefaults) ?? []
         self.connectionStatus = .idle
         self.validationMessage = Self.emptyConfigurationMessage
         self.activeProjectID = Self.stringValue(

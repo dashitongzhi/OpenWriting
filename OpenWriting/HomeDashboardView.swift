@@ -383,6 +383,13 @@ struct HomeDashboardView: View {
                 symbolName: "square.and.arrow.down",
                 action: presentWorldbuildingImport
             )
+
+            QuickActionRow(
+                title: "导入写作 Skill",
+                subtitle: "把文风、结构和修订策略整理成可启用的创作能力。",
+                symbolName: "wand.and.stars",
+                action: openLibraryWorkspace
+            )
         }
     }
 
@@ -613,9 +620,9 @@ struct HomeDashboardView: View {
                     )
 
                     homeMiniMetricCard(
-                        title: "设定资料",
+                        title: "创作资源",
                         value: "\(appState.totalReferenceDocumentCount) 份",
-                        detail: "补齐世界观与角色库",
+                        detail: "整理素材与写作 Skill",
                         symbolName: SidebarItem.library.symbolName,
                         action: openLibraryWorkspace
                     )
@@ -648,9 +655,9 @@ struct HomeDashboardView: View {
                         )
 
                         homeMiniMetricCard(
-                            title: "设定资料",
+                            title: "创作资源",
                             value: "\(appState.totalReferenceDocumentCount) 份",
-                            detail: "补齐世界观与角色库",
+                            detail: "整理素材与写作 Skill",
                             symbolName: SidebarItem.library.symbolName,
                             action: openLibraryWorkspace
                         )
@@ -873,7 +880,7 @@ struct HomeDashboardView: View {
                         .buttonStyle(.bordered)
                     Button("章节树", action: openOutlineWorkspace)
                         .buttonStyle(.bordered)
-                    Button("素材库", action: openLibraryWorkspace)
+                    Button("创作资源", action: openLibraryWorkspace)
                         .buttonStyle(.bordered)
                 }
 
@@ -882,7 +889,7 @@ struct HomeDashboardView: View {
                         .buttonStyle(.bordered)
                     Button("章节树", action: openOutlineWorkspace)
                         .buttonStyle(.bordered)
-                    Button("素材库", action: openLibraryWorkspace)
+                    Button("创作资源", action: openLibraryWorkspace)
                         .buttonStyle(.bordered)
                 }
             }
