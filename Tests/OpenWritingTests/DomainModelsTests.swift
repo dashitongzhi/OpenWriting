@@ -414,6 +414,34 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(list.overdueCount(currentChapter: 9), 1)
     }
 
+    func testStrandWeaveGapUsesChapterNumbers() {
+        var state = StrandWeaveState.empty
+        state.recordChapter(1, dominant: .fire)
+        state.recordChapter(12, dominant: .quest)
+
+        let warnings = state.checkRedLines(currentChapter: 12)
+
+        XCTAssertTrue(warnings.contains {
+            $0.strand == .fire && $0.message.contains("断档 11 章")
+        })
+    }
+
+    func testStrandWeaveWarnsWhenRatiosDrift() {
+        var state = StrandWeaveState.empty
+        for chapter in 1...10 {
+            state.recordChapter(chapter, dominant: .quest)
+        }
+
+        let warnings = state.checkRedLines(currentChapter: 10)
+
+        XCTAssertTrue(warnings.contains {
+            $0.strand == .quest && $0.message.contains("比例偏离目标")
+        })
+        XCTAssertTrue(warnings.contains {
+            $0.strand == .fire && $0.message.contains("比例偏离目标")
+        })
+    }
+
     private func completeReviewDimensionScores() -> [String: Int] {
         [
             "setting": 90,

@@ -475,7 +475,7 @@ struct StrandWeaveState: Codable, Hashable {
             ))
         }
 
-        let fireGap = gapSince(.fire)
+        let fireGap = gapSince(.fire, currentChapter: currentChapter)
         if fireGap >= fireMaxGap {
             warnings.append(PacingWarning(
                 strand: .fire,
@@ -484,13 +484,31 @@ struct StrandWeaveState: Codable, Hashable {
             ))
         }
 
-        let constellationGap = gapSince(.constellation)
+        let constellationGap = gapSince(.constellation, currentChapter: currentChapter)
         if constellationGap >= constellationMaxGap {
             warnings.append(PacingWarning(
                 strand: .constellation,
                 message: "世界观扩展已断档 \(constellationGap) 章，建议补充规则、势力或背景信息。",
                 isCritical: false
             ))
+        }
+
+        if entries.count >= 10 {
+            let currentRatios = ratios
+            for strand in StrandType.allCases {
+                let currentRatio = currentRatios[strand] ?? 0
+                let idealRatio = targetRatio(for: strand)
+                guard idealRatio > 0 else { continue }
+
+                let deviation = abs(currentRatio - idealRatio) / idealRatio
+                if deviation > 0.5 {
+                    warnings.append(PacingWarning(
+                        strand: strand,
+                        message: "\(strand.displayName)比例偏离目标（当前 \(Int(currentRatio * 100))%，目标 \(Int(idealRatio * 100))%），建议调整后续章节配比。",
+                        isCritical: false
+                    ))
+                }
+            }
         }
 
         return warnings
@@ -532,10 +550,26 @@ struct StrandWeaveState: Codable, Hashable {
         return count
     }
 
-    private func gapSince(_ strand: StrandType) -> Int {
-        guard let latestIndex = entries.lastIndex(where: { $0.dominant == strand }) else {
-            return entries.count
+    private func gapSince(_ strand: StrandType, currentChapter: Int) -> Int {
+        let safeCurrentChapter = max(currentChapter, 1)
+        let latestRecordedChapter = entries.map(\.chapterNumber).max() ?? safeCurrentChapter
+        let currentPosition = max(safeCurrentChapter, latestRecordedChapter)
+
+        guard let latest = entries.last(where: { $0.dominant == strand }) else {
+            guard let firstChapter = entries.map(\.chapterNumber).min() else { return 0 }
+            return max(0, currentPosition - firstChapter + 1)
         }
-        return max(0, entries.count - latestIndex - 1)
+        return max(0, currentPosition - latest.chapterNumber)
+    }
+
+    private func targetRatio(for strand: StrandType) -> Double {
+        switch strand {
+        case .quest:
+            return questTarget
+        case .fire:
+            return fireTarget
+        case .constellation:
+            return constellationTarget
+        }
     }
 }
