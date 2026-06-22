@@ -82,13 +82,19 @@ struct MemoryItem: Identifiable, Codable, Hashable {
     /// Deterministic dedup key based on category rules
     var dedupKey: String {
         switch category {
-        case .characterState, .relationship, .worldRule:
-            return "\(subject)|\(field)"
-        case .storyFact, .timeline:
-            return "\(subject)|\(field)|v\(sourceVolumeNumber)|c\(sourceChapter)"
+        case .characterState, .relationship, .worldRule, .storyFact:
+            return "\(Self.dedupComponent(subject))|\(Self.dedupComponent(field))"
+        case .timeline:
+            return "\(Self.dedupComponent(subject))|v\(sourceVolumeNumber)|c\(sourceChapter)"
         case .openLoop, .readerPromise:
-            return subject
+            return "\(Self.dedupComponent(subject))|\(Self.dedupComponent(field))"
         }
+    }
+
+    private static func dedupComponent(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
     }
 }
 
@@ -247,32 +253,40 @@ struct MemoryBuckets: Codable, Hashable {
 
     // MARK: - Upsert (Dedup + Status Transition)
 
-    /// Insert or update a memory item. If an existing active item shares the same
-    /// dedup key, demote it to `outdated` and insert the new one as `active`.
+    /// Insert or update a memory item. Matching active values are superseded;
+    /// conflicting active values are kept and the new item is marked contradicted.
     @discardableResult
     mutating func upsert(_ item: MemoryItem) -> Bool {
         var items = bucket(for: item.category)
         let targetKey = item.dedupKey
         var replaced = false
 
-        // Demote existing active items with the same dedup key
-        for i in items.indices {
-            if items[i].dedupKey == targetKey && items[i].id != item.id {
-                if items[i].status == .active {
-                    items[i].status = .outdated
-                    items[i].updatedAt = Date()
-                    replaced = true
-                }
+        if let idx = items.firstIndex(where: { $0.id == item.id }) {
+            items[idx] = item
+            setBucket(items, for: item.category)
+            return false
+        }
+
+        let activeMatchIndices = items.indices.filter {
+            items[$0].dedupKey == targetKey && items[$0].status == .active
+        }
+        let hasConflictingActiveValue = activeMatchIndices.contains {
+            items[$0].value.trimmingCharacters(in: .whitespacesAndNewlines)
+                != item.value.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        var itemToInsert = item
+        if hasConflictingActiveValue && item.status == .active {
+            itemToInsert.status = .contradicted
+        } else {
+            for i in activeMatchIndices {
+                items[i].status = .outdated
+                items[i].updatedAt = Date()
+                replaced = true
             }
         }
 
-        // Replace in-place if same id, otherwise append
-        if let idx = items.firstIndex(where: { $0.id == item.id }) {
-            items[idx] = item
-        } else {
-            items.append(item)
-        }
-
+        items.append(itemToInsert)
         setBucket(items, for: item.category)
         return replaced
     }
@@ -323,13 +337,16 @@ struct MemoryBuckets: Codable, Hashable {
 
     // MARK: - Conflict Detection
 
-    /// Returns categories where multiple active items share the same dedup key.
+    /// Returns categories where active items have unresolved contradictions.
     var conflicts: [(category: MemoryCategory, key: String, count: Int)] {
         MemoryCategory.allCases.flatMap { category in
-            let items = bucket(for: category).filter { $0.status == .active }
+            let items = bucket(for: category).filter { $0.status == .active || $0.status == .contradicted }
             let grouped = Dictionary(grouping: items, by: { $0.dedupKey })
             return grouped
-                .filter { $0.value.count > 1 }
+                .filter { group in
+                    group.value.contains { $0.status == .contradicted }
+                        || group.value.filter { $0.status == .active }.count > 1
+                }
                 .map { (category: category, key: $0.key, count: $0.value.count) }
         }
     }

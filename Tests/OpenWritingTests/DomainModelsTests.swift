@@ -69,7 +69,7 @@ final class DomainModelsTests: XCTestCase {
 
         AppState.migrateRetiredOpenAICompatibleDefaults(userDefaults)
 
-        XCTAssertEqual(AppState.loadSelectedProvider(userDefaults: userDefaults), .openAICompatible)
+        XCTAssertEqual(ModelConnectionConfigurationStore.loadSelectedProvider(userDefaults: userDefaults), .openAICompatible)
         XCTAssertEqual(userDefaults.string(forKey: AppState.StorageKey.selectedProvider), ModelProvider.openAICompatible.rawValue)
         XCTAssertEqual(userDefaults.string(forKey: AppState.StorageKey.baseURL), "https://openwriting.kralai.tech/api/model/v1")
         XCTAssertEqual(AppState.loadBaseURL(for: .openAICompatible, userDefaults: userDefaults), "https://openwriting.kralai.tech/api/model/v1")
@@ -349,6 +349,55 @@ final class DomainModelsTests: XCTestCase {
 
         XCTAssertTrue(issues.contains { $0.dimension == .pacing })
         XCTAssertTrue(issues.contains { $0.dimension == .readerPull })
+    }
+
+    func testMemoryBucketsMarksConflictingCharacterStateAsContradicted() {
+        var buckets = MemoryBuckets.empty
+        let first = MemoryItem(
+            category: .characterState,
+            subject: "林照",
+            field: "境界",
+            value: "筑基初期",
+            sourceChapter: 10
+        )
+        let second = MemoryItem(
+            category: .characterState,
+            subject: "林照",
+            field: "境界",
+            value: "金丹后期",
+            sourceChapter: 11
+        )
+
+        XCTAssertFalse(buckets.upsert(first))
+        XCTAssertFalse(buckets.upsert(second))
+
+        XCTAssertEqual(buckets.characterState.filter { $0.status == .active }.count, 1)
+        XCTAssertEqual(buckets.characterState.filter { $0.status == .contradicted }.count, 1)
+        XCTAssertEqual(buckets.conflicts.count, 1)
+    }
+
+    func testMemoryBucketsKeepsDistinctOpenLoopsForSameSubject() {
+        var buckets = MemoryBuckets.empty
+        let swordShadow = MemoryItem(
+            category: .openLoop,
+            subject: "林照",
+            field: "神秘剑影",
+            value: "林照梦中反复出现断剑影子",
+            sourceChapter: 3
+        )
+        let bloodlineSecret = MemoryItem(
+            category: .openLoop,
+            subject: "林照",
+            field: "血脉秘密",
+            value: "林照伤口在月下显出银色纹路",
+            sourceChapter: 4
+        )
+
+        XCTAssertFalse(buckets.upsert(swordShadow))
+        XCTAssertFalse(buckets.upsert(bloodlineSecret))
+
+        XCTAssertEqual(buckets.openLoops.filter { $0.status == .active }.count, 2)
+        XCTAssertEqual(Set(buckets.openLoops.map(\.dedupKey)).count, 2)
     }
 
     private func completeReviewDimensionScores() -> [String: Int] {
