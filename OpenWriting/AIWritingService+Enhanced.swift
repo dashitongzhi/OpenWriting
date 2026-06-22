@@ -632,26 +632,7 @@ extension AIWritingService {
 
     /// Analyze the dominant strand type of the written text.
     private static func analyzeStrandType(text: String, project: NovelProject) -> StrandType {
-        let textLower = text.lowercased()
-
-        // Fire strand indicators
-        let fireKeywords = ["心动", "喜欢", "爱", "拥抱", "亲吻", "脸红", "心跳",
-                           "思念", "吃醋", "告白", "约会", "暧昧", "温柔", "甜蜜"]
-        let fireCount = fireKeywords.filter { textLower.contains($0) }.count
-
-        // Constellation strand indicators
-        let constKeywords = ["势力", "家族", "宗门", "王国", "帝国", "联盟", "规则",
-                            "体系", "境界", "历史", "传说", "地图", "大陆", "世界"]
-        let constCount = constKeywords.filter { textLower.contains($0) }.count
-
-        // Default to quest
-        if fireCount >= 3 && fireCount > constCount {
-            return .fire
-        }
-        if constCount >= 3 && constCount > fireCount {
-            return .constellation
-        }
-        return .quest
+        StrandKeywordClassifier.dominantStrand(in: text)
     }
 
     private static func reviewCandidate(

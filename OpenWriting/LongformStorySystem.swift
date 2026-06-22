@@ -1889,17 +1889,7 @@ enum LongformStorySystem {
     }
 
     private static func dominantThreadType(from text: String, fallback: StrandType) -> ThreadType {
-        let fireKeywords = ["心动", "喜欢", "爱", "拥抱", "亲吻", "脸红", "心跳", "思念", "吃醋", "告白", "暧昧"]
-        let constellationKeywords = ["势力", "家族", "宗门", "王国", "帝国", "规则", "体系", "境界", "历史", "大陆", "世界"]
-        let fireCount = fireKeywords.filter { text.contains($0) }.count
-        let constellationCount = constellationKeywords.filter { text.contains($0) }.count
-        if fireCount >= 3 && fireCount > constellationCount {
-            return .fire
-        }
-        if constellationCount >= 3 && constellationCount > fireCount {
-            return .constellation
-        }
-        switch fallback {
+        switch StrandKeywordClassifier.dominantStrand(in: text, fallback: fallback) {
         case .fire:
             return .fire
         case .constellation:

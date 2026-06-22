@@ -35,6 +35,38 @@ enum StrandType: String, Codable, CaseIterable {
     }
 }
 
+enum StrandKeywordClassifier {
+    private static let fireKeywords = [
+        "心动", "喜欢", "拥抱", "亲吻", "脸红", "心跳",
+        "思念", "吃醋", "告白", "约会", "暧昧", "温柔", "甜蜜",
+        "爱慕", "相爱", "恋爱", "深爱", "爱意", "爱人", "所爱", "挚爱", "疼爱"
+    ]
+    private static let constellationKeywords = [
+        "势力", "家族", "宗门", "王国", "帝国", "联盟", "规则",
+        "体系", "境界", "历史", "传说", "地图", "大陆", "世界"
+    ]
+
+    static func dominantStrand(in text: String, fallback: StrandType = .quest) -> StrandType {
+        let normalizedText = text.lowercased()
+        let fireCount = keywordScore(in: normalizedText, keywords: fireKeywords)
+        let constellationCount = keywordScore(in: normalizedText, keywords: constellationKeywords)
+
+        if fireCount >= 3 && fireCount > constellationCount {
+            return .fire
+        }
+        if constellationCount >= 3 && constellationCount > fireCount {
+            return .constellation
+        }
+        return fallback
+    }
+
+    private static func keywordScore(in text: String, keywords: [String]) -> Int {
+        keywords.reduce(0) { score, keyword in
+            text.contains(keyword.lowercased()) ? score + 1 : score
+        }
+    }
+}
+
 /// 章节 Strand 记录
 struct ChapterStrandRecord: Codable, Identifiable {
     let id: UUID

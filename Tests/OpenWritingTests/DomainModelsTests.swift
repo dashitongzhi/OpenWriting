@@ -559,6 +559,18 @@ final class DomainModelsTests: XCTestCase {
         })
     }
 
+    func testStrandKeywordClassifierDoesNotTreatSingleAiAsFire() {
+        let text = "林照热爱修炼，也爱研究古阵。他喜欢在夜里推演剑诀，但本章主要推进宗门试炼。"
+
+        XCTAssertEqual(StrandKeywordClassifier.dominantStrand(in: text), .quest)
+    }
+
+    func testStrandKeywordClassifierDetectsRelationshipArc() {
+        let text = "她脸红着告白，两人相爱后仍克制拥抱，心跳声在雨夜里格外清晰。"
+
+        XCTAssertEqual(StrandKeywordClassifier.dominantStrand(in: text), .fire)
+    }
+
     func testContextRankerCapsCJKEntityExtraction() {
         let longText = String(repeating: "林照回到灵脉深处继续追查真相", count: 200)
 
