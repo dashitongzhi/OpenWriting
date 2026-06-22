@@ -7,24 +7,15 @@ import Foundation
 
 extension NovelProject {
 
-    // MARK: - In-Memory Cache (avoids repeated JSON decoding on every property access)
-
-    private static let cacheLock = NSLock()
-    private static var memoryBucketsCache: [String: MemoryBuckets] = [:]
-    private static var strandWeaveCache: [String: StrandWeaveState] = [:]
-    private static var antiPatternsCache: [String: [String]] = [:]
-    private static var lastReviewCache: [String: ChapterReviewResult?] = [:]
-    private static var lastReviewCacheLoaded: Set<String> = []
-
-    /// Clear all cached data for a given project ID (called on project deletion).
+    /// Clear legacy integration data for a given project ID (called on project deletion).
     static func clearIntegrationCache(for projectID: String) {
-        cacheLock.lock()
-        defer { cacheLock.unlock() }
-        memoryBucketsCache.removeValue(forKey: projectID)
-        strandWeaveCache.removeValue(forKey: projectID)
-        antiPatternsCache.removeValue(forKey: projectID)
-        lastReviewCache.removeValue(forKey: projectID)
-        lastReviewCacheLoaded.remove(projectID)
+        let defaults = UserDefaults.standard
+        [
+            "memoryBuckets_\(projectID)",
+            "strandWeave_\(projectID)",
+            "lastReview_\(projectID)",
+            "antiPatterns_\(projectID)"
+        ].forEach { defaults.removeObject(forKey: $0) }
     }
 
     // MARK: - Memory Buckets

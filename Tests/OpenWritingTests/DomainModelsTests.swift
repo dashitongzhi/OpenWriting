@@ -502,6 +502,22 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertFalse(entities.isEmpty)
     }
 
+    func testClearIntegrationCacheRemovesLegacyDefaults() {
+        let projectID = "integration-cache-test-\(UUID().uuidString)"
+        let defaults = UserDefaults.standard
+        let keys = [
+            "memoryBuckets_\(projectID)",
+            "strandWeave_\(projectID)",
+            "lastReview_\(projectID)",
+            "antiPatterns_\(projectID)"
+        ]
+        keys.forEach { defaults.set(Data("legacy".utf8), forKey: $0) }
+
+        NovelProject.clearIntegrationCache(for: projectID)
+
+        keys.forEach { XCTAssertNil(defaults.object(forKey: $0)) }
+    }
+
     private func completeReviewDimensionScores() -> [String: Int] {
         [
             "setting": 90,
