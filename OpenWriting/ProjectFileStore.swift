@@ -482,7 +482,7 @@ struct ProjectFileStore {
             let projectURL = projectMetadataURL(for: projectID, scope: scope)
             guard let projectData = try? Data(contentsOf: projectURL),
                   var project = try? decoder.decode(NovelProject.self, from: projectData)
-            else { return nil }
+            else { continue }
 
             project.chapterCatalog = loadChapterMetadata(for: projectID, scope: scope)
             project.chapterDrafts = []
@@ -544,12 +544,12 @@ struct ProjectFileStore {
         let projectsDirectory = scopeURL.appendingPathComponent("projects", isDirectory: true)
         try fileManager.createDirectory(at: projectsDirectory, withIntermediateDirectories: true)
 
-        let index = ProjectIndex(version: 2, projectIDs: projects.map(\.id))
-        try writeIfChanged(try encoder.encode(index), to: projectIndexURL(for: scope))
-
         for project in projects {
             try saveProject(project, scope: scope)
         }
+
+        let index = ProjectIndex(version: 2, projectIDs: projects.map(\.id))
+        try writeIfChanged(try encoder.encode(index), to: projectIndexURL(for: scope))
 
         try removeDeletedProjectDirectories(keeping: Set(projects.map(\.id)), scope: scope)
         let legacyURL = projectsFileURL(for: scope)
