@@ -493,6 +493,15 @@ final class DomainModelsTests: XCTestCase {
         })
     }
 
+    func testContextRankerCapsCJKEntityExtraction() {
+        let longText = String(repeating: "林照回到灵脉深处继续追查真相", count: 200)
+
+        let entities = ContextRanker.extractEntities(from: longText)
+
+        XCTAssertLessThanOrEqual(entities.count, 256)
+        XCTAssertFalse(entities.isEmpty)
+    }
+
     private func completeReviewDimensionScores() -> [String: Int] {
         [
             "setting": 90,

@@ -46,6 +46,8 @@ struct ContextRanker {
     private static let recencyWeight: Double       = 0.30
     private static let entityOverlapWeight: Double  = 0.40
     private static let signalStrengthWeight: Double = 0.30
+    private static let maxExtractedEntities = 256
+    private static let maxWindowsPerRun = 48
 
     // MARK: - Public API
 
@@ -188,6 +190,9 @@ struct ContextRanker {
         var buffer = [Unicode.Scalar]()
 
         for scalar in text.unicodeScalars {
+            if entities.count >= maxExtractedEntities {
+                break
+            }
             if isCJK(scalar) {
                 buffer.append(scalar)
             } else {
@@ -212,9 +217,17 @@ struct ContextRanker {
             entities.insert(full)
         }
         if buffer.count >= 4 {
-            for i in 0...(buffer.count - 2) {
+            let maxStartIndex = buffer.count - 2
+            let step = max(1, maxStartIndex / maxWindowsPerRun)
+            var emittedWindows = 0
+            var i = 0
+            while i <= maxStartIndex
+                && emittedWindows < maxWindowsPerRun
+                && entities.count < maxExtractedEntities {
                 let bigram = String(buffer[i]) + String(buffer[i + 1])
                 entities.insert(bigram)
+                emittedWindows += 1
+                i += step
             }
         }
         buffer.removeAll()
