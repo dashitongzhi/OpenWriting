@@ -76,7 +76,7 @@ final class ProjectExportServiceTests: XCTestCase {
             referenceDocuments: []
         )
 
-        try ProjectExportService.exportProject(project, to: testDirectory)
+        _ = try ProjectExportService.exportProject(project, to: testDirectory)
         try FileManager.default.removeItem(at: testDirectory.appendingPathComponent("full-book.md"))
 
         XCTAssertThrowsError(try ProjectExportService.validateExport(at: testDirectory)) { error in
@@ -86,5 +86,62 @@ final class ProjectExportServiceTests: XCTestCase {
             }
             XCTAssertTrue(missingFiles.contains("full-book.md"))
         }
+    }
+
+    func testEPUBMimetypeIsFirstStoredEntry() throws {
+        let chapter = ChapterDraft(
+            volumeNumber: 1,
+            chapterNumber: 1,
+            chapterTitle: "第一章",
+            content: "第一章正文。"
+        )
+        let project = NovelProject(
+            id: "epub-mimetype-test",
+            title: "EPUB 测试",
+            genre: "玄幻",
+            summary: "测试 EPUB mimetype",
+            updatedAt: "2026-06-22",
+            currentChapterTitle: "第一章",
+            currentChapterNumber: 1,
+            writtenChapters: 1,
+            chapterFocus: "开篇",
+            draftText: "",
+            outlineText: "",
+            referenceContextText: "",
+            specialRequirements: "",
+            wordTargetText: "",
+            continuityNotes: "",
+            referenceDocuments: [],
+            chapterDrafts: [chapter]
+        )
+
+        _ = try ProjectExportService.exportProject(project, to: testDirectory)
+        let epubData = try Data(contentsOf: testDirectory.appendingPathComponent("full-book.epub"))
+
+        XCTAssertEqual(littleEndianUInt32(in: epubData, at: 0), 0x04034b50)
+        XCTAssertEqual(littleEndianUInt16(in: epubData, at: 8), 0)
+
+        let nameLength = Int(littleEndianUInt16(in: epubData, at: 26))
+        let extraLength = Int(littleEndianUInt16(in: epubData, at: 28))
+        let nameStart = 30
+        let nameEnd = nameStart + nameLength
+        let contentStart = nameEnd + extraLength
+        let contentEnd = contentStart + Int(littleEndianUInt32(in: epubData, at: 18))
+
+        let firstName = String(data: epubData.subdata(in: nameStart..<nameEnd), encoding: .utf8)
+        let firstContent = String(data: epubData.subdata(in: contentStart..<contentEnd), encoding: .utf8)
+        XCTAssertEqual(firstName, "mimetype")
+        XCTAssertEqual(firstContent, "application/epub+zip")
+    }
+
+    private func littleEndianUInt16(in data: Data, at offset: Int) -> UInt16 {
+        UInt16(data[offset]) | (UInt16(data[offset + 1]) << 8)
+    }
+
+    private func littleEndianUInt32(in data: Data, at offset: Int) -> UInt32 {
+        UInt32(data[offset])
+            | (UInt32(data[offset + 1]) << 8)
+            | (UInt32(data[offset + 2]) << 16)
+            | (UInt32(data[offset + 3]) << 24)
     }
 }

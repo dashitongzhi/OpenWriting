@@ -305,7 +305,7 @@ private enum DOCXExporter {
 private enum EPUBExporter {
     static func data(for project: NovelProject, chapters: [ChapterDraft]) throws -> Data {
         var archive = ZipArchiveBuilder()
-        archive.add("mimetype", text: "application/epub+zip")
+        archive.addStored("mimetype", text: "application/epub+zip")
         archive.add("META-INF/container.xml", text: """
         <?xml version="1.0" encoding="UTF-8"?>
         <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
@@ -390,15 +390,24 @@ private enum EPUBExporter {
 }
 
 private struct ZipArchiveBuilder {
+    private enum CompressionMethod: UInt16 {
+        case stored = 0
+    }
+
     private struct Entry {
         var path: String
         var data: Data
+        var compressionMethod: CompressionMethod
     }
 
     private var entries: [Entry] = []
 
     mutating func add(_ path: String, text: String) {
-        entries.append(Entry(path: path, data: Data(text.utf8)))
+        addStored(path, text: text)
+    }
+
+    mutating func addStored(_ path: String, text: String) {
+        entries.append(Entry(path: path, data: Data(text.utf8), compressionMethod: .stored))
     }
 
     func data() throws -> Data {
@@ -414,7 +423,7 @@ private struct ZipArchiveBuilder {
             output.appendUInt32(0x04034b50)
             output.appendUInt16(20)
             output.appendUInt16(0x0800)
-            output.appendUInt16(0)
+            output.appendUInt16(entry.compressionMethod.rawValue)
             output.appendUInt16(0)
             output.appendUInt16(0)
             output.appendUInt32(checksum)
@@ -429,7 +438,7 @@ private struct ZipArchiveBuilder {
             centralDirectory.appendUInt16(20)
             centralDirectory.appendUInt16(20)
             centralDirectory.appendUInt16(0x0800)
-            centralDirectory.appendUInt16(0)
+            centralDirectory.appendUInt16(entry.compressionMethod.rawValue)
             centralDirectory.appendUInt16(0)
             centralDirectory.appendUInt16(0)
             centralDirectory.appendUInt32(checksum)
