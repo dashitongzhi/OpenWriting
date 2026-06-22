@@ -1550,25 +1550,34 @@ enum LongformStorySystem {
 
             let isResolved = title.contains("已回收")
                 || title.contains("已解决")
+                || title.contains("已完成")
+                || title.contains("已兑现")
                 || title.contains("兑现")
                 || title.localizedCaseInsensitiveContains("resolved")
                 || title.localizedCaseInsensitiveContains("paid_off")
 
-            if isResolved,
-               let existingIndex = project.foreshadowList.entries.firstIndex(where: { title.contains($0.title) || $0.title.contains(title) }) {
-                let existing = project.foreshadowList.entries[existingIndex]
-                project.foreshadowList.resolveForeshadow(id: existing.id, at: commit.chapterNumber)
-                if let resolvedIndex = project.foreshadowList.entries.firstIndex(where: { $0.id == existing.id }) {
-                    let existingNotes = project.foreshadowList.entries[resolvedIndex].notes
-                    project.foreshadowList.entries[resolvedIndex].notes = [existingNotes, projectionMarker]
-                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                        .filter { !$0.isEmpty }
-                        .joined(separator: "\n")
+            if isResolved {
+                let resolutionKeys = [title, item.subject, item.field]
+                    .map { normalizedForeshadowKey($0, removingResolutionMarkers: true) }
+                    .filter { !$0.isEmpty }
+                if let existingIndex = project.foreshadowList.entries.firstIndex(where: {
+                    resolutionKeys.contains(normalizedForeshadowKey($0.title))
+                }) {
+                    let existing = project.foreshadowList.entries[existingIndex]
+                    project.foreshadowList.resolveForeshadow(id: existing.id, at: commit.chapterNumber)
+                    if let resolvedIndex = project.foreshadowList.entries.firstIndex(where: { $0.id == existing.id }) {
+                        let existingNotes = project.foreshadowList.entries[resolvedIndex].notes
+                        project.foreshadowList.entries[resolvedIndex].notes = [existingNotes, projectionMarker]
+                            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                            .filter { !$0.isEmpty }
+                            .joined(separator: "\n")
+                    }
                 }
                 continue
             }
 
-            if project.foreshadowList.entries.contains(where: { $0.title == title }) {
+            let normalizedTitle = normalizedForeshadowKey(title)
+            if project.foreshadowList.entries.contains(where: { normalizedForeshadowKey($0.title) == normalizedTitle }) {
                 continue
             }
 
@@ -1589,6 +1598,28 @@ enum LongformStorySystem {
             )
         }
         project.foreshadowList.pruneResolved()
+    }
+
+    private static func normalizedForeshadowKey(
+        _ value: String,
+        removingResolutionMarkers: Bool = false
+    ) -> String {
+        var normalized = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if removingResolutionMarkers {
+            for marker in ["已回收", "已解决", "已完成", "已兑现", "兑现", "resolved", "paid_off", "closed", "done"] {
+                normalized = normalized.replacingOccurrences(of: marker, with: "")
+            }
+        }
+        let separators = CharacterSet.whitespacesAndNewlines
+            .union(.punctuationCharacters)
+            .union(.symbols)
+        return normalized
+            .unicodeScalars
+            .filter { !separators.contains($0) }
+            .map(String.init)
+            .joined()
     }
 
     private static func applyThreadProgress(from commit: LongformChapterCommit, to project: inout NovelProject) {

@@ -1030,8 +1030,14 @@ struct ForeshadowEntry: Codable, Identifiable, Hashable {
 
     /// 检查伏笔是否超时（超过预期章节仍未回收）
     var isOverdue: Bool {
+        status == .overdue
+    }
+
+    func isOverdue(at currentChapter: Int) -> Bool {
         guard let expected = expectedResolutionChapter else { return false }
-        return status != .resolved && lastAdvancedChapter > expected
+        return status != .resolved
+            && status != .retconned
+            && currentChapter > expected
     }
 
     /// 伏笔活跃天数
@@ -1119,6 +1125,10 @@ struct ForeshadowList: Codable, Hashable {
         entries.filter { $0.isOverdue }
     }
 
+    func overdueEntries(currentChapter: Int) -> [ForeshadowEntry] {
+        entries.filter { $0.isOverdue(at: currentChapter) }
+    }
+
     func entries(forVolume volume: Int) -> [ForeshadowEntry] {
         entries.filter { $0.volumeNumber == volume }
     }
@@ -1133,6 +1143,10 @@ struct ForeshadowList: Codable, Hashable {
     var activeCount: Int { activeEntries.count }
     var resolvedCount: Int { resolvedEntries.count }
     var overdueCount: Int { overdueEntries.count }
+
+    func overdueCount(currentChapter: Int) -> Int {
+        overdueEntries(currentChapter: currentChapter).count
+    }
 
     var resolutionRate: Double {
         guard totalCount > 0 else { return 0 }
@@ -1987,7 +2001,7 @@ struct NovelProject: Identifiable, Codable {
     }
 
     var foreshadowListOverdueCount: Int {
-        foreshadowList.overdueCount
+        foreshadowList.overdueCount(currentChapter: currentChapterNumber)
     }
 
     var foreshadowListResolutionRate: String {

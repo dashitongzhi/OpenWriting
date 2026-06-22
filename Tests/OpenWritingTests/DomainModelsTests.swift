@@ -400,6 +400,20 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(Set(buckets.openLoops.map(\.dedupKey)).count, 2)
     }
 
+    func testForeshadowOverdueUsesCurrentChapter() {
+        let entry = ForeshadowEntry(
+            title: "断剑来历",
+            firstChapter: 3,
+            lastAdvancedChapter: 3,
+            expectedResolutionChapter: 8
+        )
+        let list = ForeshadowList(entries: [entry])
+
+        XCTAssertFalse(entry.isOverdue)
+        XCTAssertTrue(entry.isOverdue(at: 9))
+        XCTAssertEqual(list.overdueCount(currentChapter: 9), 1)
+    }
+
     private func completeReviewDimensionScores() -> [String: Int] {
         [
             "setting": 90,
