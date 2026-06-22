@@ -400,6 +400,57 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(Set(buckets.openLoops.map(\.dedupKey)).count, 2)
     }
 
+    func testMemoryManagerMarksConflictingActiveItemAsContradicted() {
+        let manager = MemoryManager()
+        let first = MemoryManagerItem(
+            bucket: .characterState,
+            subject: "林照",
+            field: "境界",
+            value: "筑基初期",
+            sourceChapter: 10
+        )
+        let second = MemoryManagerItem(
+            bucket: .characterState,
+            subject: "林照",
+            field: "境界",
+            value: "金丹后期",
+            sourceChapter: 11
+        )
+
+        manager.upsertItem(first)
+        manager.upsertItem(second)
+
+        XCTAssertEqual(manager.memoryPack.semanticMemory.allActiveItems.count, 1)
+        XCTAssertEqual(manager.memoryPack.semanticMemory.contradictedItems.count, 1)
+        XCTAssertEqual(manager.stats.contradictedItems, 1)
+    }
+
+    func testMemoryManagerDoesNotDuplicateSameActiveValue() {
+        let manager = MemoryManager()
+        let first = MemoryManagerItem(
+            bucket: .worldRules,
+            subject: "灵脉",
+            field: "限制",
+            value: "夜间潮汐增强",
+            sourceChapter: 1,
+            evidence: "第一章"
+        )
+        let second = MemoryManagerItem(
+            bucket: .worldRules,
+            subject: "灵脉",
+            field: "限制",
+            value: "夜间潮汐增强",
+            sourceChapter: 2,
+            evidence: "第二章"
+        )
+
+        manager.upsertItem(first)
+        manager.upsertItem(second)
+
+        XCTAssertEqual(manager.memoryPack.semanticMemory.items.count, 1)
+        XCTAssertEqual(manager.memoryPack.semanticMemory.allActiveItems.first?.evidence, "第二章")
+    }
+
     func testForeshadowOverdueUsesCurrentChapter() {
         let entry = ForeshadowEntry(
             title: "断剑来历",

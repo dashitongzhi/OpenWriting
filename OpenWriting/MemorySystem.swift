@@ -228,27 +228,26 @@ class MemoryManager: ObservableObject {
     /// 插入或更新记忆项（去重 + 状态管理）
     func upsertItem(_ newItem: MemoryManagerItem) {
         let key = newItem.deduplicationKey
-        
-        // 查找已有的同 key 活跃项
-        if let existingIndex = memoryPack.semanticMemory.items.firstIndex(where: {
-            $0.deduplicationKey == key && $0.status == .active
-        }) {
-            // 旧值降级为 outdated
-            memoryPack.semanticMemory.items[existingIndex].status = .outdated
-            memoryPack.semanticMemory.items[existingIndex].updatedAt = Date()
+
+        let activeIndexes = memoryPack.semanticMemory.items.indices.filter {
+            memoryPack.semanticMemory.items[$0].deduplicationKey == key
+                && memoryPack.semanticMemory.items[$0].status == .active
         }
-        
-        // 检查是否与现有值矛盾
-        let conflicting = memoryPack.semanticMemory.items.filter {
-            $0.deduplicationKey == key && $0.status == .active && $0.value != newItem.value
-        }
-        if !conflicting.isEmpty {
+
+        if activeIndexes.contains(where: { memoryPack.semanticMemory.items[$0].value != newItem.value }) {
             var contradictedItem = newItem
             contradictedItem.status = .contradicted
             memoryPack.semanticMemory.items.append(contradictedItem)
-        } else {
-            memoryPack.semanticMemory.items.append(newItem)
+            return
         }
+
+        if let existingIndex = activeIndexes.first {
+            memoryPack.semanticMemory.items[existingIndex].evidence = newItem.evidence
+            memoryPack.semanticMemory.items[existingIndex].updatedAt = Date()
+            return
+        }
+
+        memoryPack.semanticMemory.items.append(newItem)
     }
     
     /// 从章节提交结果创建记忆项
