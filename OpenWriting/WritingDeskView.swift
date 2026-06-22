@@ -2136,6 +2136,7 @@ struct WritingDeskView: View {
         }
 
         let instruction = draftPolishInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        let promptProject = appState.projectWithActiveWritingSkills(latestProject)
         isGenerating = true
         activeDraftPolishMode = .full
         pendingDraftPolishReview = nil
@@ -2146,6 +2147,7 @@ struct WritingDeskView: View {
             do {
                 let polishedDraft = try await AIWritingService.polishFullDraft(
                     configuration: configuration,
+                    project: promptProject,
                     draft: trimmedDraft,
                     instruction: instruction
                 )
@@ -2213,6 +2215,7 @@ struct WritingDeskView: View {
         }
 
         let latestProject = appState.project(for: project.id) ?? project
+        let promptProject = appState.projectWithActiveWritingSkills(latestProject)
         let instruction = selectionPolishInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
         let selectionContext = selectionPolishContext(in: latestProject.draftText, selection: currentSelection.range)
         let reviewAnchorPoint = selectionPolishAnchorPoint ?? draftSelectionActionPoint
@@ -2226,6 +2229,7 @@ struct WritingDeskView: View {
             do {
                 let polishedSelection = try await AIWritingService.polishSelection(
                     configuration: configuration,
+                    project: promptProject,
                     selectedText: currentSelection.text,
                     instruction: instruction,
                     fullDraft: latestProject.draftText,
@@ -2320,15 +2324,16 @@ struct WritingDeskView: View {
             }
 
             let saveContext = chapterSaveValidationContext(for: latestProject)
+            let reviewProject = appState.projectWithActiveWritingSkills(latestProject)
             isSavingChapter = true
             aiStatusMessage = "长篇章节保存前正在运行质量审查，只有通过后才会收录进已保存章节…"
 
             Task {
                 do {
                     let review = try await ChapterQualityReviewer.reviewChapter(
-                        project: latestProject,
+                        project: reviewProject,
                         chapterDraft: trimmedDraft,
-                        memoryContext: latestProject.enhancedMemoryContext,
+                        memoryContext: reviewProject.enhancedMemoryContext,
                         configuration: configuration
                     )
 
@@ -2932,6 +2937,7 @@ struct WritingDeskView: View {
 
         Task {
             let latestProject = appState.project(for: project.id) ?? baselineProject
+            let latestReviewProject = appState.projectWithActiveWritingSkills(latestProject)
 
             async let globalMemoryTask: Result<String, Error> = {
                 do {
@@ -2964,9 +2970,9 @@ struct WritingDeskView: View {
 
                 do {
                     return .success(try await ChapterQualityReviewer.reviewChapter(
-                        project: latestProject,
+                        project: latestReviewProject,
                         chapterDraft: chapterDraft.content,
-                        memoryContext: latestProject.enhancedMemoryContext,
+                        memoryContext: latestReviewProject.enhancedMemoryContext,
                         configuration: configuration
                     ))
                 } catch {

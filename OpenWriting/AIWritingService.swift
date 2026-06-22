@@ -206,13 +206,18 @@ enum AIWritingService {
 
     static func polishFullDraft(
         configuration: AIConnectionConfiguration,
+        project: NovelProject,
         draft: String,
         instruction: String
     ) async throws -> String {
         try await completeText(
             configuration: configuration,
             systemPrompt: draftPolishSystemPrompt,
-            userPrompt: fullDraftPolishUserPrompt(draft: draft, instruction: instruction),
+            userPrompt: fullDraftPolishUserPrompt(
+                project: project,
+                draft: draft,
+                instruction: instruction
+            ),
             temperature: 0.45,
             maxTokens: max(1_600, min(6_000, draft.count + 800))
         )
@@ -220,6 +225,7 @@ enum AIWritingService {
 
     static func polishSelection(
         configuration: AIConnectionConfiguration,
+        project: NovelProject,
         selectedText: String,
         instruction: String,
         fullDraft: String,
@@ -230,6 +236,7 @@ enum AIWritingService {
             configuration: configuration,
             systemPrompt: selectionPolishSystemPrompt,
             userPrompt: selectionPolishUserPrompt(
+                project: project,
                 selectedText: selectedText,
                 instruction: instruction,
                 fullDraft: fullDraft,
@@ -334,24 +341,41 @@ enum AIWritingService {
         temperature: Double,
         maxTokens: Int
     ) async throws -> String {
-        switch configuration.apiFormat {
-        case .openAIChatCompletions:
-            return try await completeOpenAIText(
-                configuration: configuration,
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                temperature: temperature,
-                maxTokens: maxTokens
-            )
-        case .anthropicMessages:
-            return try await completeAnthropicText(
-                configuration: configuration,
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                temperature: temperature,
-                maxTokens: maxTokens
-            )
+        let maxAttempts = 3
+        var lastError: Error?
+
+        for attempt in 1...maxAttempts {
+            do {
+                switch configuration.apiFormat {
+                case .openAIChatCompletions:
+                    return try await completeOpenAIText(
+                        configuration: configuration,
+                        systemPrompt: systemPrompt,
+                        userPrompt: userPrompt,
+                        temperature: temperature,
+                        maxTokens: maxTokens
+                    )
+                case .anthropicMessages:
+                    return try await completeAnthropicText(
+                        configuration: configuration,
+                        systemPrompt: systemPrompt,
+                        userPrompt: userPrompt,
+                        temperature: temperature,
+                        maxTokens: maxTokens
+                    )
+                }
+            } catch let error as CancellationError {
+                throw error
+            } catch {
+                lastError = error
+                guard attempt < maxAttempts, shouldRetryCompletion(after: error) else {
+                    throw error
+                }
+                try await Task.sleep(for: .milliseconds(retryDelayMilliseconds(forAttempt: attempt)))
+            }
         }
+
+        throw lastError ?? AIWritingError.emptyResult
     }
 
     private static func completeOpenAIText(
@@ -388,8 +412,7 @@ enum AIWritingService {
         }
 
         guard (200 ..< 300).contains(httpResponse.statusCode) else {
-            let message = String(data: data, encoding: .utf8) ?? "未知错误"
-            throw AIWritingError.serverError(message)
+            throw serverError(statusCode: httpResponse.statusCode, data: data)
         }
 
         let decoded = try JSONDecoder().decode(ChatCompletionsResponse.self, from: data)
@@ -437,8 +460,7 @@ enum AIWritingService {
         }
 
         guard (200 ..< 300).contains(httpResponse.statusCode) else {
-            let message = String(data: data, encoding: .utf8) ?? "未知错误"
-            throw AIWritingError.serverError(message)
+            throw serverError(statusCode: httpResponse.statusCode, data: data)
         }
 
         let decoded = try JSONDecoder().decode(AnthropicMessagesResponse.self, from: data)
@@ -456,6 +478,72 @@ enum AIWritingService {
         }
 
         return text
+    }
+
+    private static func shouldRetryCompletion(after error: Error) -> Bool {
+        if let aiError = error as? AIWritingError {
+            switch aiError {
+            case .rateLimited, .transientServerError:
+                return true
+            case .invalidResponse, .serverError, .emptyResult:
+                return false
+            }
+        }
+
+        guard let urlError = error as? URLError else {
+            return false
+        }
+        switch urlError.code {
+        case .timedOut,
+             .cannotFindHost,
+             .cannotConnectToHost,
+             .dnsLookupFailed,
+             .networkConnectionLost,
+             .notConnectedToInternet,
+             .internationalRoamingOff,
+             .callIsActive,
+             .dataNotAllowed:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func retryDelayMilliseconds(forAttempt attempt: Int) -> Int {
+        min(4_000, 500 * (1 << max(0, attempt - 1)))
+    }
+
+    private static func serverError(statusCode: Int, data: Data) -> AIWritingError {
+        let message = sanitizedServerErrorMessage(from: data)
+        if statusCode == 429 {
+            return .rateLimited(message)
+        }
+        if statusCode == 408 || (500...599).contains(statusCode) {
+            return .transientServerError(statusCode: statusCode, message: message)
+        }
+        return .serverError("HTTP \(statusCode)：\(message)")
+    }
+
+    private static func sanitizedServerErrorMessage(from data: Data) -> String {
+        let rawMessage = String(data: data, encoding: .utf8) ?? "未知错误"
+        let redactedMessage = rawMessage
+            .replacingOccurrences(
+                of: #"(?i)(bearer\s+)[a-z0-9._\-]+"#,
+                with: "$1[redacted]",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"(?i)(api[_-]?key["'\s:=]+)[^"',\s}]+"#,
+                with: "$1[redacted]",
+                options: .regularExpression
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !redactedMessage.isEmpty else { return "未知错误" }
+        if redactedMessage.count <= 600 {
+            return redactedMessage
+        }
+        return "\(redactedMessage.prefix(600))…"
     }
 
     // MARK: - BM25 Scorer
@@ -834,6 +922,8 @@ enum AIWritingService {
 enum AIWritingError: LocalizedError {
     case invalidResponse
     case serverError(String)
+    case rateLimited(String)
+    case transientServerError(statusCode: Int, message: String)
     case emptyResult
 
     var errorDescription: String? {
@@ -842,6 +932,10 @@ enum AIWritingError: LocalizedError {
             return "AI 服务返回了无效响应。"
         case let .serverError(message):
             return "AI 服务调用失败：\(message)"
+        case let .rateLimited(message):
+            return "AI 服务请求过于频繁，请稍后重试：\(message)"
+        case let .transientServerError(statusCode, message):
+            return "AI 服务暂时不可用（HTTP \(statusCode)）：\(message)"
         case .emptyResult:
             return "AI 没有返回可插入的正文内容。"
         }

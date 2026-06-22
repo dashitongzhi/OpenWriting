@@ -133,7 +133,8 @@ extension AIWritingService {
     1. 保留原文的人称、时态、剧情事实、设定和人物关系，不擅自改剧情走向。
     2. 重点优化表达、节奏、动作细节、对白自然度、氛围与段落衔接。
     3. 如果用户给了具体要求，优先满足这些要求；如果没有要求，就做克制润色，不要过度重写。
-    4. 只输出润色后的完整正文，不要解释，不要分点，不要加标题。
+    4. 必须遵守项目特殊要求里的启用写作 Skill；若 Skill 与正文事实冲突，以正文事实和项目设定为准。
+    5. 只输出润色后的完整正文，不要解释，不要分点，不要加标题。
     """
 
     static let selectionPolishSystemPrompt = """
@@ -143,7 +144,8 @@ extension AIWritingService {
     1. 只输出润色后的选区文本，不要解释，不要加引号，不要重复上下文。
     2. 保留原意、人物状态与叙事事实，不擅自改剧情。
     3. 用词、节奏与语气要能和原稿前后文自然衔接。
-    4. 如果用户给了润色要求，优先满足；如果没有，就做克制优化。
+    4. 必须遵守项目特殊要求里的启用写作 Skill；若 Skill 与选区事实冲突，以选区事实和上下文为准。
+    5. 如果用户给了润色要求，优先满足；如果没有，就做克制优化。
     """
 
     static func userPrompt(
@@ -365,6 +367,9 @@ extension AIWritingService {
         题材配置：
         \(GenreTemplateLibrary.autoDetect(from: project.genre).formattedForPrompt)
 
+        特殊要求与启用写作 Skill：
+        \(normalized(project.specialRequirements, fallback: "暂无特殊要求或启用 Skill。"))
+
         额外指令：
         \(normalized(additionalInstruction, fallback: "暂无额外指令。"))
 
@@ -409,6 +414,9 @@ extension AIWritingService {
 
         题材配置：
         \(GenreTemplateLibrary.autoDetect(from: project.genre).formattedForPrompt)
+
+        特殊要求与启用写作 Skill：
+        \(normalized(project.specialRequirements, fallback: "暂无特殊要求或启用 Skill。"))
 
         额外指令：
         \(normalized(additionalInstruction, fallback: "暂无额外指令。"))
@@ -455,12 +463,16 @@ extension AIWritingService {
         ===== 题材配置 =====
         \(GenreTemplateLibrary.autoDetect(from: project.genre).formattedForPrompt)
 
+        特殊要求与启用写作 Skill：
+        \(normalized(project.specialRequirements, fallback: "暂无特殊要求或启用 Skill。"))
+
         输出要求：
         只输出补写部分，接在已有候选正文之后即可。
         """
     }
 
     static func fullDraftPolishUserPrompt(
+        project: NovelProject,
         draft: String,
         instruction: String
     ) -> String {
@@ -470,6 +482,26 @@ extension AIWritingService {
             : normalizedInstruction
 
         return """
+        项目名称：\(project.title)
+        类型：\(project.genre)
+        当前章节：\(project.currentChapterSummary)
+        本章目标：\(project.chapterFocus)
+
+        项目摘要：
+        \(bounded(project.summary, fallback: "暂无项目摘要。", limit: 900))
+
+        全局记忆：
+        \(bounded(project.continuityNotes, fallback: "暂无全局记忆。", limit: 1_400))
+
+        章节树关键约束：
+        \(bounded(project.outlineSummary, fallback: "暂无章节树约束。", limit: 1_200))
+
+        特殊要求与启用写作 Skill：
+        \(bounded(project.specialRequirements, fallback: "暂无特殊要求或启用 Skill。", limit: 1_400))
+
+        题材配置：
+        \(GenreTemplateLibrary.autoDetect(from: project.genre).formattedForPrompt)
+
         润色要求：
         \(resolvedInstruction)
 
@@ -479,6 +511,7 @@ extension AIWritingService {
     }
 
     static func selectionPolishUserPrompt(
+        project: NovelProject,
         selectedText: String,
         instruction: String,
         fullDraft: String,
@@ -491,6 +524,23 @@ extension AIWritingService {
             : normalizedInstruction
 
         return """
+        项目名称：\(project.title)
+        类型：\(project.genre)
+        当前章节：\(project.currentChapterSummary)
+        本章目标：\(project.chapterFocus)
+
+        项目摘要：
+        \(bounded(project.summary, fallback: "暂无项目摘要。", limit: 700))
+
+        全局记忆：
+        \(bounded(project.continuityNotes, fallback: "暂无全局记忆。", limit: 1_000))
+
+        特殊要求与启用写作 Skill：
+        \(bounded(project.specialRequirements, fallback: "暂无特殊要求或启用 Skill。", limit: 1_200))
+
+        题材配置：
+        \(GenreTemplateLibrary.autoDetect(from: project.genre).formattedForPrompt)
+
         润色要求：
         \(resolvedInstruction)
 

@@ -325,6 +325,9 @@ enum UnifiedQualityReviewer {
         当前章节：\(project.currentChapterSummary)
         本章目标：\(project.chapterFocus)
 
+        特殊要求与启用写作 Skill：
+        \(normalized(project.specialRequirements, fallback: "暂无特殊要求或启用 Skill。"))
+
         作品大纲（节选）：
         \(excerpt(project.outlineText, limit: 1500))
 
@@ -352,6 +355,7 @@ enum UnifiedQualityReviewer {
         请对上述正文进行九维质量审查。
         如果提供了草稿箱当前正文，它只作为承接上下文和连续性参照；issues 只记录待审查正文自身的问题。
         必须判断待审查正文能否自然接在草稿箱最后状态之后，若明显断裂、倒退、重复或改写已有正文，标记为 critical。
+        必须核对特殊要求与启用写作 Skill；如果正文明显违背启用 Skill 的风格、禁区或修订策略，按影响程度标记为 high 或 critical。
         必须逐条核对后台长篇合同中的本章必须执行、禁区与风险、写后门禁和本章修订反馈。
         如果正文漏掉后台合同里的明确章节节点，标记为 critical。
         如果正文违背全局记忆、人物状态、世界规则、时间线或草稿箱最后状态，标记为 critical。
