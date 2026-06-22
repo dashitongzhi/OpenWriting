@@ -72,12 +72,12 @@ extension AIWritingService {
         let revisedDraft = try await completeEnhancedText(
             configuration: configuration,
             systemPrompt: writingRevisionSystemPrompt,
-            userPrompt: writingRevisionUserPrompt(
+            userPrompt: enhancedWritingRevisionUserPrompt(
                 project: project,
                 mode: mode,
                 additionalInstruction: additionalInstruction,
                 length: length,
-                support: AIWritingService.WritingSupportContext(project: project),
+                support: support,
                 writingPlan: plan,
                 draft: draft
             ),
@@ -92,10 +92,10 @@ extension AIWritingService {
             let supplement = try await completeEnhancedText(
                 configuration: configuration,
                 systemPrompt: writingSupplementSystemPrompt,
-                userPrompt: writingSupplementUserPrompt(
+                userPrompt: enhancedWritingSupplementUserPrompt(
                     project: project,
                     length: length,
-                    support: AIWritingService.WritingSupportContext(project: project),
+                    support: support,
                     writingPlan: plan,
                     draft: revisedDraft
                 ),
@@ -112,41 +112,72 @@ extension AIWritingService {
         // Step 4: Post-write quality review (if enabled)
         var reviewResult: ChapterReviewResult? = nil
         if enableReview {
-            reviewResult = try await reviewCandidate(
-                finalText,
-                project: project,
-                support: support,
-                configuration: configuration
-            )
-
-            if let review = reviewResult,
-               shouldRepairCandidate(review: review, project: project) {
-                let repairedDraft = try await completeEnhancedText(
-                    configuration: configuration,
-                    systemPrompt: writingReviewRepairSystemPrompt,
-                    userPrompt: writingReviewRepairUserPrompt(
-                        project: project,
-                        mode: mode,
-                        additionalInstruction: additionalInstruction,
-                        length: length,
-                        support: AIWritingService.WritingSupportContext(project: project),
-                        writingPlan: plan,
-                        draft: finalText,
-                        review: review
-                    ),
-                    temperature: 0.32,
-                    maxTokens: length.maxTokens + 700
+            do {
+                let initialReview = try await reviewCandidate(
+                    finalText,
+                    project: project,
+                    support: support,
+                    configuration: configuration
                 )
-                let normalizedRepair = repairedDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-                if normalizedRepair.count >= length.minimumAcceptableCount {
-                    finalText = normalizedRepair
-                    reviewResult = try await reviewCandidate(
-                        finalText,
-                        project: project,
-                        support: support,
-                        configuration: configuration
-                    )
+                reviewResult = initialReview
+
+                if shouldRepairCandidate(review: initialReview, project: project) {
+                    do {
+                        let repairedDraft = try await completeEnhancedText(
+                            configuration: configuration,
+                            systemPrompt: writingReviewRepairSystemPrompt,
+                            userPrompt: enhancedWritingReviewRepairUserPrompt(
+                                project: project,
+                                mode: mode,
+                                additionalInstruction: additionalInstruction,
+                                length: length,
+                                support: support,
+                                writingPlan: plan,
+                                draft: finalText,
+                                review: initialReview
+                            ),
+                            temperature: 0.32,
+                            maxTokens: length.maxTokens + 700
+                        )
+                        let normalizedRepair = repairedDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !normalizedRepair.isEmpty {
+                            if normalizedRepair.count >= length.minimumAcceptableCount {
+                                finalText = normalizedRepair
+                            } else {
+                                let supplement = try await completeEnhancedText(
+                                    configuration: configuration,
+                                    systemPrompt: writingSupplementSystemPrompt,
+                                    userPrompt: enhancedWritingSupplementUserPrompt(
+                                        project: project,
+                                        length: length,
+                                        support: support,
+                                        writingPlan: plan,
+                                        draft: normalizedRepair
+                                    ),
+                                    temperature: 0.72,
+                                    maxTokens: max(700, length.maxTokens / 2)
+                                )
+                                finalText = [normalizedRepair, supplement]
+                                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                                    .filter { !$0.isEmpty }
+                                    .joined(separator: "\n\n")
+                            }
+
+                            if let repairedReview = try? await reviewCandidate(
+                                finalText,
+                                project: project,
+                                support: support,
+                                configuration: configuration
+                            ) {
+                                reviewResult = repairedReview
+                            }
+                        }
+                    } catch {
+                        reviewResult = initialReview
+                    }
                 }
+            } catch {
+                reviewResult = nil
             }
         }
 
@@ -171,6 +202,175 @@ extension AIWritingService {
                 antiPatterns: reviewResult?.antiPatterns ?? []
             )
         )
+    }
+
+    private static func enhancedWritingRevisionUserPrompt(
+        project: NovelProject,
+        mode: AIWritingMode,
+        additionalInstruction: String,
+        length: AIWritingLength,
+        support: EnhancedWritingSupport,
+        writingPlan: String,
+        draft: String
+    ) -> String {
+        """
+        当前章节：\(project.currentChapterSummary)
+        本章目标：\(project.chapterFocus)
+        写作模式：\(mode.title)
+        字数目标：\(length.instruction)
+
+        草稿箱当前正文（候选正文应接在它后面）：
+        \(support.currentDraftExcerpt)
+
+        上一章节末尾 400 字（只能用于承接，不要复述）：
+        \(normalized(project.draftContinuationCache, fallback: "暂无上一章节结尾缓存。"))
+
+        本次续写拍点：
+        \(normalized(writingPlan, fallback: "暂无拍点，请至少推进一个新的情节增量。"))
+
+        增强记忆：
+        \(support.enhancedMemoryContext)
+
+        后台长篇合同：
+        \(support.longformStorySystemContext)
+
+        章节树关键约束：
+        \(support.chapterTreeFocus)
+
+        本章执行验收：
+        \(writingExecutionContractPrompt(project: project))
+
+        风格指纹：
+        \(support.styleFingerprint)
+
+        节奏状态：
+        \(support.strandContext)
+
+        题材配置：
+        \(support.genreTemplateContext)
+
+        特殊要求与启用写作 Skill：
+        \(normalized(project.specialRequirements, fallback: "暂无特殊要求或启用 Skill。"))
+
+        额外指令：
+        \(normalized(additionalInstruction, fallback: "暂无额外指令。"))
+
+        待检查候选正文：
+        \(draft)
+
+        修订要求：
+        1. 如果开头在复述上一章或解释既有设定，请改成直接承接草稿最后状态的新动作、新对白或新观察。
+        2. 如果没有推进本章目标，请补足一个明确的信息增量、关系变化或冲突进展。
+        3. 如果和草稿箱内容衔接不顺，请修顺第一段。
+        4. 必须按增强记忆、后台长篇合同、节奏状态和本章执行验收修订，不能只做表层润色。
+        5. 只输出修订后的完整候选正文。
+        """
+    }
+
+    private static func enhancedWritingReviewRepairUserPrompt(
+        project: NovelProject,
+        mode: AIWritingMode,
+        additionalInstruction: String,
+        length: AIWritingLength,
+        support: EnhancedWritingSupport,
+        writingPlan: String,
+        draft: String,
+        review: ChapterReviewResult
+    ) -> String {
+        """
+        当前章节：\(project.currentChapterSummary)
+        本章目标：\(project.chapterFocus)
+        写作模式：\(mode.title)
+        字数目标：\(length.instruction)
+
+        草稿箱当前正文（返修后的候选正文仍应接在它后面）：
+        \(support.currentDraftExcerpt)
+
+        本次续写拍点：
+        \(normalized(writingPlan, fallback: "请至少推进一个新的情节增量。"))
+
+        增强记忆：
+        \(support.enhancedMemoryContext)
+
+        后台长篇合同：
+        \(support.longformStorySystemContext)
+
+        本章执行验收：
+        \(writingExecutionContractPrompt(project: project))
+
+        风格指纹：
+        \(support.styleFingerprint)
+
+        节奏状态：
+        \(support.strandContext)
+
+        题材配置：
+        \(support.genreTemplateContext)
+
+        特殊要求与启用写作 Skill：
+        \(normalized(project.specialRequirements, fallback: "暂无特殊要求或启用 Skill。"))
+
+        额外指令：
+        \(normalized(additionalInstruction, fallback: "暂无额外指令。"))
+
+        质量审查反馈（必须逐条修复 critical/high 问题）：
+        \(review.summary)
+
+        待返修候选正文：
+        \(draft)
+
+        返修要求：
+        1. 修掉审查反馈里的阻断和高优先级问题，不要只改几个词。
+        2. 保持候选正文整体篇幅和章节推进，必要时补写关键动作、对白、证据链或章末钩子。
+        3. 返修后仍必须自然接在草稿箱最后状态之后。
+        4. 必须维护增强记忆、后台长篇合同和节奏状态中的连续性约束。
+        5. 只输出返修后的完整候选正文。
+        """
+    }
+
+    private static func enhancedWritingSupplementUserPrompt(
+        project: NovelProject,
+        length: AIWritingLength,
+        support: EnhancedWritingSupport,
+        writingPlan: String,
+        draft: String
+    ) -> String {
+        """
+        当前章节：\(project.currentChapterSummary)
+        本章目标：\(project.chapterFocus)
+        目标长度：\(length.instruction)
+        当前候选正文约 \(draft.count) 字，低于目标下限，请补足同一场景。
+
+        草稿箱当前正文：
+        \(support.currentDraftExcerpt)
+
+        本次续写拍点：
+        \(normalized(writingPlan, fallback: "请继续推进当前场景。"))
+
+        增强记忆：
+        \(support.enhancedMemoryContext)
+
+        后台长篇合同：
+        \(support.longformStorySystemContext)
+
+        本章执行验收：
+        \(writingExecutionContractPrompt(project: project))
+
+        节奏状态：
+        \(support.strandContext)
+
+        已有候选正文（不要重复）：
+        \(draft)
+
+        题材配置：
+        \(support.genreTemplateContext)
+
+        特殊要求与启用写作 Skill：
+        \(normalized(project.specialRequirements, fallback: "暂无特殊要求或启用 Skill。"))
+
+        输出要求：
+        只输出补写部分，接在已有候选正文之后即可。
+        """
     }
 
     // MARK: - Enhanced System Prompt
