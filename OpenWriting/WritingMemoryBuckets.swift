@@ -311,10 +311,7 @@ struct MemoryBuckets: Codable, Hashable {
 
     /// Returns active items filtered by relevance to a text query.
     func relevantActiveItems(for query: String, limit: Int = 30) -> [MemoryItem] {
-        let queryLower = query.lowercased()
-        let queryTokens = queryLower
-            .components(separatedBy: .whitespacesAndNewlines.union(.punctuationCharacters))
-            .filter { $0.count >= 2 }
+        let queryTokens = Self.relevanceTokens(from: query)
 
         guard !queryTokens.isEmpty else {
             return Array(allActiveItems.prefix(limit))
@@ -333,6 +330,53 @@ struct MemoryBuckets: Codable, Hashable {
             .sorted { $0.1 > $1.1 }
             .prefix(limit)
             .map { $0.0 }
+    }
+
+    private static func relevanceTokens(from text: String) -> [String] {
+        let normalized = text.lowercased()
+        let separators = CharacterSet.whitespacesAndNewlines
+            .union(.punctuationCharacters)
+            .union(.symbols)
+        var tokens: Set<String> = []
+
+        for rawPart in normalized.components(separatedBy: separators) {
+            let part = rawPart.trimmingCharacters(in: separators)
+            guard !part.isEmpty else { continue }
+
+            if part.unicodeScalars.contains(where: isCJKScalar) {
+                let scalars = Array(part.unicodeScalars.filter { !CharacterSet.whitespacesAndNewlines.contains($0) })
+                if scalars.count >= 2 {
+                    for width in 2...min(4, scalars.count) {
+                        for start in 0...(scalars.count - width) {
+                            tokens.insert(String(String.UnicodeScalarView(scalars[start..<(start + width)])))
+                        }
+                    }
+                } else {
+                    tokens.insert(part)
+                }
+            } else if part.count >= 2 {
+                tokens.insert(part)
+            }
+        }
+
+        return Array(tokens)
+    }
+
+    nonisolated private static func isCJKScalar(_ scalar: UnicodeScalar) -> Bool {
+        switch scalar.value {
+        case 0x3400...0x4DBF,
+             0x4E00...0x9FFF,
+             0xF900...0xFAFF,
+             0x20000...0x2A6DF,
+             0x2A700...0x2B73F,
+             0x2B740...0x2B81F,
+             0x2B820...0x2CEAF,
+             0x2CEB0...0x2EBEF,
+             0x30000...0x3134F:
+            return true
+        default:
+            return false
+        }
     }
 
     // MARK: - Conflict Detection
@@ -384,11 +428,10 @@ struct MemoryBuckets: Codable, Hashable {
             setBucket(nonOutdated + Array(latestOutdated.values), for: category)
         }
 
-        // Stage 2: Remove resolved open loops
+        // Stage 2: Drop only lifecycle-closed open loops. Resolution must be
+        // represented by status, not guessed from prose inside the value.
         openLoops = openLoops.filter { item in
-            let v = item.value.lowercased()
-            return !["已回收", "已解决", "已完成", "已兑现", "resolved", "closed", "done", "paid_off"]
-                .contains(where: { v.contains($0) })
+            item.status == .active || item.status == .tentative || item.status == .contradicted
         }
 
         // Stage 3: Merge old timeline items (>50 chapters ago)

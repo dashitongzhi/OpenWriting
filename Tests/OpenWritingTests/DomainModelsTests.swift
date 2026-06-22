@@ -400,6 +400,66 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(Set(buckets.openLoops.map(\.dedupKey)).count, 2)
     }
 
+    func testMemoryBucketsCompactionDoesNotDropOpenLoopByResolvedWordsInValue() {
+        var buckets = MemoryBuckets.empty
+        buckets.openLoops = [
+            MemoryItem(
+                category: .openLoop,
+                subject: "银色纹路",
+                field: "真相",
+                value: "敌人声称此事已经解决，但主角尚未验证",
+                status: .active,
+                sourceChapter: 4
+            ),
+            MemoryItem(
+                category: .openLoop,
+                subject: "旧线索",
+                field: "支线",
+                value: "该支线已回收",
+                status: .outdated,
+                sourceChapter: 2
+            )
+        ]
+        buckets.storyFacts = (0..<501).map { index in
+            MemoryItem(
+                category: .storyFact,
+                subject: "事实\(index)",
+                field: "测试",
+                value: "测试\(index)",
+                sourceChapter: index + 1
+            )
+        }
+
+        buckets.compact(currentChapter: 80, threshold: 500)
+
+        XCTAssertTrue(buckets.openLoops.contains { $0.subject == "银色纹路" })
+        XCTAssertFalse(buckets.openLoops.contains { $0.subject == "旧线索" })
+    }
+
+    func testMemoryBucketsRelevantItemsTokenizesChineseWithoutWhitespace() {
+        var buckets = MemoryBuckets.empty
+        buckets.storyFacts = [
+            MemoryItem(
+                category: .storyFact,
+                subject: "银色纹路",
+                field: "血脉线索",
+                value: "月下伤口浮现银色纹路",
+                sourceChapter: 5
+            ),
+            MemoryItem(
+                category: .storyFact,
+                subject: "集市",
+                field: "地点",
+                value: "主角经过南门集市",
+                sourceChapter: 6
+            )
+        ]
+
+        let results = buckets.relevantActiveItems(for: "伤口银色纹路", limit: 1)
+
+        XCTAssertEqual(results.first?.subject, "银色纹路")
+    }
+
     func testMemoryManagerMarksConflictingActiveItemAsContradicted() {
         let manager = MemoryManager()
         let first = MemoryManagerItem(
