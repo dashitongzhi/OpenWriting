@@ -559,6 +559,42 @@ final class DomainModelsTests: XCTestCase {
         })
     }
 
+    @MainActor
+    func testLegacyStrandWeaveTrackerGapUsesChapterNumbers() {
+        let tracker = StrandWeaveTracker(
+            redLineConfig: RhythmRedLineConfig(
+                maxConsecutiveQuest: 5,
+                maxGapFire: 10,
+                maxGapConstellation: 99
+            )
+        )
+        tracker.recordChapter(ChapterStrandRecord(chapterNumber: 1, primaryStrand: .fire))
+        tracker.recordChapter(ChapterStrandRecord(chapterNumber: 12, primaryStrand: .quest))
+
+        let alerts = tracker.checkRedLines()
+
+        XCTAssertTrue(alerts.contains {
+            $0.strand == .fire && $0.message.contains("断档 11 章")
+        })
+    }
+
+    @MainActor
+    func testLegacyStrandWeaveTrackerConsecutiveRequiresAdjacentChapters() {
+        let tracker = StrandWeaveTracker(
+            redLineConfig: RhythmRedLineConfig(
+                maxConsecutiveQuest: 2,
+                maxGapFire: 99,
+                maxGapConstellation: 99
+            )
+        )
+        tracker.recordChapter(ChapterStrandRecord(chapterNumber: 1, primaryStrand: .quest))
+        tracker.recordChapter(ChapterStrandRecord(chapterNumber: 3, primaryStrand: .quest))
+
+        let alerts = tracker.checkRedLines()
+
+        XCTAssertFalse(alerts.contains { $0.type == .consecutiveExcess && $0.strand == .quest })
+    }
+
     func testStrandKeywordClassifierDoesNotTreatSingleAiAsFire() {
         let text = "林照热爱修炼，也爱研究古阵。他喜欢在夜里推演剑诀，但本章主要推进宗门试炼。"
 

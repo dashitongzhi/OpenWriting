@@ -324,23 +324,31 @@ class StrandWeaveTracker: ObservableObject, Codable {
     
     /// 计算最近连续同类型章节数
     private func countRecentConsecutive(_ strand: StrandType) -> Int {
+        let sortedRecords = records.sorted { $0.chapterNumber > $1.chapterNumber }
+        var expectedChapter = sortedRecords.first?.chapterNumber
         var count = 0
-        for record in records.reversed() {
-            if record.primaryStrand == strand {
-                count += 1
-            } else {
+        for record in sortedRecords {
+            guard let expected = expectedChapter, record.chapterNumber == expected else {
                 break
             }
+            guard record.primaryStrand == strand else { break }
+
+            count += 1
+            expectedChapter = record.chapterNumber - 1
         }
         return count
     }
     
     /// 计算距离上次出现某类型的间隔章节数
     private func countGapSince(_ strand: StrandType) -> Int {
-        guard let lastIndex = records.lastIndex(where: { $0.primaryStrand == strand }) else {
-            return records.count
+        let latestChapterNumber = records.map(\.chapterNumber).max() ?? 0
+        guard let lastRecord = records
+            .filter({ $0.primaryStrand == strand })
+            .max(by: { $0.chapterNumber < $1.chapterNumber })
+        else {
+            return latestChapterNumber
         }
-        return records.count - 1 - lastIndex
+        return max(0, latestChapterNumber - lastRecord.chapterNumber)
     }
     
     /// 解析 AI 分类结果
@@ -351,7 +359,7 @@ class StrandWeaveTracker: ObservableObject, Codable {
               let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let primaryStr = parsed["primary"] as? String else {
             // Fallback: 默认为 Quest
-            return ChapterStrandRecord(chapterNumber: records.count + 1, primaryStrand: .quest, confidence: 0.5)
+            return ChapterStrandRecord(chapterNumber: nextChapterNumber, primaryStrand: .quest, confidence: 0.5)
         }
         
         let primary = StrandType(rawValue: primaryStr.capitalized) ?? .quest
@@ -360,12 +368,16 @@ class StrandWeaveTracker: ObservableObject, Codable {
         let reason = parsed["reason"] as? String
         
         return ChapterStrandRecord(
-            chapterNumber: records.count + 1,
+            chapterNumber: nextChapterNumber,
             primaryStrand: primary,
             secondaryStrand: secondary,
             confidence: confidence,
             notes: reason
         )
+    }
+
+    private var nextChapterNumber: Int {
+        (records.map(\.chapterNumber).max() ?? 0) + 1
     }
     
     private func extractJSON(from text: String) -> String {
