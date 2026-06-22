@@ -239,5 +239,10 @@ struct ContextRanker {
             || (v >= 0x3400 && v <= 0x4DBF)
             || (v >= 0xF900 && v <= 0xFAFF)
             || (v >= 0x20000 && v <= 0x2A6DF)
+            || (v >= 0x2A700 && v <= 0x2B73F)
+            || (v >= 0x2B740 && v <= 0x2B81F)
+            || (v >= 0x2B820 && v <= 0x2CEAF)
+            || (v >= 0x2CEB0 && v <= 0x2EBEF)
+            || (v >= 0x30000 && v <= 0x3134F)
     }
 }

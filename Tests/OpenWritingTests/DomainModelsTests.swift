@@ -511,6 +511,12 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(manager.memoryPack.semanticMemory.allActiveItems.first?.evidence, "第二章")
     }
 
+    func testContextRankerExtractsExtendedCJKEntities() {
+        let entity = "𫠝城"
+
+        XCTAssertTrue(ContextRanker.extractEntities(from: "主角进入\(entity)。").contains(entity))
+    }
+
     func testForeshadowOverdueUsesCurrentChapter() {
         let entry = ForeshadowEntry(
             title: "断剑来历",
