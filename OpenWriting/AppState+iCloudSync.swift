@@ -25,6 +25,8 @@ extension AppState {
 
     func scheduleCloudSnapshotSave() {
         cloudSaveTask?.cancel()
+        cloudSaveGeneration &+= 1
+        let saveGeneration = cloudSaveGeneration
 
         guard let scope = currentStorageScope else {
             Task { @MainActor in
@@ -41,22 +43,48 @@ extension AppState {
         )
 
         cloudSaveTask = Task { [cloudStore] in
-            try? await Task.sleep(for: .milliseconds(900))
+            do {
+                try await Task.sleep(for: .milliseconds(900))
+                try Task.checkCancellation()
+            } catch {
+                return
+            }
+
+            let shouldSave = await MainActor.run {
+                self.cloudSaveGeneration == saveGeneration && self.currentStorageScope == scope
+            }
+            guard shouldSave else { return }
+
             let availability = await cloudStore.availability()
+            do {
+                try Task.checkCancellation()
+            } catch {
+                return
+            }
 
             switch availability {
             case .available:
                 do {
+                    let shouldStillSave = await MainActor.run {
+                        self.cloudSaveGeneration == saveGeneration && self.currentStorageScope == scope
+                    }
+                    guard shouldStillSave else { return }
+
                     try await cloudStore.saveSnapshot(snapshot, for: scope)
+                    try Task.checkCancellation()
                     await MainActor.run {
+                        guard self.cloudSaveGeneration == saveGeneration else { return }
                         self.setCloudSyncStatus(
                             title: "iCloud 已连接",
                             symbolName: "icloud.fill",
                             message: "最新修改已经推送到 iCloud。"
                         )
                     }
+                } catch is CancellationError {
+                    return
                 } catch {
                     await MainActor.run {
+                        guard self.cloudSaveGeneration == saveGeneration else { return }
                         self.setCloudSyncStatus(
                             title: "本机保存",
                             symbolName: "icloud.slash",
@@ -66,6 +94,7 @@ extension AppState {
                 }
             case let .unavailable(message):
                 await MainActor.run {
+                    guard self.cloudSaveGeneration == saveGeneration else { return }
                     self.setCloudSyncStatus(
                         title: "本机保存",
                         symbolName: "icloud.slash",
@@ -131,9 +160,25 @@ extension AppState {
     }
 
     func synchronizeWithICloud(forcePull: Bool) async {
+        guard !isCloudSynchronizationInProgress else {
+            setCloudSyncStatus(
+                title: "正在同步",
+                symbolName: "arrow.triangle.2.circlepath.icloud",
+                message: "已有 iCloud 同步正在进行。"
+            )
+            return
+        }
+
         guard let scope = currentStorageScope else {
             await refreshCloudAvailability()
             return
+        }
+
+        isCloudSynchronizationInProgress = true
+        cloudSaveTask?.cancel()
+        cloudSaveGeneration &+= 1
+        defer {
+            isCloudSynchronizationInProgress = false
         }
 
         setCloudSyncStatus(
@@ -171,9 +216,7 @@ extension AppState {
                     updatedAt: Date(timeIntervalSince1970: max(currentProjectSnapshotTimestamp, Date().timeIntervalSince1970))
                 )
                 try await cloudStore.saveSnapshot(snapshot, for: scope)
-                if currentProjectSnapshotTimestamp == 0 {
-                    currentProjectSnapshotTimestamp = snapshot.updatedAt.timeIntervalSince1970
-                }
+                currentProjectSnapshotTimestamp = snapshot.updatedAt.timeIntervalSince1970
             }
 
             setCloudSyncStatus(

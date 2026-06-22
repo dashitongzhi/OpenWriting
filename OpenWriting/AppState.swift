@@ -12,6 +12,8 @@ final class AppState {
     let projectStore: ProjectFileStore
     @ObservationIgnored let cloudStore = ICloudProjectStore()
     @ObservationIgnored var cloudSaveTask: Task<Void, Never>?
+    @ObservationIgnored var cloudSaveGeneration: UInt64 = 0
+    @ObservationIgnored var isCloudSynchronizationInProgress = false
     @ObservationIgnored var recentProjectsPersistTasks: [String: Task<Void, Never>] = [:]
     @ObservationIgnored var isHydratingAccountScopedData = false
     @ObservationIgnored var isApplyingProviderConfiguration = false
