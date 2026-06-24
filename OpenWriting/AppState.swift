@@ -1485,52 +1485,104 @@ final class AppState {
                     maxTokens: 3000
                 )
 
-                if let extractionResult = MemoryExtractionService.parseExtractionResult(from: response) {
-                    let aiItems = extractionResult.allItems(
-                        sourceVolumeNumber: sourceVolumeNumber,
-                        sourceChapterNumber: chapterNumber
+                guard let extractionResult = MemoryExtractionService.parseExtractionResult(from: response) else {
+                    self.recordAIMemoryExtractionStatus(
+                        "parse_failed",
+                        volumeNumber: sourceVolumeNumber,
+                        chapterNumber: chapterNumber,
+                        expectedCommitID: expectedCommitID,
+                        projectID: projectID
                     )
-                    guard !aiItems.isEmpty else { return }
+                    return
+                }
 
-                    self.updateProject(projectID) { project in
-                        var runtime = project.longformRuntimeState
-                        if var latestCommit = runtime.latestCommit,
-                           latestCommit.chapterNumber == chapterNumber,
-                           latestCommit.volumeNumber == sourceVolumeNumber,
-                           expectedCommitID.map({ latestCommit.id == $0 }) ?? true,
-                           latestCommit.isAccepted {
-                            var buckets = project.memoryBuckets
-                            buckets.removeItems(
-                                sourceVolumeNumber: sourceVolumeNumber,
-                                sourceChapter: chapterNumber
-                            )
-                            for item in latestCommit.extractedMemoryItems {
-                                buckets.upsert(item)
-                            }
-                            for item in aiItems {
-                                buckets.upsert(item)
-                            }
-                            buckets.compact(currentVolumeNumber: sourceVolumeNumber, currentChapter: chapterNumber)
-                            project.memoryBuckets = buckets
+                let aiItems = extractionResult.allItems(
+                    sourceVolumeNumber: sourceVolumeNumber,
+                    sourceChapterNumber: chapterNumber
+                )
+                guard !aiItems.isEmpty else {
+                    self.recordAIMemoryExtractionStatus(
+                        "empty",
+                        volumeNumber: sourceVolumeNumber,
+                        chapterNumber: chapterNumber,
+                        expectedCommitID: expectedCommitID,
+                        projectID: projectID
+                    )
+                    return
+                }
 
-                            let existingIDs = Set(latestCommit.extractedMemoryItems.map(\.id))
-                            let newItems = aiItems.filter { !existingIDs.contains($0.id) }
-                            latestCommit.extractedMemoryItems.append(contentsOf: newItems)
-                            latestCommit.projectionStatus["ai_memory"] = "done"
-                            runtime.record(commit: latestCommit)
-                            if let latestContract = runtime.latestContract {
-                                runtime.record(writeGate: LongformStorySystem.buildWriteGateReport(
-                                    commit: latestCommit,
-                                    contract: latestContract
-                                ))
-                            }
-                            project.longformRuntimeState = runtime
+                self.updateProject(projectID) { project in
+                    var runtime = project.longformRuntimeState
+                    if var latestCommit = runtime.latestCommit,
+                       latestCommit.chapterNumber == chapterNumber,
+                       latestCommit.volumeNumber == sourceVolumeNumber,
+                       expectedCommitID.map({ latestCommit.id == $0 }) ?? true,
+                       latestCommit.isAccepted {
+                        var buckets = project.memoryBuckets
+                        buckets.removeItems(
+                            sourceVolumeNumber: sourceVolumeNumber,
+                            sourceChapter: chapterNumber
+                        )
+                        for item in latestCommit.extractedMemoryItems {
+                            buckets.upsert(item)
                         }
+                        for item in aiItems {
+                            buckets.upsert(item)
+                        }
+                        buckets.compact(currentVolumeNumber: sourceVolumeNumber, currentChapter: chapterNumber)
+                        project.memoryBuckets = buckets
+
+                        let existingIDs = Set(latestCommit.extractedMemoryItems.map(\.id))
+                        let newItems = aiItems.filter { !existingIDs.contains($0.id) }
+                        latestCommit.extractedMemoryItems.append(contentsOf: newItems)
+                        latestCommit.projectionStatus["ai_memory"] = "done"
+                        runtime.record(commit: latestCommit)
+                        if let latestContract = runtime.latestContract {
+                            runtime.record(writeGate: LongformStorySystem.buildWriteGateReport(
+                                commit: latestCommit,
+                                contract: latestContract
+                            ))
+                        }
+                        project.longformRuntimeState = runtime
                     }
                 }
             } catch {
-                // Silently fail - keyword extraction already ran
+                self.recordAIMemoryExtractionStatus(
+                    "failed",
+                    volumeNumber: sourceVolumeNumber,
+                    chapterNumber: chapterNumber,
+                    expectedCommitID: expectedCommitID,
+                    projectID: projectID
+                )
             }
+        }
+    }
+
+    private func recordAIMemoryExtractionStatus(
+        _ status: String,
+        volumeNumber: Int,
+        chapterNumber: Int,
+        expectedCommitID: LongformChapterCommit.ID?,
+        projectID: NovelProject.ID
+    ) {
+        updateProject(projectID) { project in
+            var runtime = project.longformRuntimeState
+            guard var latestCommit = runtime.latestCommit,
+                  latestCommit.chapterNumber == chapterNumber,
+                  latestCommit.volumeNumber == volumeNumber,
+                  expectedCommitID.map({ latestCommit.id == $0 }) ?? true,
+                  latestCommit.isAccepted
+            else { return }
+
+            latestCommit.projectionStatus["ai_memory"] = status
+            runtime.record(commit: latestCommit)
+            if let latestContract = runtime.latestContract {
+                runtime.record(writeGate: LongformStorySystem.buildWriteGateReport(
+                    commit: latestCommit,
+                    contract: latestContract
+                ))
+            }
+            project.longformRuntimeState = runtime
         }
     }
 
@@ -2049,7 +2101,13 @@ final class AppState {
             baseURL: resolvedBaseURL,
             apiKey: trimmedKey,
             modelName: trimmedModelName,
-            apiFormat: selectedProvider.apiFormat
+            apiFormat: selectedProvider.apiFormat,
+            additionalHeaders: selectedProvider == .openAICompatible
+                ? Self.serverManagedAdditionalHeaders(
+                    accountID: activeAccount?.userID,
+                    userDefaults: userDefaults
+                )
+                : [:]
         )
     }
 

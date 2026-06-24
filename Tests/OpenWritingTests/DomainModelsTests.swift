@@ -38,6 +38,32 @@ final class DomainModelsTests: XCTestCase {
     }
 
     @MainActor
+    func testOpenWritingServerManagedConnectionIncludesClientContextHeaders() throws {
+        let userDefaults = makeIsolatedUserDefaults()
+
+        let configuration = try ModelConnectionConfigurationStore.loadConnectionConfiguration(userDefaults: userDefaults)
+
+        XCTAssertEqual(configuration.additionalHeaders["X-OpenWriting-Client"], "macOS")
+        let installationID = try XCTUnwrap(configuration.additionalHeaders["X-OpenWriting-Installation-ID"])
+        XCTAssertNotNil(UUID(uuidString: installationID))
+        XCTAssertNil(configuration.additionalHeaders["X-OpenWriting-Account-ID"])
+    }
+
+    @MainActor
+    func testOpenWritingServerManagedHeadersSanitizeAccountID() {
+        let userDefaults = makeIsolatedUserDefaults()
+
+        let headers = ModelConnectionConfigurationStore.serverManagedAdditionalHeaders(
+            accountID: " user\nid\t ",
+            userDefaults: userDefaults
+        )
+
+        XCTAssertEqual(headers["X-OpenWriting-Account-ID"], "userid")
+        let installationID = headers["X-OpenWriting-Installation-ID"] ?? ""
+        XCTAssertNotNil(UUID(uuidString: installationID))
+    }
+
+    @MainActor
     func testRetiredOpenWDefaultBaseURLMigratesToServerManagedBackend() {
         let userDefaults = makeIsolatedUserDefaults()
         let retiredDefaultBaseURL = "https://ai." + "xxread.top/v1"

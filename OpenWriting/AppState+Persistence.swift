@@ -13,6 +13,7 @@ extension AppState {
         static let customBaseURL = ModelConnectionConfigurationStore.StorageKey.customBaseURL
         static let anthropicModelName = ModelConnectionConfigurationStore.StorageKey.anthropicModelName
         static let anthropicBaseURL = ModelConnectionConfigurationStore.StorageKey.anthropicBaseURL
+        static let clientInstallationID = ModelConnectionConfigurationStore.StorageKey.clientInstallationID
         static let autoValidateOnLaunch = "OpenWriting.autoValidateOnLaunch"
         static let showWritingDeskCachePanel = "OpenWriting.showWritingDeskCachePanel"
         static let showWritingDeskTimeline = "OpenWriting.showWritingDeskTimeline"
@@ -107,6 +108,16 @@ extension AppState {
 
     static func loadBaseURL(for provider: ModelProvider, userDefaults: UserDefaults) -> String {
         ModelConnectionConfigurationStore.loadBaseURL(for: provider, userDefaults: userDefaults)
+    }
+
+    static func serverManagedAdditionalHeaders(
+        accountID: String? = nil,
+        userDefaults: UserDefaults
+    ) -> [String: String] {
+        ModelConnectionConfigurationStore.serverManagedAdditionalHeaders(
+            accountID: accountID,
+            userDefaults: userDefaults
+        )
     }
 
     static func normalizedBaseURLString(from rawValue: String) -> String? {

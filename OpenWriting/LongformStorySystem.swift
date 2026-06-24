@@ -776,7 +776,7 @@ enum LongformStorySystem {
 
     private static func isSettledProjectionStatus(_ value: String) -> Bool {
         switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "done", "skipped", "passed", "rejected", "invalidated":
+        case "done", "skipped", "passed", "rejected", "invalidated", "empty", "parse_failed", "failed":
             return true
         default:
             return false

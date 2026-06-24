@@ -56,7 +56,7 @@ Most AI writing tools treat long-form writing as a context stuffing problem. Ope
 | --- | --- | --- |
 | Home workspace | Project overview, navigation, account state, materials, and writing spaces | Return to the active project fast, without management overhead |
 | Writing desk | Draft editing, chapter saving, AI continuation, and context refresh | Writing stays primary; tools are close but not intrusive |
-| Outline workspace | Outline hierarchy, chapter structure, global memory, and long-form support panels | Make long-form structure visible, maintainable, and safe to write back |
+| Outline workspace / 章节树工作区 | Outline hierarchy, chapter structure, global memory, and long-form support panels | Make long-form structure visible, maintainable, and safe to write back |
 | Quality review dashboard | Dimension scores, blocking issues, and non-blocking suggestions | Turn "something feels wrong" into actionable review items |
 | Genre template library | Webnovel genres such as fantasy, urban, romance, suspense, and composites | Templates act as writing parameters, not simple labels |
 | Settings and sync | Appearance, model connection, Apple ID, and CloudKit | Native macOS account isolation and private project sync |

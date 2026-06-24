@@ -11,6 +11,7 @@ enum ModelConnectionConfigurationStore {
         static let customBaseURL = "OpenWriting.custom.baseURL"
         static let anthropicModelName = "OpenWriting.anthropic.modelName"
         static let anthropicBaseURL = "OpenWriting.anthropic.baseURL"
+        static let clientInstallationID = "OpenWriting.clientInstallationID"
         static let didClearBundledCustomDefaults = "OpenWriting.didClearBundledCustomDefaults"
     }
 
@@ -122,6 +123,36 @@ enum ModelConnectionConfigurationStore {
         return baseURLReplacingRetiredDefault(storedBaseURL, for: provider)
     }
 
+    static func serverManagedAdditionalHeaders(
+        accountID: String? = nil,
+        userDefaults: UserDefaults = .standard
+    ) -> [String: String] {
+        var headers = [
+            "X-OpenWriting-App-Version": appVersionHeaderValue(),
+            "X-OpenWriting-Client": "macOS",
+            "X-OpenWriting-Installation-ID": loadOrCreateClientInstallationID(userDefaults: userDefaults)
+        ]
+
+        if let accountHeader = sanitizedHeaderValue(accountID) {
+            headers["X-OpenWriting-Account-ID"] = accountHeader
+        }
+
+        return headers
+    }
+
+    static func loadOrCreateClientInstallationID(userDefaults: UserDefaults = .standard) -> String {
+        if let storedValue = sanitizedHeaderValue(
+            stringValue(forKey: StorageKey.clientInstallationID, userDefaults: userDefaults)
+        ),
+           UUID(uuidString: storedValue) != nil {
+            return storedValue
+        }
+
+        let newValue = UUID().uuidString
+        userDefaults.set(newValue, forKey: StorageKey.clientInstallationID)
+        return newValue
+    }
+
     static func normalizedBaseURLString(from rawValue: String) -> String? {
         let trimmedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedValue.isEmpty,
@@ -136,6 +167,28 @@ enum ModelConnectionConfigurationStore {
         }
 
         return components.url?.absoluteString
+    }
+
+    private nonisolated static func appVersionHeaderValue() -> String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        let joinedVersion = [version, build]
+            .compactMap(sanitizedHeaderValue)
+            .joined(separator: " ")
+        return joinedVersion.isEmpty ? "unknown" : joinedVersion
+    }
+
+    private nonisolated static func sanitizedHeaderValue(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let sanitized = value
+            .unicodeScalars
+            .filter { scalar in
+                !CharacterSet.controlCharacters.contains(scalar)
+            }
+            .map(String.init)
+            .joined()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return sanitized.isEmpty ? nil : sanitized
     }
 
     static func baseURLReplacingRetiredDefault(_ rawValue: String, for provider: ModelProvider) -> String {
@@ -253,7 +306,10 @@ enum ModelConnectionConfigurationStore {
             baseURL: baseURL,
             apiKey: apiKey,
             modelName: modelName,
-            apiFormat: provider.apiFormat
+            apiFormat: provider.apiFormat,
+            additionalHeaders: provider == .openAICompatible
+                ? serverManagedAdditionalHeaders(userDefaults: userDefaults)
+                : [:]
         )
     }
 }

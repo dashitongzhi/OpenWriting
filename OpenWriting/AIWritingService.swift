@@ -5,22 +5,25 @@ enum ModelAPIFormat: String, Codable {
     case anthropicMessages
 }
 
-struct AIConnectionConfiguration {
+struct AIConnectionConfiguration: Sendable {
     let baseURL: URL
     let apiKey: String
     let modelName: String
     let apiFormat: ModelAPIFormat
+    let additionalHeaders: [String: String]
 
     init(
         baseURL: URL,
         apiKey: String,
         modelName: String,
-        apiFormat: ModelAPIFormat = .openAIChatCompletions
+        apiFormat: ModelAPIFormat = .openAIChatCompletions,
+        additionalHeaders: [String: String] = [:]
     ) {
         self.baseURL = baseURL
         self.apiKey = apiKey
         self.modelName = modelName
         self.apiFormat = apiFormat
+        self.additionalHeaders = additionalHeaders
     }
 }
 
@@ -392,6 +395,7 @@ enum AIWritingService {
         if !configuration.apiKey.isEmpty {
             request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
         }
+        applyAdditionalHeaders(from: configuration, to: &request)
         request.timeoutInterval = 120
 
         let payload = ChatCompletionsRequest(
@@ -440,6 +444,7 @@ enum AIWritingService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(configuration.apiKey, forHTTPHeaderField: "x-api-key")
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        applyAdditionalHeaders(from: configuration, to: &request)
         request.timeoutInterval = 120
 
         let payload = AnthropicMessagesRequest(
@@ -478,6 +483,18 @@ enum AIWritingService {
         }
 
         return text
+    }
+
+    private static func applyAdditionalHeaders(
+        from configuration: AIConnectionConfiguration,
+        to request: inout URLRequest
+    ) {
+        guard !configuration.additionalHeaders.isEmpty else { return }
+
+        for (field, value) in configuration.additionalHeaders.sorted(by: { $0.key < $1.key }) {
+            request.setValue(value, forHTTPHeaderField: field)
+        }
+        request.setValue(UUID().uuidString, forHTTPHeaderField: "X-OpenWriting-Request-ID")
     }
 
     private static func shouldRetryCompletion(after error: Error) -> Bool {

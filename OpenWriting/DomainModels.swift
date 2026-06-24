@@ -291,7 +291,7 @@ enum ModelProvider: String, CaseIterable, Identifiable {
         case .openAICompatible:
             return "OpenWriting"
         case .custom:
-            return "自定义"
+            return "自定义 OpenAI"
         case .anthropic:
             return "自定义 Anthropic"
         }
@@ -1538,7 +1538,7 @@ struct PlotThreadList: Codable, Hashable {
     }
 }
 
-struct NovelProject: Identifiable, Codable {
+struct NovelProject: Identifiable, Codable, @unchecked Sendable {
     let id: String
     let title: String
     let genre: String
