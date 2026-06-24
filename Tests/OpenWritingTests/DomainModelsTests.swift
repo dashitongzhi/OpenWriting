@@ -1,3 +1,4 @@
+import Security
 import XCTest
 @testable import OpenWriting
 
@@ -43,10 +44,37 @@ final class DomainModelsTests: XCTestCase {
 
         let configuration = try ModelConnectionConfigurationStore.loadConnectionConfiguration(userDefaults: userDefaults)
 
+        XCTAssertEqual(configuration.apiKey, "")
         XCTAssertEqual(configuration.additionalHeaders["X-OpenWriting-Client"], "macOS")
         let installationID = try XCTUnwrap(configuration.additionalHeaders["X-OpenWriting-Installation-ID"])
         XCTAssertNotNil(UUID(uuidString: installationID))
         XCTAssertNil(configuration.additionalHeaders["X-OpenWriting-Account-ID"])
+    }
+
+    @MainActor
+    func testOpenWritingServerManagedConnectionIgnoresLegacyKeychainAPIKey() throws {
+        let userDefaults = makeIsolatedUserDefaults()
+        seedRawOpenWritingAPIKey("sk-legacy-openai-key")
+        defer { deleteRawOpenWritingAPIKey() }
+
+        let configuration = try ModelConnectionConfigurationStore.loadConnectionConfiguration(userDefaults: userDefaults)
+
+        XCTAssertEqual(configuration.apiKey, "")
+    }
+
+    @MainActor
+    func testOpenWritingAPIKeyMigrationPurgesLegacyManagedKeyStorage() {
+        let userDefaults = makeIsolatedUserDefaults()
+        userDefaults.set("sk-userdefaults-key", forKey: AppState.StorageKey.apiKey)
+        userDefaults.set("sk-legacy-userdefaults-key", forKey: AppState.LegacyStorageKey.apiKey)
+        seedRawOpenWritingAPIKey("sk-keychain-key")
+        defer { deleteRawOpenWritingAPIKey() }
+
+        AppState.migrateAPIKeysToKeychainIfNeeded(userDefaults)
+
+        XCTAssertNil(userDefaults.string(forKey: AppState.StorageKey.apiKey))
+        XCTAssertNil(userDefaults.string(forKey: AppState.LegacyStorageKey.apiKey))
+        XCTAssertNil(rawOpenWritingAPIKey())
     }
 
     @MainActor
@@ -329,6 +357,42 @@ final class DomainModelsTests: XCTestCase {
         let userDefaults = UserDefaults(suiteName: suiteName)!
         userDefaults.removePersistentDomain(forName: suiteName)
         return userDefaults
+    }
+
+    private func seedRawOpenWritingAPIKey(_ value: String) {
+        deleteRawOpenWritingAPIKey()
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: ModelConnectionConfigurationStore.KeychainKey.service,
+            kSecAttrAccount: ModelConnectionConfigurationStore.KeychainKey.openWAccount,
+            kSecValueData: Data(value.utf8),
+            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock
+        ]
+        SecItemAdd(query as CFDictionary, nil)
+    }
+
+    private func rawOpenWritingAPIKey() -> String? {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: ModelConnectionConfigurationStore.KeychainKey.service,
+            kSecAttrAccount: ModelConnectionConfigurationStore.KeychainKey.openWAccount,
+            kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data
+        else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private func deleteRawOpenWritingAPIKey() {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: ModelConnectionConfigurationStore.KeychainKey.service,
+            kSecAttrAccount: ModelConnectionConfigurationStore.KeychainKey.openWAccount
+        ]
+        SecItemDelete(query as CFDictionary)
     }
 
     // MARK: - Quality Review Schema Tests

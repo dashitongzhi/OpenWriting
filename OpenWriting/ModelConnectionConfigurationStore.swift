@@ -235,6 +235,8 @@ enum ModelConnectionConfigurationStore {
     }
 
     static func loadAPIKeyFromKeychain(for provider: ModelProvider) -> String? {
+        guard provider.requiresAPIKey else { return nil }
+
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: KeychainKey.service,
@@ -255,6 +257,11 @@ enum ModelConnectionConfigurationStore {
 
     @discardableResult
     static func saveAPIKeyToKeychain(_ apiKey: String, for provider: ModelProvider) -> Bool {
+        guard provider.requiresAPIKey else {
+            deleteAPIKeyFromKeychain(for: provider)
+            return true
+        }
+
         let encodedValue = Data(apiKey.utf8)
         let account = keychainAccount(for: provider)
         let baseQuery: [CFString: Any] = [
@@ -286,7 +293,7 @@ enum ModelConnectionConfigurationStore {
         let provider = loadSelectedProvider(userDefaults: userDefaults)
         let rawModelName = loadModelName(for: provider, userDefaults: userDefaults)
         let rawBaseURL = loadBaseURL(for: provider, userDefaults: userDefaults)
-        let rawAPIKey = loadAPIKeyFromKeychain(for: provider) ?? ""
+        let rawAPIKey = provider.requiresAPIKey ? loadAPIKeyFromKeychain(for: provider) ?? "" : ""
 
         let modelName = rawModelName.trimmingCharacters(in: .whitespacesAndNewlines)
         let apiKey = rawAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)

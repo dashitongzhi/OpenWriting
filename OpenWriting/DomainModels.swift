@@ -320,25 +320,31 @@ enum ModelProvider: String, CaseIterable, Identifiable {
         case .openAICompatible:
             return ""
         case .custom:
-            return ""
+            return "https://api.openai.com/v1"
         case .anthropic:
-            return ""
+            return "https://api.anthropic.com/v1"
         }
     }
 
     var modelPlaceholder: String {
         switch self {
-        case .openAICompatible, .custom:
+        case .openAICompatible:
             return ""
+        case .custom:
+            return "gpt-4.1-mini"
         case .anthropic:
-            return ""
+            return "claude-sonnet-4"
         }
     }
 
     var keyPlaceholder: String {
         switch self {
-        case .openAICompatible, .custom, .anthropic:
+        case .openAICompatible:
             return ""
+        case .custom:
+            return "sk-..."
+        case .anthropic:
+            return "sk-ant-..."
         }
     }
 }

@@ -152,7 +152,7 @@ final class AppState {
         self.activeAccount = resolvedActiveAccount
         self.selectedProvider = resolvedProvider
         self.modelName = Self.loadModelName(for: resolvedProvider, userDefaults: userDefaults)
-        self.apiKey = Self.loadAPIKeyFromKeychain(for: resolvedProvider) ?? ""
+        self.apiKey = resolvedProvider.requiresAPIKey ? Self.loadAPIKeyFromKeychain(for: resolvedProvider) ?? "" : ""
         self.baseURL = Self.loadBaseURL(for: resolvedProvider, userDefaults: userDefaults)
         self.autoValidateOnLaunch = Self.boolValue(
             forKey: StorageKey.autoValidateOnLaunch,
@@ -301,7 +301,8 @@ final class AppState {
         connectionStatus = .checking
         validationMessage = "正在验证 \(selectedProvider.title) 连接..."
 
-        let providerTitle = selectedProvider.title
+        let provider = selectedProvider
+        let providerTitle = provider.title
         validationTask = Task { @MainActor in
             do {
                 let resolvedModel = try await AIWritingService.validateConnection(configuration: configuration)
@@ -315,7 +316,7 @@ final class AppState {
                 guard !Task.isCancelled else { return }
 
                 connectionStatus = .needsAttention
-                validationMessage = Self.validationFailureMessage(for: error)
+                validationMessage = Self.validationFailureMessage(for: error, provider: provider)
             }
         }
     }
@@ -2086,7 +2087,9 @@ final class AppState {
     }
 
     private var resolvedAIConfiguration: AIConnectionConfiguration? {
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedKey = selectedProvider.requiresAPIKey
+            ? apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            : ""
         let trimmedModelName = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard hasValidBaseURL else {

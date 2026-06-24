@@ -140,9 +140,15 @@ extension AppState {
         ModelConnectionConfigurationStore.migrateServerManagedOpenWritingProviderIfNeeded(userDefaults)
     }
 
-    static func validationFailureMessage(for error: Error) -> String {
+    static func validationFailureMessage(for error: Error, provider: ModelProvider) -> String {
         let resolvedMessage = (error as NSError).localizedDescription
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        if provider == .openAICompatible {
+            if resolvedMessage.isEmpty {
+                return "OpenWriting 连接校验失败，请稍后重试或检查网络。"
+            }
+            return "OpenWriting 连接校验失败：\(resolvedMessage)"
+        }
         if resolvedMessage.isEmpty {
             return "连接校验失败，请检查 Base URL、模型 ID 和 API Key。"
         }
@@ -186,6 +192,11 @@ extension AppState {
         userDefaults.set(modelName, forKey: Self.modelNameStorageKey(for: provider))
         userDefaults.set(baseURL, forKey: Self.baseURLStorageKey(for: provider))
 
+        guard provider.requiresAPIKey else {
+            Self.deleteAPIKeyFromKeychain(for: provider)
+            return
+        }
+
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedKey.isEmpty {
             Self.deleteAPIKeyFromKeychain(for: provider)
@@ -198,7 +209,7 @@ extension AppState {
         isApplyingProviderConfiguration = true
         modelName = Self.loadModelName(for: provider, userDefaults: userDefaults)
         baseURL = Self.loadBaseURL(for: provider, userDefaults: userDefaults)
-        apiKey = Self.loadAPIKeyFromKeychain(for: provider) ?? ""
+        apiKey = provider.requiresAPIKey ? Self.loadAPIKeyFromKeychain(for: provider) ?? "" : ""
         isApplyingProviderConfiguration = false
         refreshIdleValidationMessage()
     }
@@ -249,6 +260,11 @@ extension AppState {
     }
 
     func persistAPIKey() {
+        guard selectedProvider.requiresAPIKey else {
+            Self.deleteAPIKeyFromKeychain(for: selectedProvider)
+            return
+        }
+
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedKey.isEmpty else {
             Self.deleteAPIKeyFromKeychain(for: selectedProvider)
@@ -331,20 +347,8 @@ extension AppState {
     }
 
     static func migrateAPIKeysToKeychainIfNeeded(_ userDefaults: UserDefaults) {
-        if let storedOpenWKey = stringValue(forKey: StorageKey.apiKey, userDefaults: userDefaults)?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           !storedOpenWKey.isEmpty,
-           loadAPIKeyFromKeychain(for: .openAICompatible) == nil {
-            saveAPIKeyToKeychain(storedOpenWKey, for: .openAICompatible)
-        }
+        deleteAPIKeyFromKeychain(for: .openAICompatible)
         userDefaults.removeObject(forKey: StorageKey.apiKey)
-
-        if let legacyAPIKey = stringValue(forKey: LegacyStorageKey.apiKey, userDefaults: userDefaults)?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           !legacyAPIKey.isEmpty,
-           loadAPIKeyFromKeychain(for: .openAICompatible) == nil {
-            saveAPIKeyToKeychain(legacyAPIKey, for: .openAICompatible)
-        }
         userDefaults.removeObject(forKey: LegacyStorageKey.apiKey)
     }
 
