@@ -737,6 +737,39 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertFalse(entities.isEmpty)
     }
 
+    func testAIMemoryProjectionFailureBecomesActionableWarning() throws {
+        let commit = LongformChapterCommit(
+            id: "commit-ai-memory-warning",
+            chapterNumber: 3,
+            volumeNumber: 1,
+            chapterTitle: "雨夜追查",
+            status: .accepted,
+            createdAt: Date(),
+            plannedNodes: [],
+            coveredNodes: [],
+            missedNodes: [],
+            rejectionReasons: [],
+            revisionHints: [],
+            acceptedEvents: [],
+            extractedMemoryItems: [],
+            dominantThreadType: .quest,
+            reviewSummary: "可用。",
+            projectionStatus: [
+                "memory": "done",
+                "ai_memory": "failed"
+            ]
+        )
+
+        let messages = LongformStorySystem.projectionStatusMessages(for: commit)
+        let aiMemoryMessage = try XCTUnwrap(messages.first { $0.key == "ai_memory" })
+
+        XCTAssertEqual(aiMemoryMessage.status, .warning)
+        XCTAssertTrue(aiMemoryMessage.message.contains("AI 记忆抽取"))
+        XCTAssertTrue(aiMemoryMessage.recoveryHint?.contains("重新保存本章") ?? false)
+        XCTAssertFalse(aiMemoryMessage.summaryText.contains("ai_memory"))
+        XCTAssertFalse(aiMemoryMessage.summaryText.contains("failed"))
+    }
+
     func testClearIntegrationCacheRemovesLegacyDefaults() {
         let projectID = "integration-cache-test-\(UUID().uuidString)"
         let defaults = UserDefaults.standard

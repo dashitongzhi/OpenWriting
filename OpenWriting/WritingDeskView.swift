@@ -1214,10 +1214,20 @@ struct WritingDeskView: View {
                             .foregroundStyle(gateStatusColor)
 
                         ForEach(Array(writeGate.checks.filter { $0.status != .passed }.prefix(3))) { check in
-                            Text("· \(check.stage.displayName)：\(check.message)")
-                                .font(.caption)
-                                .foregroundStyle(check.status == .blocked ? .red : .orange)
-                                .lineLimit(2)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("· \(check.stage.displayName)：\(check.message)")
+                                    .font(.caption)
+                                    .foregroundStyle(check.status == .blocked ? .red : .orange)
+                                    .lineLimit(2)
+
+                                if let detail = check.detail?.trimmingCharacters(in: .whitespacesAndNewlines),
+                                   !detail.isEmpty {
+                                    Text("  \(detail)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(3)
+                                }
+                            }
                         }
                     }
                 }
@@ -1259,13 +1269,34 @@ struct WritingDeskView: View {
                     }
                 }
 
-                let projectionSummary = commit.projectionStatus
-                    .sorted { $0.key < $1.key }
-                    .map { "\($0.key): \($0.value)" }
-                    .joined(separator: " · ")
-                if !projectionSummary.isEmpty {
-                    Text(projectionSummary)
-                        .font(.caption2.monospaced())
+                let projectionMessages = LongformStorySystem.projectionStatusMessages(for: commit)
+                let actionableProjectionMessages = projectionMessages
+                    .filter { $0.status != .passed }
+                if !actionableProjectionMessages.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("后台投影提示")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        ForEach(Array(actionableProjectionMessages.prefix(3))) { projection in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("· \(projection.message)")
+                                    .font(.caption)
+                                    .foregroundStyle(projection.status == .blocked ? .red : .orange)
+                                    .lineLimit(2)
+
+                                if let recoveryHint = projection.recoveryHint {
+                                    Text("  \(recoveryHint)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                }
+                            }
+                        }
+                    }
+                } else if !projectionMessages.isEmpty {
+                    Text("后台投影：\(projectionMessages.prefix(4).map(\.message).joined(separator: "；"))")
+                        .font(.caption2)
                         .foregroundStyle(.tertiary)
                         .lineLimit(2)
                 }

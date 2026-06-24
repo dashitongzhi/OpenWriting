@@ -81,6 +81,25 @@ struct LongformWriteGateReport: Codable, Hashable, Identifiable {
     }
 }
 
+struct LongformProjectionStatusMessage: Hashable, Identifiable {
+    var key: String
+    var title: String
+    var status: LongformWriteGateStatus
+    var message: String
+    var recoveryHint: String?
+
+    var id: String {
+        key
+    }
+
+    var summaryText: String {
+        if let recoveryHint, !recoveryHint.isEmpty {
+            return "\(message)：\(recoveryHint)"
+        }
+        return message
+    }
+}
+
 struct LongformRuntimeHealthIssue: Codable, Hashable, Identifiable {
     var id: String
     var status: LongformWriteGateStatus
@@ -703,25 +722,34 @@ enum LongformStorySystem {
             fulfillmentDetail = commit.plannedNodes.isEmpty ? "本章没有明确节点要求。" : "\(commit.coveredNodes.count)/\(commit.plannedNodes.count)"
         }
 
-        let unsettledProjectionItems = commit.projectionStatus
-            .filter { _, value in
-                !Self.isSettledProjectionStatus(value)
-            }
-            .sorted { $0.key < $1.key }
-            .map { "\($0.key)=\($0.value)" }
+        let projectionMessages = projectionStatusMessages(for: commit)
+        let blockedProjectionMessages = projectionMessages
+            .filter { $0.status == .blocked }
+        let warningProjectionMessages = projectionMessages
+            .filter { $0.status == .warning }
         let projectionStatus: LongformWriteGateStatus
         let projectionMessage: String
         let projectionDetail: String?
-        if !unsettledProjectionItems.isEmpty {
+        if !blockedProjectionMessages.isEmpty {
             projectionStatus = .blocked
-            projectionMessage = "后台投影未完成"
-            projectionDetail = unsettledProjectionItems.joined(separator: "；")
+            projectionMessage = "后台投影仍在处理"
+            projectionDetail = blockedProjectionMessages
+                .prefix(3)
+                .map(\.summaryText)
+                .joined(separator: "；")
+        } else if !warningProjectionMessages.isEmpty {
+            projectionStatus = .warning
+            projectionMessage = "后台投影需要处理"
+            projectionDetail = warningProjectionMessages
+                .prefix(3)
+                .map(\.summaryText)
+                .joined(separator: "；")
         } else {
             projectionStatus = .passed
             projectionMessage = commit.isAccepted ? "后台投影完成" : "拒稿已隔离，投影跳过"
-            projectionDetail = commit.projectionStatus
-                .sorted { $0.key < $1.key }
-                .map { "\($0.key)=\($0.value)" }
+            projectionDetail = projectionMessages
+                .prefix(4)
+                .map(\.message)
                 .joined(separator: "；")
         }
 
@@ -774,12 +802,95 @@ enum LongformStorySystem {
         )
     }
 
-    private static func isSettledProjectionStatus(_ value: String) -> Bool {
-        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "done", "skipped", "passed", "rejected", "invalidated", "empty", "parse_failed", "failed":
-            return true
+    static func projectionStatusMessages(for commit: LongformChapterCommit) -> [LongformProjectionStatusMessage] {
+        commit.projectionStatus
+            .sorted { $0.key < $1.key }
+            .map { key, value in
+                projectionStatusMessage(
+                    key: key,
+                    rawStatus: value,
+                    commitIsAccepted: commit.isAccepted
+                )
+            }
+    }
+
+    private static func projectionStatusMessage(
+        key: String,
+        rawStatus: String,
+        commitIsAccepted: Bool
+    ) -> LongformProjectionStatusMessage {
+        let title = projectionTitle(for: key)
+        let normalizedStatus = rawStatus.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let status: LongformWriteGateStatus
+        let message: String
+        let recoveryHint: String?
+
+        switch normalizedStatus {
+        case "done", "passed":
+            status = .passed
+            message = "\(title)已同步"
+            recoveryHint = nil
+        case "skipped":
+            status = .passed
+            message = "\(title)已跳过"
+            recoveryHint = commitIsAccepted ? nil : "先修订未通过章节，重新保存后会重建投影。"
+        case "rejected":
+            status = commitIsAccepted ? .warning : .passed
+            message = "\(title)未通过"
+            recoveryHint = "按写后审查或节点提示修订当前章，再重新保存。"
+        case "invalidated":
+            status = commitIsAccepted ? .warning : .passed
+            message = commitIsAccepted ? "\(title)已作废" : "\(title)已隔离"
+            recoveryHint = commitIsAccepted ? "按当前正文重新保存本章，让后台重建投影。" : nil
+        case "empty":
+            status = .warning
+            message = "\(title)没有抽取到新增内容"
+            recoveryHint = "如果本章新增了人物状态、地点或伏笔，请手动补充记忆或重新保存触发抽取。"
+        case "parse_failed":
+            status = .warning
+            message = "\(title)返回格式无法解析"
+            recoveryHint = "重新保存本章；若反复出现，换用更稳定的模型后再触发抽取。"
+        case "failed":
+            status = .warning
+            message = "\(title)更新失败"
+            recoveryHint = "检查模型连接后重新保存本章；当前已保留本地关键词记忆。"
+        case "pending", "running", "in_progress":
+            status = .blocked
+            message = "\(title)仍在处理"
+            recoveryHint = "稍等片刻再查看；若长时间不变，重新保存本章触发后台刷新。"
         default:
-            return false
+            status = .blocked
+            message = "\(title)状态未确认"
+            recoveryHint = "重新保存本章，让后台重新生成可校验的投影状态。"
+        }
+
+        return LongformProjectionStatusMessage(
+            key: key,
+            title: title,
+            status: status,
+            message: message,
+            recoveryHint: recoveryHint
+        )
+    }
+
+    private static func projectionTitle(for key: String) -> String {
+        switch key {
+        case "ai_memory":
+            return "AI 记忆抽取"
+        case "memory":
+            return "结构化记忆"
+        case "foreshadowing":
+            return "伏笔投影"
+        case "threads":
+            return "叙事线投影"
+        case "strands":
+            return "节奏线投影"
+        case "runtime":
+            return "运行态"
+        case "quality_gate":
+            return "质量门禁"
+        default:
+            return "后台投影"
         }
     }
 
