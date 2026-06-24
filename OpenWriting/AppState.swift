@@ -10,6 +10,7 @@ final class AppState {
 
     let userDefaults: UserDefaults
     let projectStore: ProjectFileStore
+    @ObservationIgnored private let commerceProvider: any CommerceEntitlementProviding
     @ObservationIgnored let cloudStore = ICloudProjectStore()
     @ObservationIgnored var cloudSaveTask: Task<Void, Never>?
     @ObservationIgnored var cloudSaveGeneration: UInt64 = 0
@@ -100,6 +101,7 @@ final class AppState {
     var cloudSyncTitle = "本机保存"
     var cloudSyncSymbolName = "icloud.slash"
     var cloudSyncStatusMessage = "登录 Apple ID 后即可通过 iCloud 同步项目。"
+    var commerceEntitlement: CommerceEntitlementSnapshot
 
     var currentProjectSnapshotTimestamp: TimeInterval {
         didSet {
@@ -132,7 +134,8 @@ final class AppState {
 
     init(
         userDefaults: UserDefaults = .standard,
-        projectStore: ProjectFileStore? = nil
+        projectStore: ProjectFileStore? = nil,
+        commerceProvider: any CommerceEntitlementProviding = DeferredAppleCommerceProvider()
     ) {
         let projectStore = projectStore ?? ProjectFileStore()
         Self.migrateLegacyUserDefaultsIfNeeded(userDefaults, projectStore: projectStore)
@@ -142,6 +145,7 @@ final class AppState {
         Self.migrateAPIKeysToKeychainIfNeeded(userDefaults)
         self.userDefaults = userDefaults
         self.projectStore = projectStore
+        self.commerceProvider = commerceProvider
         let resolvedActiveAccount = Self.loadActiveAppleAccount(from: userDefaults)
         let resolvedStorageScope = resolvedActiveAccount?.userID
         let resolvedProvider = ModelConnectionConfigurationStore.loadSelectedProvider(userDefaults: userDefaults)
@@ -174,6 +178,7 @@ final class AppState {
         self.writingSkills = Self.loadWritingSkills(from: userDefaults) ?? []
         self.connectionStatus = .idle
         self.validationMessage = Self.emptyConfigurationMessage
+        self.commerceEntitlement = .localDefault()
         self.activeProjectID = Self.stringValue(
             forKey: Self.activeProjectIDStorageKey(for: resolvedStorageScope),
             userDefaults: userDefaults
@@ -192,6 +197,7 @@ final class AppState {
         }
 
         Task { @MainActor in
+            await refreshCommerceEntitlements()
             let hasValidAppleCredential = await refreshActiveAppleCredentialState()
             await refreshCloudAvailability()
 
@@ -203,6 +209,26 @@ final class AppState {
 
     var activeWorkspaceName: String {
         activeProject?.title ?? "当前工作区"
+    }
+
+    var hasPaidCommerceAccess: Bool {
+        commerceEntitlement.grantsPaidAccess
+    }
+
+    func refreshCommerceEntitlements() async {
+        commerceEntitlement = await commerceProvider.currentEntitlements(accountID: activeAccount?.userID)
+    }
+
+    func purchaseCommerceProduct(_ request: CommercePurchaseRequest) async -> CommercePurchaseOutcome {
+        let outcome = await commerceProvider.purchase(request, accountID: activeAccount?.userID)
+        if case let .completed(snapshot) = outcome {
+            commerceEntitlement = snapshot
+        }
+        return outcome
+    }
+
+    func restoreCommercePurchases() async {
+        commerceEntitlement = await commerceProvider.restorePurchases(accountID: activeAccount?.userID)
     }
 
     /// 便捷访问所有专业化管理器

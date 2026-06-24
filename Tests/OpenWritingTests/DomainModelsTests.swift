@@ -63,6 +63,37 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertNotNil(UUID(uuidString: installationID))
     }
 
+    func testCommerceEntitlementDefaultsToFreeWhenAppleCommerceIsDeferred() {
+        let timestamp = Date(timeIntervalSince1970: 1_772_000_000)
+
+        let snapshot = CommerceEntitlementSnapshot.localDefault(updatedAt: timestamp)
+
+        XCTAssertEqual(snapshot.tier, .free)
+        XCTAssertEqual(snapshot.status, .notConfigured)
+        XCTAssertEqual(snapshot.source, .localDefault)
+        XCTAssertFalse(snapshot.grantsPaidAccess)
+        XCTAssertEqual(snapshot.updatedAt, timestamp)
+    }
+
+    func testDeferredAppleCommerceProviderDoesNotStartOnlinePayment() async {
+        let provider = DeferredAppleCommerceProvider {
+            Date(timeIntervalSince1970: 1_772_000_000)
+        }
+
+        let entitlement = await provider.currentEntitlements(accountID: "apple-user")
+        let outcome = await provider.purchase(
+            CommercePurchaseRequest(productID: "future.product", expectedTier: .authorPro),
+            accountID: "apple-user"
+        )
+        let restored = await provider.restorePurchases(accountID: "apple-user")
+
+        XCTAssertEqual(entitlement, .localDefault(updatedAt: Date(timeIntervalSince1970: 1_772_000_000)))
+        XCTAssertEqual(restored, entitlement)
+        XCTAssertEqual(outcome, .unavailable(reason: DeferredAppleCommerceProvider.unavailableReason))
+        XCTAssertTrue(AppleCommerceProductCatalog.storeKitIntegrationIsDeferred)
+        XCTAssertTrue(AppleCommerceProductCatalog.reservedProducts.isEmpty)
+    }
+
     @MainActor
     func testRetiredOpenWDefaultBaseURLMigratesToServerManagedBackend() {
         let userDefaults = makeIsolatedUserDefaults()

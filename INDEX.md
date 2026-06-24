@@ -29,6 +29,7 @@
 | `OpenWriting/AppState+Account.swift` | `AppState` 扩展 | Apple 账户绑定、账号隔离项目加载、旧存储迁移辅助。 |
 | `OpenWriting/AppState+iCloudSync.swift` | `AppState` 扩展 | iCloud 可用性检查、快照推送与拉取、云端状态回写。 |
 | `OpenWriting/AccountSync.swift` | `AppleAccountProfile`, `AccountProjectSnapshot`, `ICloudProjectStore` | Apple ID 状态识别、entitlement 检测、CloudKit 快照读写与 iCloud 可用性判断。 |
+| `OpenWriting/CommerceEntitlements.swift` | `CommerceEntitlementSnapshot`, `CommerceEntitlementProviding`, `DeferredAppleCommerceProvider` | 商业化权益、Apple 官方支付后续接入点与当前延后支付的默认实现。 |
 | `OpenWriting/DomainModels.swift` | `NovelLength`, `NovelProject`, `ChapterDraft`, `ReferenceDocument`, `GlobalMemorySnapshot`, `PersistedTimestampCodec` 等 | 领域模型、兼容时间戳编解码与项目核心数据结构。 |
 | `OpenWriting/DateFormatting.swift` | `TimestampLabel` | 首页与工作区复用的时间标签辅助。 |
 | `OpenWriting/ProjectFileStore.swift` | `ProjectFileStore` | 本地项目文件存储、按账号 scope 隔离读写、旧 `UserDefaults` 项目数据承接。 |
@@ -61,14 +62,15 @@
 7. `OpenWriting/ProjectFileStore.swift`
 8. `OpenWriting/TextFileDecoding.swift`
 9. `OpenWriting/AccountSync.swift`
-10. `OpenWriting/ChapterTreeRefresh.swift`
-11. `OpenWriting/AppRootView.swift`
-12. `OpenWriting/HomeDashboardView.swift`
-13. `OpenWriting/WritingDeskView.swift`
-14. `OpenWriting/WritingDeskSupportViews.swift`
-15. `OpenWriting/WritingDeskOutlineGeneratorSheet.swift`
-16. `OpenWriting/OutlineWorkspacePanel.swift`
-17. `OpenWriting/ProjectSavedChaptersSheet.swift`
-18. `OpenWriting/SavedChapterBrowserComponents.swift`
-19. `OpenWriting/AIWritingService.swift`
-20. `OpenWriting/LiteraryQuoteLibrary.swift`
+10. `OpenWriting/CommerceEntitlements.swift`
+11. `OpenWriting/ChapterTreeRefresh.swift`
+12. `OpenWriting/AppRootView.swift`
+13. `OpenWriting/HomeDashboardView.swift`
+14. `OpenWriting/WritingDeskView.swift`
+15. `OpenWriting/WritingDeskSupportViews.swift`
+16. `OpenWriting/WritingDeskOutlineGeneratorSheet.swift`
+17. `OpenWriting/OutlineWorkspacePanel.swift`
+18. `OpenWriting/ProjectSavedChaptersSheet.swift`
+19. `OpenWriting/SavedChapterBrowserComponents.swift`
+20. `OpenWriting/AIWritingService.swift`
+21. `OpenWriting/LiteraryQuoteLibrary.swift`

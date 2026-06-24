@@ -43,6 +43,7 @@ extension AppState {
 
         Task { @MainActor in
             _ = await refreshActiveAppleCredentialState()
+            await refreshCommerceEntitlements()
             await synchronizeWithICloud(forcePull: false)
         }
     }
@@ -58,6 +59,7 @@ extension AppState {
         reloadAccountScopedProjects()
 
         Task { @MainActor in
+            await refreshCommerceEntitlements()
             await refreshCloudAvailability()
         }
     }
