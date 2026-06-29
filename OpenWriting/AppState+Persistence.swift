@@ -17,6 +17,10 @@ extension AppState {
         static let autoValidateOnLaunch = "OpenWriting.autoValidateOnLaunch"
         static let showWritingDeskCachePanel = "OpenWriting.showWritingDeskCachePanel"
         static let showWritingDeskTimeline = "OpenWriting.showWritingDeskTimeline"
+        static let isWritingFocusModeEnabled = "OpenWriting.isWritingFocusModeEnabled"
+        static let draftEditorFontSize = "OpenWriting.draftEditorFontSize"
+        static let draftEditorLineSpacing = "OpenWriting.draftEditorLineSpacing"
+        static let hasAcceptedAIDataTransfer = "OpenWriting.hasAcceptedAIDataTransfer"
         static let legacyActiveAccountEmail = "OpenWriting.activeAccountEmail"
         static let activeAppleUserID = "OpenWriting.activeAppleUserID"
         static let activeAppleUserEmail = "OpenWriting.activeAppleUserEmail"
@@ -40,6 +44,9 @@ extension AppState {
         static let autoValidateOnLaunch = "\(prefix).autoValidateOnLaunch"
         static let showWritingDeskCachePanel = "\(prefix).showWritingDeskCachePanel"
         static let showWritingDeskTimeline = "\(prefix).showWritingDeskTimeline"
+        static let isWritingFocusModeEnabled = "\(prefix).isWritingFocusModeEnabled"
+        static let draftEditorFontSize = "\(prefix).draftEditorFontSize"
+        static let draftEditorLineSpacing = "\(prefix).draftEditorLineSpacing"
         static let activeProjectID = "\(prefix).activeProjectID"
         static let recentProjects = "\(prefix).recentProjects"
     }
@@ -221,6 +228,9 @@ extension AppState {
     func persistWritingDeskDisplayPreferences() {
         userDefaults.set(showWritingDeskCachePanel, forKey: StorageKey.showWritingDeskCachePanel)
         userDefaults.set(showWritingDeskTimeline, forKey: StorageKey.showWritingDeskTimeline)
+        userDefaults.set(isWritingFocusModeEnabled, forKey: StorageKey.isWritingFocusModeEnabled)
+        userDefaults.set(draftEditorFontSize, forKey: StorageKey.draftEditorFontSize)
+        userDefaults.set(draftEditorLineSpacing, forKey: StorageKey.draftEditorLineSpacing)
     }
 
     func persistActiveProjectID() {
@@ -318,6 +328,9 @@ extension AppState {
         copyBoolValue(from: LegacyStorageKey.autoValidateOnLaunch, to: StorageKey.autoValidateOnLaunch, userDefaults: userDefaults)
         copyBoolValue(from: LegacyStorageKey.showWritingDeskCachePanel, to: StorageKey.showWritingDeskCachePanel, userDefaults: userDefaults)
         copyBoolValue(from: LegacyStorageKey.showWritingDeskTimeline, to: StorageKey.showWritingDeskTimeline, userDefaults: userDefaults)
+        copyBoolValue(from: LegacyStorageKey.isWritingFocusModeEnabled, to: StorageKey.isWritingFocusModeEnabled, userDefaults: userDefaults)
+        copyDoubleValue(from: LegacyStorageKey.draftEditorFontSize, to: StorageKey.draftEditorFontSize, userDefaults: userDefaults)
+        copyDoubleValue(from: LegacyStorageKey.draftEditorLineSpacing, to: StorageKey.draftEditorLineSpacing, userDefaults: userDefaults)
         copyStringValue(from: LegacyStorageKey.activeProjectID, to: StorageKey.activeProjectID, userDefaults: userDefaults)
 
         if !projectStore.hasProjects(for: nil),
@@ -413,6 +426,12 @@ extension AppState {
     static func copyBoolValue(from legacyKey: String, to currentKey: String, userDefaults: UserDefaults) {
         guard userDefaults.object(forKey: currentKey) == nil,
               let value = userDefaults.object(forKey: legacyKey) as? Bool else { return }
+        userDefaults.set(value, forKey: currentKey)
+    }
+
+    static func copyDoubleValue(from legacyKey: String, to currentKey: String, userDefaults: UserDefaults) {
+        guard userDefaults.object(forKey: currentKey) == nil,
+              let value = doubleValue(forKey: legacyKey, userDefaults: userDefaults) else { return }
         userDefaults.set(value, forKey: currentKey)
     }
 }

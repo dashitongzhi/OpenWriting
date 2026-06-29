@@ -18,9 +18,11 @@ struct WritingDeskCollapsedLayout {
         bottomPadding: CGFloat,
         spacing: CGFloat,
         showCachePanel: Bool,
-        showTimeline: Bool
+        showTimeline: Bool,
+        reservesConfigurationCards: Bool = true
     ) {
-        let availableHeight = max(280, containerSize.height - topPadding - bottomPadding - Self.configurationCardHeight - spacing)
+        let configurationOffset = reservesConfigurationCards ? Self.configurationCardHeight + spacing : CGFloat(0)
+        let availableHeight = max(280, containerSize.height - topPadding - bottomPadding - configurationOffset)
         creationRowHeight = availableHeight
         aiCardHeight = availableHeight
 
@@ -117,6 +119,8 @@ struct WritingDeskDraftEditor: NSViewRepresentable {
     @Binding var selection: WritingDeskDraftSelection
     @Binding var selectionActionPoint: CGPoint?
     let focusToken: UUID
+    let fontSize: Double
+    let lineSpacing: Double
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -146,11 +150,11 @@ struct WritingDeskDraftEditor: NSViewRepresentable {
         textView.textContainerInset = NSSize(width: 18, height: 18)
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
-        textView.font = .systemFont(ofSize: 16)
+        textView.font = .systemFont(ofSize: fontSize)
         textView.string = text
 
         let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineSpacing = 5
+        paragraphStyle.lineSpacing = lineSpacing
         textView.defaultParagraphStyle = paragraphStyle
         textView.typingAttributes[.paragraphStyle] = paragraphStyle
 
@@ -164,6 +168,7 @@ struct WritingDeskDraftEditor: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = context.coordinator.textView else { return }
         context.coordinator.parent = self
+        applyTypography(to: textView)
 
         if textView.string != text {
             context.coordinator.isApplyingProgrammaticChange = true
@@ -191,6 +196,18 @@ struct WritingDeskDraftEditor: NSViewRepresentable {
         }
 
         context.coordinator.applySelectionUpdate(from: textView)
+    }
+
+    private func applyTypography(to textView: NSTextView) {
+        let resolvedFont = NSFont.systemFont(ofSize: fontSize)
+        if textView.font != resolvedFont {
+            textView.font = resolvedFont
+        }
+
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = lineSpacing
+        textView.defaultParagraphStyle = paragraphStyle
+        textView.typingAttributes[.paragraphStyle] = paragraphStyle
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {

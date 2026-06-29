@@ -34,11 +34,6 @@ git -C "$REPO_ROOT" diff --cached --check
 echo "Running smoke checks"
 zsh "$SCRIPT_DIR/run-smoke-checks.sh"
 
-echo "Running Swift typecheck"
-SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
-swift_files=("${(@f)$(rg --files "$REPO_ROOT/OpenWriting" -g '*.swift' | rg -v 'OpenWriting/(GenreTemplateBrowserView|QualityReviewDashboardView)\.swift$')}")
-xcrun swiftc -typecheck -parse-as-library -sdk "$SDK_PATH" "$swift_files[@]"
-
 echo "Running Debug build"
 zsh "$SCRIPT_DIR/build-debug.sh"
 

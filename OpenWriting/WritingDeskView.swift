@@ -1,5 +1,6 @@
 import Observation
 import AppKit
+import OSLog
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -51,6 +52,12 @@ struct WritingDeskView: View {
     @State private var latestAISuggestionAcceptanceContext: AISuggestionAcceptanceContext?
     @State private var latestStrandWarning: StrandWeaveState.PacingWarning?
     @State private var pendingChapterLoad: ChapterDraftMetadata?
+    @State private var qualityReviewDashboardPresentation: QualityReviewDashboardPresentation?
+    @State private var operationAlert: WritingDeskOperationAlert?
+    @State private var isFindReplacePresented = false
+    @State private var findQuery = ""
+    @State private var replacementText = ""
+    @State private var findStatusMessage = ""
 
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
@@ -67,6 +74,12 @@ struct WritingDeskView: View {
     private enum FocusArea: Hashable {
         case draft
         case ai
+    }
+
+    private struct WritingDeskOperationAlert: Identifiable {
+        let id = UUID()
+        var title: String
+        var message: String
     }
 
     private var activeProject: NovelProject? {
@@ -153,6 +166,21 @@ struct WritingDeskView: View {
                 )
             }
         }
+        .sheet(item: $qualityReviewDashboardPresentation) { presentation in
+            QualityReviewDashboardView(
+                result: presentation.review,
+                chapterTitle: presentation.chapterTitle,
+                minimumAcceptedScore: presentation.minimumAcceptedScore
+            )
+            .frame(minWidth: 760, idealWidth: 860, minHeight: 720, idealHeight: 820)
+        }
+        .alert(item: $operationAlert) { alert in
+            Alert(
+                title: Text(alert.title),
+                message: Text(alert.message),
+                dismissButton: .default(Text("知道了"))
+            )
+        }
         .onChange(of: draftSelection) { _, selection in
             if !selection.hasSelection && selectionPolishTarget == nil {
                 isSelectionPolishPopoverPresented = false
@@ -165,12 +193,17 @@ struct WritingDeskView: View {
                 selectionPolishInstruction = ""
             }
         }
+        .onChange(of: findQuery) { _, _ in
+            findStatusMessage = ""
+        }
     }
 
     @ViewBuilder
     private func writingDeskViewport(in size: CGSize) -> some View {
         if let activeProject {
-            if areConfigurationCardsCollapsed {
+            if appState.isWritingFocusModeEnabled {
+                focusedWritingWorkspace(for: activeProject, containerSize: size)
+            } else if areConfigurationCardsCollapsed {
                 collapsedWritingDeskWorkspace(for: activeProject, containerSize: size)
             } else {
                 ScrollViewReader { proxy in
@@ -206,6 +239,47 @@ struct WritingDeskView: View {
             .padding(.bottom, contentBottomPadding)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+    }
+
+    private func focusedWritingWorkspace(for project: NovelProject, containerSize: CGSize) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Label("专注写作", systemImage: "rectangle.compress.vertical")
+                    .font(.headline)
+
+                Text(project.currentChapterSummary)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Button {
+                    appState.isWritingFocusModeEnabled = false
+                } label: {
+                    Label("退出专注", systemImage: "rectangle.expand.vertical")
+                }
+                .buttonStyle(.bordered)
+                .help("恢复完整写作台")
+            }
+
+            writingDeskDraftColumn(
+                for: project,
+                layout: WritingDeskCollapsedLayout(
+                    containerSize: containerSize,
+                    topPadding: contentTopPadding + 44,
+                    bottomPadding: contentBottomPadding,
+                    spacing: workspaceSpacing,
+                    showCachePanel: false,
+                    showTimeline: false,
+                    reservesConfigurationCards: false
+                )
+            )
+        }
+        .padding(.top, contentTopPadding)
+        .padding(.horizontal, contentHorizontalPadding)
+        .padding(.bottom, contentBottomPadding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func collapsedWritingDeskWorkspace(for project: NovelProject, containerSize: CGSize) -> some View {
@@ -473,9 +547,21 @@ struct WritingDeskView: View {
                 badgeText: "\(project.draftWordCount) 字",
                 actions: [
                     WritingDeskToolbarAction(
+                        symbolName: "magnifyingglass",
+                        accessibilityLabel: isFindReplacePresented ? "关闭查找替换" : "打开查找替换",
+                        isEnabled: true
+                    ) {
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            isFindReplacePresented.toggle()
+                        }
+                        if isFindReplacePresented {
+                            focusDraftEditor()
+                        }
+                    },
+                    WritingDeskToolbarAction(
                         symbolName: "sparkles",
                         accessibilityLabel: "润色整篇草稿",
-                        isEnabled: !isGenerating && !isSavingChapter && appState.aiConfiguration != nil && !project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        isEnabled: !isGenerating && !isSavingChapter && canUseAI && !project.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     ) {
                         draftPolishInstruction = ""
                         isDraftPolishSheetPresented = true
@@ -512,12 +598,19 @@ struct WritingDeskView: View {
 
                 writingDeskChapterControls(for: project)
 
+                if isFindReplacePresented {
+                    draftFindReplaceBar(for: project)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
                 ZStack(alignment: .topLeading) {
                     WritingDeskDraftEditor(
                         text: draftBinding(for: project.id),
                         selection: $draftSelection,
                         selectionActionPoint: $draftSelectionActionPoint,
-                        focusToken: draftEditorFocusToken
+                        focusToken: draftEditorFocusToken,
+                        fontSize: appState.draftEditorFontSize,
+                        lineSpacing: appState.draftEditorLineSpacing
                     )
                     .frame(
                         minHeight: layout?.draftEditorHeight ?? 720,
@@ -550,7 +643,7 @@ struct WritingDeskView: View {
                            activeSelectionPolishSelection.hasSelection,
                            let actionPoint = activeSelectionPolishActionPoint {
                             DraftSelectionPolishToolbar(
-                                isEnabled: !isGenerating && !isSavingChapter && appState.aiConfiguration != nil,
+                                isEnabled: !isGenerating && !isSavingChapter && canUseAI,
                                 action: {
                                     selectionPolishTarget = activeSelectionPolishSelection
                                     selectionPolishAnchorPoint = actionPoint
@@ -573,7 +666,7 @@ struct WritingDeskView: View {
                             DraftSelectionPolishRequestPanel(
                                 selectedText: activeSelectionPolishSelection.text,
                                 instruction: $selectionPolishInstruction,
-                                isEnabled: appState.aiConfiguration != nil,
+                                isEnabled: canUseAI,
                                 onCancel: {
                                     isSelectionPolishPopoverPresented = false
                                 },
@@ -670,6 +763,71 @@ struct WritingDeskView: View {
         .frame(maxHeight: .infinity, alignment: .top)
     }
 
+    private func draftFindReplaceBar(for project: NovelProject) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    draftFindFields(for: project)
+                    draftFindActions(for: project)
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    draftFindFields(for: project)
+                    draftFindActions(for: project)
+                }
+            }
+
+            Text(findStatusMessage.isEmpty ? draftFindSummary(for: project) : findStatusMessage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+        .padding(12)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(palette.editorBorder, lineWidth: 1)
+        )
+    }
+
+    private func draftFindFields(for project: NovelProject) -> some View {
+        HStack(spacing: 10) {
+            TextField("查找正文", text: $findQuery)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit {
+                    findNextInDraft(for: project)
+                }
+
+            TextField("替换为", text: $replacementText)
+                .textFieldStyle(.roundedBorder)
+        }
+    }
+
+    private func draftFindActions(for project: NovelProject) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                findNextInDraft(for: project)
+            } label: {
+                Label("下一处", systemImage: "arrow.down")
+            }
+            .disabled(findQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+            Button {
+                replaceNextInDraft(for: project)
+            } label: {
+                Label("替换", systemImage: "arrow.triangle.2.circlepath")
+            }
+            .disabled(findQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+            Button {
+                replaceAllInDraft(for: project)
+            } label: {
+                Label("全部替换", systemImage: "text.badge.checkmark")
+            }
+            .disabled(findQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+    }
+
     private func writingDeskAIColumn(for project: NovelProject, layout: WritingDeskCollapsedLayout? = nil) -> some View {
         WritingDeskSectionCard(
             title: "AI 作家",
@@ -678,13 +836,17 @@ struct WritingDeskView: View {
             actions: writingDeskAIActions(for: project),
             fillContentHeight: layout != nil
         ) {
-            if appState.showWritingDeskTimeline {
-                WritingDeskTimelineRow(snapshot: timingSnapshot)
-            }
+                if appState.showWritingDeskTimeline {
+                    WritingDeskTimelineRow(snapshot: timingSnapshot)
+                }
 
-            genreTemplateSelector(for: project)
-            strandWeaveIndicator(for: project)
-            nextChapterBriefPanel(for: project)
+                if !appState.hasAcceptedAIDataTransfer {
+                    aiDataTransferConsentPanel
+                }
+
+                genreTemplateSelector(for: project)
+                strandWeaveIndicator(for: project)
+                nextChapterBriefPanel(for: project)
             qualityDebtPanel(for: project)
             longformRuntimePanel(for: project)
             storageHealthPanel(for: project)
@@ -761,7 +923,7 @@ struct WritingDeskView: View {
                         rewriteSuggestion(for: project)
                     }
                     .buttonStyle(.bordered)
-                    .disabled(isGenerating || isSavingChapter || appState.aiConfiguration == nil)
+                    .disabled(isGenerating || isSavingChapter || !canUseAI)
 
                     Button("清空结果") {
                         aiSuggestion = ""
@@ -788,7 +950,7 @@ struct WritingDeskView: View {
                         rewriteSuggestion(for: project)
                     }
                     .buttonStyle(.bordered)
-                    .disabled(isGenerating || isSavingChapter || appState.aiConfiguration == nil)
+                    .disabled(isGenerating || isSavingChapter || !canUseAI)
 
                     Button("清空结果") {
                         aiSuggestion = ""
@@ -807,11 +969,54 @@ struct WritingDeskView: View {
             if let review = displayedChapterReview(for: project) {
                 ChapterQualityReviewPanel(
                     review: review,
-                    minimumAcceptedScore: LongformStorySystem.minimumAcceptedScore(for: project.storyLength)
+                    minimumAcceptedScore: LongformStorySystem.minimumAcceptedScore(for: project.storyLength),
+                    onOpenFullReport: {
+                        qualityReviewDashboardPresentation = QualityReviewDashboardPresentation(
+                            review: review,
+                            chapterTitle: project.currentChapterSummary,
+                            minimumAcceptedScore: LongformStorySystem.minimumAcceptedScore(for: project.storyLength)
+                        )
+                    }
                 )
             }
         }
         .frame(height: layout?.aiCardHeight, alignment: .top)
+    }
+
+    private var aiDataTransferConsentPanel: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "lock.shield")
+                .font(.title3)
+                .foregroundStyle(palette.warningAccent)
+                .frame(width: 26)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("AI 功能需要先确认数据使用告知")
+                    .font(.subheadline.weight(.semibold))
+
+                Text("续写、润色、审查和记忆整理会把必要的写作上下文发送到当前模型服务。本地写作、保存和导出不受影响。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 12)
+
+            Button {
+                appState.hasAcceptedAIDataTransfer = true
+                aiStatusMessage = "已同意 AI 数据使用告知，可以测试连接或开始写作。"
+            } label: {
+                Label("同意并启用", systemImage: "checkmark.shield")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        }
+        .padding(12)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(palette.warningAccent.opacity(0.35), lineWidth: 1)
+        )
     }
 
     private func genreTemplateSelector(for project: NovelProject) -> some View {
@@ -1343,6 +1548,10 @@ struct WritingDeskView: View {
             return "生成中"
         }
 
+        if !appState.hasAcceptedAIDataTransfer {
+            return "待授权"
+        }
+
         return appState.aiConfiguration == nil ? "待配置" : "就绪"
     }
 
@@ -1359,9 +1568,13 @@ struct WritingDeskView: View {
             return palette.warningAccent
         }
 
-        return appState.aiConfiguration == nil
+        return !appState.hasAcceptedAIDataTransfer || appState.aiConfiguration == nil
             ? palette.warningAccent
             : palette.readyAccent
+    }
+
+    private var canUseAI: Bool {
+        appState.aiConfiguration != nil
     }
 
     private func storageHealthColor(_ status: StorageHealthStatus) -> Color {
@@ -1425,7 +1638,7 @@ struct WritingDeskView: View {
     private func writingDeskAIActions(for project: NovelProject) -> [WritingDeskToolbarAction] {
         var actions: [WritingDeskToolbarAction] = []
 
-        let hasConfiguration = appState.aiConfiguration != nil
+        let hasConfiguration = canUseAI
         let hasBusyNonWritingTask = isGenerating && writingRunState == .idle
 
         switch writingRunState {
@@ -1712,7 +1925,7 @@ struct WritingDeskView: View {
             let startedAt = Date()
 
             do {
-                let outline = try await AIWritingService.generateStoryOutline(
+                let outline = try await appState.aiService.generateStoryOutline(
                     configuration: configuration,
                     project: promptProject,
                     profile: profile
@@ -1763,7 +1976,8 @@ struct WritingDeskView: View {
                     clearOutlineGenerationRequest(token: requestToken)
                     isGenerating = false
                     timingSnapshot = .idle
-                    aiStatusMessage = error.localizedDescription
+                    AppLogger.ai.error("Outline generation failed: \(error.localizedDescription, privacy: .public)")
+                    presentAIError(error, title: "大纲生成失败", fallbackAction: "请检查模型配置后重试。")
                     revealWritingDeskWindow(for: project.id)
                 }
             }
@@ -1821,12 +2035,13 @@ struct WritingDeskView: View {
             let startedAt = Date()
 
             do {
-                let enhancedResult = try await AIWritingService.continueChapterEnhanced(
+                let enhancedResult = try await appState.aiService.continueChapterEnhanced(
                     configuration: configuration,
                     project: promptProject,
                     mode: latestProject.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .advanceChapter : .continueScene,
                     additionalInstruction: generationInstruction(rejecting: rejectedSuggestion),
-                    length: preferredLength(for: latestProject)
+                    length: preferredLength(for: latestProject),
+                    enableReview: true
                 )
 
                 let total = Date().timeIntervalSince(startedAt)
@@ -1897,7 +2112,8 @@ struct WritingDeskView: View {
                     isGenerating = false
                     writingRunState = .idle
                     stopWritingProgressMonitor(resetSnapshot: true)
-                    aiStatusMessage = error.localizedDescription
+                    AppLogger.ai.error("Chapter generation failed: \(error.localizedDescription, privacy: .public)")
+                    presentAIError(error, title: "候选稿生成失败", fallbackAction: "请检查模型配置后重试。")
                     revealWritingDeskWindow(for: project.id)
                 }
             }
@@ -2176,7 +2392,7 @@ struct WritingDeskView: View {
 
         Task {
             do {
-                let polishedDraft = try await AIWritingService.polishFullDraft(
+                let polishedDraft = try await appState.aiService.polishFullDraft(
                     configuration: configuration,
                     project: promptProject,
                     draft: trimmedDraft,
@@ -2227,7 +2443,8 @@ struct WritingDeskView: View {
                 await MainActor.run {
                     isGenerating = false
                     activeDraftPolishMode = nil
-                    aiStatusMessage = "草稿润色失败：\(error.localizedDescription)"
+                    AppLogger.ai.error("Full draft polish failed: \(error.localizedDescription, privacy: .public)")
+                    presentAIError(error, title: "草稿润色失败", fallbackAction: "请检查模型配置后重试。")
                 }
             }
         }
@@ -2258,7 +2475,7 @@ struct WritingDeskView: View {
 
         Task {
             do {
-                let polishedSelection = try await AIWritingService.polishSelection(
+                let polishedSelection = try await appState.aiService.polishSelection(
                     configuration: configuration,
                     project: promptProject,
                     selectedText: currentSelection.text,
@@ -2312,7 +2529,8 @@ struct WritingDeskView: View {
                 await MainActor.run {
                     isGenerating = false
                     activeDraftPolishMode = nil
-                    aiStatusMessage = "选区润色失败：\(error.localizedDescription)"
+                    AppLogger.ai.error("Selection polish failed: \(error.localizedDescription, privacy: .public)")
+                    presentAIError(error, title: "选区润色失败", fallbackAction: "请检查模型配置后重试。")
                 }
             }
         }
@@ -2498,10 +2716,10 @@ struct WritingDeskView: View {
 
         Task {
             do {
-                let title = try await AIWritingService.suggestChapterTitle(
+                let title = try await appState.aiService.suggestChapterTitle(
                     configuration: configuration,
                     project: latestProject,
-                    draft: trimmedDraft
+                    chapterContent: trimmedDraft
                 )
 
                 await MainActor.run {
@@ -2549,14 +2767,14 @@ struct WritingDeskView: View {
                     if let result = completeChapterDraftSave(
                         for: project,
                         statusPrefix: "AI 拟标题失败，已按当前标题保存",
-                        detailMessage: error.localizedDescription
+                        detailMessage: UserFacingError.aiMessage(for: error, fallbackAction: "AI 拟标题失败。")
                     ) {
                         refreshProjectContextAfterChapterSave(
                             for: project,
                             saveResult: result,
                             configuration: configuration,
                             statusPrefix: "AI 拟标题失败，已按当前标题保存",
-                            detailMessage: error.localizedDescription,
+                            detailMessage: UserFacingError.aiMessage(for: error, fallbackAction: "AI 拟标题失败。"),
                             advanceToNextChapter: advanceToNextChapter,
                             preSaveReview: preSaveReview
                         )
@@ -2972,10 +3190,10 @@ struct WritingDeskView: View {
 
             async let globalMemoryTask: Result<String, Error> = {
                 do {
-                    return .success(try await AIWritingService.refreshGlobalMemory(
+                    return .success(try await appState.aiService.refreshGlobalMemory(
                         configuration: configuration,
                         project: latestProject,
-                        chapterDraft: chapterDraft
+                        savedChapter: chapterDraft
                     ))
                 } catch {
                     return .failure(error)
@@ -2984,10 +3202,10 @@ struct WritingDeskView: View {
 
             async let chapterTreeTask: Result<ChapterTreeRefresh, Error> = {
                 do {
-                    return .success(try await AIWritingService.refreshChapterTree(
+                    return .success(try await appState.aiService.refreshChapterTree(
                         configuration: configuration,
                         project: latestProject,
-                        chapterDraft: chapterDraft
+                        savedChapter: chapterDraft
                     ))
                 } catch {
                     return .failure(error)
@@ -3190,6 +3408,108 @@ struct WritingDeskView: View {
         return "\(statusPrefix) \(chapterSummary)。\(detailPrefix)\(refreshNotes.joined(separator: "；"))。"
     }
 
+    private func draftFindSummary(for project: NovelProject) -> String {
+        let query = findQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return "输入关键词后可在当前草稿内查找或替换。" }
+        let count = draftMatchRanges(in: project.draftText, query: query).count
+        return count == 0 ? "当前草稿未找到“\(query)”." : "当前草稿找到 \(count) 处“\(query)”。"
+    }
+
+    private func findNextInDraft(for project: NovelProject) {
+        let query = findQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return }
+
+        guard let range = nextDraftMatchRange(in: project.draftText, query: query) else {
+            findStatusMessage = "当前草稿未找到“\(query)”。"
+            return
+        }
+
+        draftSelection = WritingDeskDraftSelection(
+            range: range,
+            text: (project.draftText as NSString).substring(with: range)
+        )
+        findStatusMessage = "已选中下一处“\(query)”。"
+        focusDraftEditor()
+    }
+
+    private func replaceNextInDraft(for project: NovelProject) {
+        let query = findQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return }
+
+        guard let range = nextDraftMatchRange(in: project.draftText, query: query) else {
+            findStatusMessage = "当前草稿未找到“\(query)”。"
+            return
+        }
+
+        let mutableDraft = NSMutableString(string: project.draftText)
+        mutableDraft.replaceCharacters(in: range, with: replacementText)
+        appState.updateDraftText(mutableDraft as String, for: project.id)
+        draftSelection = WritingDeskDraftSelection(
+            range: NSRange(location: range.location, length: (replacementText as NSString).length),
+            text: replacementText
+        )
+        findStatusMessage = "已替换 1 处“\(query)”。"
+        focusDraftEditor()
+    }
+
+    private func replaceAllInDraft(for project: NovelProject) {
+        let query = findQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return }
+
+        let ranges = draftMatchRanges(in: project.draftText, query: query)
+        guard !ranges.isEmpty else {
+            findStatusMessage = "当前草稿未找到“\(query)”。"
+            return
+        }
+
+        let mutableDraft = NSMutableString(string: project.draftText)
+        for range in ranges.reversed() {
+            mutableDraft.replaceCharacters(in: range, with: replacementText)
+        }
+        appState.updateDraftText(mutableDraft as String, for: project.id)
+        draftSelection = .empty
+        findStatusMessage = "已替换 \(ranges.count) 处“\(query)”。"
+        focusDraftEditor()
+    }
+
+    private func nextDraftMatchRange(in text: String, query: String) -> NSRange? {
+        let nsText = text as NSString
+        guard nsText.length > 0 else { return nil }
+
+        let startLocation = min(draftSelection.range.location + max(draftSelection.range.length, 0), nsText.length)
+        let options: NSString.CompareOptions = [.caseInsensitive, .widthInsensitive]
+        let trailingRange = NSRange(location: startLocation, length: nsText.length - startLocation)
+        let trailingMatch = nsText.range(of: query, options: options, range: trailingRange)
+        if trailingMatch.location != NSNotFound {
+            return trailingMatch
+        }
+
+        let leadingRange = NSRange(location: 0, length: startLocation)
+        let leadingMatch = nsText.range(of: query, options: options, range: leadingRange)
+        return leadingMatch.location == NSNotFound ? nil : leadingMatch
+    }
+
+    private func draftMatchRanges(in text: String, query: String) -> [NSRange] {
+        let nsText = text as NSString
+        guard nsText.length > 0 else { return [] }
+
+        var ranges: [NSRange] = []
+        var searchRange = NSRange(location: 0, length: nsText.length)
+        let options: NSString.CompareOptions = [.caseInsensitive, .widthInsensitive]
+
+        while searchRange.length > 0 {
+            let match = nsText.range(of: query, options: options, range: searchRange)
+            guard match.location != NSNotFound else { break }
+            ranges.append(match)
+
+            let nextLocation = match.location + max(match.length, 1)
+            guard nextLocation <= nsText.length else { break }
+            searchRange = NSRange(location: nextLocation, length: nsText.length - nextLocation)
+        }
+
+        return ranges
+    }
+
     private func requestAutoScroll(to anchor: WritingDeskScrollAnchor) {
         guard !autoScrollLocked, !areConfigurationCardsCollapsed else { return }
         pendingScrollAnchor = anchor
@@ -3198,6 +3518,12 @@ struct WritingDeskView: View {
     private func revealWritingDeskWindow(for projectID: NovelProject.ID) {
         appState.openWritingDesk(for: projectID)
         AppRuntime.shared.windowCoordinator.showMainWindow()
+    }
+
+    private func presentAIError(_ error: Error, title: String, fallbackAction: String) {
+        let message = UserFacingError.aiMessage(for: error, fallbackAction: fallbackAction)
+        aiStatusMessage = message
+        operationAlert = WritingDeskOperationAlert(title: title, message: message)
     }
 
     private func focusDraftEditor() {
@@ -3237,6 +3563,8 @@ struct WritingDeskView: View {
         latestAISuggestionAcceptanceContext = nil
         latestStrandWarning = nil
         pendingChapterLoad = nil
+        operationAlert = nil
+        findStatusMessage = ""
         isSelectionPolishPopoverPresented = false
         saveMessage = "自动保存已开启，可按章节收录"
         aiStatusMessage = "准备就绪，可先补大纲、参考文本和特殊要求，再开始当前章节写作。"
@@ -4772,6 +5100,7 @@ private struct ChapterLoadPreviewColumn: View {
 private struct ChapterQualityReviewPanel: View {
     let review: ChapterReviewResult
     let minimumAcceptedScore: Int
+    let onOpenFullReport: () -> Void
 
     private var isAccepted: Bool {
         review.passes(minimumScore: minimumAcceptedScore)
@@ -4784,6 +5113,10 @@ private struct ChapterQualityReviewPanel: View {
                     .font(.subheadline.weight(.semibold))
 
                 Spacer()
+
+                Button("完整报告", action: onOpenFullReport)
+                    .buttonStyle(.borderless)
+                    .font(.caption.weight(.semibold))
 
                 VStack(alignment: .trailing, spacing: 2) {
                     Text("\(review.overallScore)/100")
@@ -4844,6 +5177,13 @@ private struct ChapterQualityReviewPanel: View {
                 .fill(Color.secondary.opacity(0.07))
         )
     }
+}
+
+private struct QualityReviewDashboardPresentation: Identifiable {
+    let id = UUID()
+    let review: ChapterReviewResult
+    let chapterTitle: String
+    let minimumAcceptedScore: Int
 }
 
 private struct WritingDeskSectionCard<Content: View>: View {
