@@ -358,6 +358,12 @@ extension AIWritingService {
         章节树关键约束：
         \(support.chapterTreeFocus)
 
+        全局记忆（用于核对人物、关系、地点、道具和世界状态的当前真实状态）：
+        \(bounded(project.continuityNotes, fallback: "暂无全局记忆。", limit: 1_600))
+
+        结构化长期记忆（修订时不得改写或遗忘这些已建立事实）：
+        \(bounded(project.enhancedMemoryContext, fallback: "暂无结构化长期记忆。", limit: 1_600))
+
         本章执行验收：
         \(writingExecutionContractPrompt(project: project))
 
@@ -405,6 +411,12 @@ extension AIWritingService {
 
         本次续写拍点：
         \(normalized(writingPlan, fallback: "请至少推进一个新的情节增量。"))
+
+        全局记忆（返修时必须保持这些已建立事实一致）：
+        \(bounded(project.continuityNotes, fallback: "暂无全局记忆。", limit: 1_400))
+
+        结构化长期记忆（用于核对人物状态、关系变化、伏笔和世界规则）：
+        \(bounded(project.enhancedMemoryContext, fallback: "暂无结构化长期记忆。", limit: 1_400))
 
         本章执行验收：
         \(writingExecutionContractPrompt(project: project))

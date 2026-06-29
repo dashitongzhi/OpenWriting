@@ -1,6 +1,7 @@
 import AuthenticationServices
 import CloudKit
 import Foundation
+import OSLog
 import Security
 
 struct AppleAccountProfile: Codable, Hashable {
@@ -266,8 +267,12 @@ actor ICloudProjectStore {
             throw StoreError.readFailed(error.localizedDescription)
         }
 
-        if let indexSnapshot = try await loadIndexedSnapshot(from: record, scope: scope, database: database) {
-            return indexSnapshot
+        do {
+            if let indexSnapshot = try await loadIndexedSnapshot(from: record, scope: scope, database: database) {
+                return indexSnapshot
+            }
+        } catch {
+            AppLogger.sync.error("CloudKit indexed snapshot failed, falling back to asset: \(error.localizedDescription, privacy: .public)")
         }
 
         guard let asset = record[CloudKitKey.payloadAsset] as? CKAsset,
@@ -355,6 +360,13 @@ actor ICloudProjectStore {
                 }
             }
 
+            let snapshotPayloadData = try await MainActor.run {
+                try encoder.encode(snapshot)
+            }
+            let snapshotPayloadURL = try writeTemporaryPayload(
+                snapshotPayloadData,
+                identifier: "snapshot_\(sanitizedScope)"
+            )
             let projectRecords = try projectPayloads.map { payload in
                 let payloadURL = try writeTemporaryPayload(
                     payload.data,
@@ -387,6 +399,7 @@ actor ICloudProjectStore {
             }
 
             defer {
+                try? fileManager.removeItem(at: snapshotPayloadURL)
                 for (_, payloadURL) in projectRecords {
                     try? fileManager.removeItem(at: payloadURL)
                 }
@@ -401,14 +414,37 @@ actor ICloudProjectStore {
             indexRecord[CloudKitKey.updatedAt] = snapshot.updatedAt as NSDate
             indexRecord[CloudKitKey.activeProjectID] = snapshot.activeProjectID.map { $0 as NSString }
             indexRecord[CloudKitKey.projectIDs] = snapshot.recentProjects.map(\.id) as NSArray
-            indexRecord[CloudKitKey.payloadAsset] = nil
+            indexRecord[CloudKitKey.payloadAsset] = CKAsset(fileURL: snapshotPayloadURL)
+
+            let payloadRecords = projectRecords.map { $0.0 } + chapterRecords.map { $0.0 }
+            if !payloadRecords.isEmpty {
+                _ = try await database.modifyRecords(
+                    saving: payloadRecords,
+                    deleting: [],
+                    savePolicy: .changedKeys,
+                    atomically: false
+                )
+            }
 
             _ = try await database.modifyRecords(
-                saving: [indexRecord] + projectRecords.map { $0.0 } + chapterRecords.map { $0.0 },
-                deleting: deletedRecordIDs,
+                saving: [indexRecord],
+                deleting: [],
                 savePolicy: .changedKeys,
-                atomically: false
+                atomically: true
             )
+
+            if !deletedRecordIDs.isEmpty {
+                do {
+                    _ = try await database.modifyRecords(
+                        saving: [],
+                        deleting: deletedRecordIDs,
+                        savePolicy: .changedKeys,
+                        atomically: false
+                    )
+                } catch {
+                    AppLogger.sync.error("CloudKit stale payload cleanup failed: \(error.localizedDescription, privacy: .public)")
+                }
+            }
         } catch let error as StoreError {
             throw error
         } catch {

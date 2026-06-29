@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 enum ModelAPIFormat: String, Codable {
     case openAIChatCompletions
@@ -123,7 +124,8 @@ enum AIWritingService {
             maxTokens: 16
         )
 
-        guard rawResponse == "OK" else {
+        let normalizedResponse = rawResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedResponse.hasPrefix("OK") else {
             throw AIWritingError.serverError("模型返回异常内容：\(rawResponse)")
         }
 
@@ -371,6 +373,7 @@ enum AIWritingService {
                 throw error
             } catch {
                 lastError = error
+                AppLogger.ai.error("AI completion attempt \(attempt, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
                 guard attempt < maxAttempts, shouldRetryCompletion(after: error) else {
                     throw error
                 }
@@ -750,12 +753,13 @@ enum AIWritingService {
         }
 
         private static func relevantReferenceExcerpts(for project: NovelProject) -> String {
+            let draftSignal = excerpt(from: project.draftText, limit: 1_200)
             let query = [
                 project.title,
                 project.genre,
                 project.summary,
                 project.chapterFocus,
-                project.draftText,
+                draftSignal,
                 project.specialRequirements,
                 project.referenceContextText,
                 project.outlineSummary,

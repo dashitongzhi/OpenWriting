@@ -15,7 +15,7 @@ nonisolated enum PersistedTimestampCodec {
         guard !trimmedValue.isEmpty else { return nil }
 
         if let seconds = Double(trimmedValue) {
-            return Date(timeIntervalSince1970: seconds)
+            return dateFromEpochSeconds(seconds)
         }
 
         if let date = iso8601Formatter(withFractionalSeconds: true).date(from: trimmedValue)
@@ -63,11 +63,11 @@ nonisolated enum PersistedTimestampCodec {
         forKey key: Key
     ) -> Date? {
         if let doubleValue = try? container.decodeIfPresent(Double.self, forKey: key) {
-            return Date(timeIntervalSince1970: doubleValue)
+            return dateFromEpochSeconds(doubleValue)
         }
 
         if let intValue = try? container.decodeIfPresent(Int.self, forKey: key) {
-            return Date(timeIntervalSince1970: Double(intValue))
+            return dateFromEpochSeconds(Double(intValue))
         }
 
         if let stringValue = try? container.decodeIfPresent(String.self, forKey: key) {
@@ -140,6 +140,11 @@ nonisolated enum PersistedTimestampCodec {
         formatter.locale = Locale(identifier: "zh_Hans_CN")
         formatter.dateFormat = format
         return formatter
+    }
+
+    private static func dateFromEpochSeconds(_ seconds: Double) -> Date? {
+        guard seconds >= 1_000_000_000 else { return nil }
+        return Date(timeIntervalSince1970: seconds)
     }
 
     private static func parseClockTime(from value: String, prefix: String?) -> DateComponents? {
@@ -1545,7 +1550,10 @@ struct PlotThreadList: Codable, Hashable {
 }
 
 struct NovelProject: Identifiable, Codable, @unchecked Sendable {
+    static let currentSchemaVersion = 2
+
     let id: String
+    var schemaVersion: Int
     let title: String
     let genre: String
     let summary: String
@@ -1599,6 +1607,7 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
 
     enum CodingKeys: String, CodingKey {
         case id
+        case schemaVersion
         case title
         case genre
         case summary
@@ -1644,6 +1653,7 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
 
     init(
         id: String,
+        schemaVersion: Int = NovelProject.currentSchemaVersion,
         title: String,
         genre: String,
         summary: String,
@@ -1684,6 +1694,7 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
         persistedLongformRuntimeState: LongformStoryRuntimeState? = nil
     ) {
         self.id = id
+        self.schemaVersion = max(schemaVersion, 1)
         self.title = title
         self.genre = genre
         self.summary = summary
@@ -1734,6 +1745,7 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
+        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
         title = try container.decode(String.self, forKey: .title)
         genre = try container.decode(String.self, forKey: .genre)
         summary = try container.decode(String.self, forKey: .summary)
@@ -1784,6 +1796,7 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
+        try container.encode(Self.currentSchemaVersion, forKey: .schemaVersion)
         try container.encode(title, forKey: .title)
         try container.encode(genre, forKey: .genre)
         try container.encode(summary, forKey: .summary)

@@ -192,9 +192,15 @@ private final class AccountPortalState {
         }
     }
 
-    func logout() {
-        appState.logoutAccount()
-        actionMessage = "已断开当前 Apple 账号，本机资料仍保留在设备上。"
+    func logout(removingLocalData: Bool = false) {
+        let didRemoveLocalData = appState.logoutAccount(removingLocalData: removingLocalData)
+        if removingLocalData {
+            actionMessage = didRemoveLocalData
+                ? "已断开当前 Apple 账号，并清理该账号在本机的项目资料。"
+                : "已断开当前 Apple 账号，但本机资料清理失败，请稍后重试。"
+        } else {
+            actionMessage = "已断开当前 Apple 账号，本机资料仍保留在设备上。"
+        }
         errorMessage = ""
     }
 
@@ -217,6 +223,7 @@ private struct AccountPortalSheet: View {
     @Environment(\.colorScheme) private var colorScheme
     @Bindable var appState: AppState
     @Bindable var portalState: AccountPortalState
+    @State private var isDataCleanupConfirmationPresented = false
 
     var body: some View {
         ScrollView {
@@ -360,6 +367,27 @@ private struct AccountPortalSheet: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.large)
+
+                Button(role: .destructive) {
+                    isDataCleanupConfirmationPresented = true
+                } label: {
+                    Label("退出并清理本机资料", systemImage: "trash")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .confirmationDialog(
+                    "清理本机账号资料？",
+                    isPresented: $isDataCleanupConfirmationPresented
+                ) {
+                    Button("清理并退出", role: .destructive) {
+                        portalState.logout(removingLocalData: true)
+                    }
+
+                    Button("取消", role: .cancel) {}
+                } message: {
+                    Text("这只会清理当前 Apple ID 在本机的项目资料，不会删除 iCloud 中的数据。")
+                }
             }
 
             Divider()

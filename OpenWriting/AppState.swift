@@ -10,6 +10,7 @@ final class AppState {
 
     let userDefaults: UserDefaults
     let projectStore: ProjectFileStore
+    @ObservationIgnored let aiService: any AIWritingServicing
     @ObservationIgnored private let commerceProvider: any CommerceEntitlementProviding
     @ObservationIgnored let cloudStore = ICloudProjectStore()
     @ObservationIgnored var cloudSaveTask: Task<Void, Never>?
@@ -65,6 +66,34 @@ final class AppState {
     var showWritingDeskTimeline: Bool {
         didSet {
             persistWritingDeskDisplayPreferences()
+        }
+    }
+    var isWritingFocusModeEnabled: Bool {
+        didSet {
+            persistWritingDeskDisplayPreferences()
+        }
+    }
+    var draftEditorFontSize: Double {
+        didSet {
+            draftEditorFontSize = min(max(draftEditorFontSize, 13), 24)
+            persistWritingDeskDisplayPreferences()
+        }
+    }
+    var draftEditorLineSpacing: Double {
+        didSet {
+            draftEditorLineSpacing = min(max(draftEditorLineSpacing, 2), 14)
+            persistWritingDeskDisplayPreferences()
+        }
+    }
+    var hasAcceptedAIDataTransfer: Bool {
+        didSet {
+            userDefaults.set(hasAcceptedAIDataTransfer, forKey: StorageKey.hasAcceptedAIDataTransfer)
+            if hasAcceptedAIDataTransfer {
+                refreshIdleValidationMessage()
+            } else {
+                connectionStatus = .needsAttention
+                validationMessage = "启用 AI 功能前需要先同意数据使用告知。"
+            }
         }
     }
     var connectionStatus: ConnectionStatus
@@ -135,6 +164,7 @@ final class AppState {
     init(
         userDefaults: UserDefaults = .standard,
         projectStore: ProjectFileStore? = nil,
+        aiService: any AIWritingServicing = DefaultAIWritingService(),
         commerceProvider: any CommerceEntitlementProviding = DeferredAppleCommerceProvider()
     ) {
         let projectStore = projectStore ?? ProjectFileStore()
@@ -145,6 +175,7 @@ final class AppState {
         Self.migrateAPIKeysToKeychainIfNeeded(userDefaults)
         self.userDefaults = userDefaults
         self.projectStore = projectStore
+        self.aiService = aiService
         self.commerceProvider = commerceProvider
         let resolvedActiveAccount = Self.loadActiveAppleAccount(from: userDefaults)
         let resolvedStorageScope = resolvedActiveAccount?.userID
@@ -166,6 +197,22 @@ final class AppState {
             forKey: StorageKey.showWritingDeskTimeline,
             userDefaults: userDefaults
         ) ?? true
+        self.isWritingFocusModeEnabled = Self.boolValue(
+            forKey: StorageKey.isWritingFocusModeEnabled,
+            userDefaults: userDefaults
+        ) ?? false
+        self.draftEditorFontSize = Self.doubleValue(
+            forKey: StorageKey.draftEditorFontSize,
+            userDefaults: userDefaults
+        ) ?? 16
+        self.draftEditorLineSpacing = Self.doubleValue(
+            forKey: StorageKey.draftEditorLineSpacing,
+            userDefaults: userDefaults
+        ) ?? 5
+        self.hasAcceptedAIDataTransfer = Self.boolValue(
+            forKey: StorageKey.hasAcceptedAIDataTransfer,
+            userDefaults: userDefaults
+        ) ?? false
         self.currentProjectSnapshotTimestamp = Self.doubleValue(
             forKey: Self.projectSnapshotTimestampStorageKey(for: resolvedStorageScope),
             userDefaults: userDefaults
@@ -305,7 +352,7 @@ final class AppState {
         let providerTitle = provider.title
         validationTask = Task { @MainActor in
             do {
-                let resolvedModel = try await AIWritingService.validateConnection(configuration: configuration)
+                let resolvedModel = try await aiService.validateConnection(configuration: configuration)
                 guard !Task.isCancelled else { return }
 
                 connectionStatus = .ready
@@ -1504,7 +1551,7 @@ final class AppState {
             )
 
             do {
-                let response = try await AIWritingService.generateText(
+                let response = try await aiService.generateText(
                     configuration: config,
                     systemPrompt: systemPrompt,
                     userPrompt: userPrompt,
@@ -2064,6 +2111,11 @@ final class AppState {
     func refreshIdleValidationMessage() {
         validationTask?.cancel()
         connectionStatus = .idle
+        guard hasAcceptedAIDataTransfer else {
+            validationMessage = "启用 AI 功能前需要先同意数据使用告知。"
+            return
+        }
+
         switch selectedProvider {
         case .openAICompatible:
             validationMessage = "OpenWriting 提供模型由服务器后端托管，可点击“测试连接”检查可用性。"
@@ -2087,6 +2139,12 @@ final class AppState {
     }
 
     private var resolvedAIConfiguration: AIConnectionConfiguration? {
+        guard hasAcceptedAIDataTransfer else {
+            connectionStatus = .needsAttention
+            validationMessage = "启用 AI 功能前需要先同意数据使用告知。"
+            return nil
+        }
+
         let trimmedKey = selectedProvider.requiresAPIKey
             ? apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
             : ""
@@ -2251,7 +2309,7 @@ final class AppState {
         return trimmed.isEmpty ? "未命名章节" : trimmed
     }
 
-    private static func searchTokens(from query: String) -> [String] {
+    nonisolated static func searchTokens(from query: String) -> [String] {
         var seen = Set<String>()
         return query
             .components(separatedBy: CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters).union(.symbols))
@@ -2267,7 +2325,7 @@ final class AppState {
             .map { String($0) }
     }
 
-    private static func searchScore(in text: String, tokens: [String]) -> Int {
+    nonisolated static func searchScore(in text: String, tokens: [String]) -> Int {
         guard !text.isEmpty else { return 0 }
         let lowercasedText = text.lowercased()
         return tokens.reduce(0) { score, token in
@@ -2282,7 +2340,7 @@ final class AppState {
         }
     }
 
-    private static func searchExcerpt(from text: String, tokens: [String], limit: Int) -> String {
+    nonisolated static func searchExcerpt(from text: String, tokens: [String], limit: Int) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count > limit else { return trimmed }
 

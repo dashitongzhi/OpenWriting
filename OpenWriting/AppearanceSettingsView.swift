@@ -80,6 +80,7 @@ enum AppAppearance: String, CaseIterable, Identifiable {
 struct AppearanceSettingsView: View {
     @Bindable var appState: AppState
     @AppStorage(AppAppearance.storageKey) private var appAppearanceRawValue = AppAppearance.system.rawValue
+    @State private var isHelpPresented = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -111,7 +112,25 @@ struct AppearanceSettingsView: View {
                     ModelConnectionSettingsForm(appState: appState)
                 }
 
+                Section("隐私与数据") {
+                    Toggle("允许 AI 功能发送写作上下文", isOn: $appState.hasAcceptedAIDataTransfer)
+                        .toggleStyle(.switch)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("AI 续写、润色、审查和记忆整理会把正文片段、设定、大纲、全局记忆与相关参考文本发送到所选模型服务。", systemImage: "lock.shield")
+                            .font(.subheadline)
+
+                        Text("关闭后，本机写作、项目管理和导出仍可使用，但所有需要模型的功能都会暂停。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 6)
+                }
+
                 Section("写作台显示") {
+                    Toggle("专注写作模式", isOn: $appState.isWritingFocusModeEnabled)
+                        .toggleStyle(.switch)
+
                     Toggle("显示缓存区", isOn: $appState.showWritingDeskCachePanel)
                         .toggleStyle(.switch)
 
@@ -119,6 +138,49 @@ struct AppearanceSettingsView: View {
                         .toggleStyle(.switch)
 
                     Text("关闭后会隐藏对应模块，但写作台的正文编辑、导入、大纲和 AI 续写能力仍然保留。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("正文排版") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("字号")
+                            Spacer()
+                            Text("\(Int(appState.draftEditorFontSize)) pt")
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Slider(value: $appState.draftEditorFontSize, in: 13...24, step: 1)
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("行距")
+                            Spacer()
+                            Text("\(Int(appState.draftEditorLineSpacing))")
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Slider(value: $appState.draftEditorLineSpacing, in: 2...14, step: 1)
+                    }
+
+                    Text("排版设置会立即应用到写作台正文编辑器，不影响项目正文内容。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("帮助") {
+                    Button {
+                        isHelpPresented = true
+                    } label: {
+                        Label("打开 OpenWriting 使用手册", systemImage: "questionmark.circle")
+                    }
+                    .buttonStyle(.bordered)
+
+                    Text("覆盖快速入门、AI 数据使用、记忆系统、质量审查、章节保存和导出。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -138,6 +200,10 @@ struct AppearanceSettingsView: View {
             alignment: .topLeading
         )
         .appAppearanceBridge()
+        .sheet(isPresented: $isHelpPresented) {
+            OpenWritingHelpView()
+                .frame(minWidth: 560, idealWidth: 680, minHeight: 560, idealHeight: 720)
+        }
     }
 
     private var selectedAppearance: AppAppearance {
@@ -186,6 +252,71 @@ private struct WindowAppearanceSyncView: NSViewRepresentable {
         } else {
             applyAppearance()
         }
+    }
+}
+
+private struct OpenWritingHelpView: View {
+    private let sections: [(title: String, symbol: String, body: String)] = [
+        (
+            "快速开始",
+            "sparkle.magnifyingglass",
+            "先建立项目，补齐简介、大纲、当前章节目标和字数要求。正文区可以直接写作；AI 作家区适合生成候选稿、重写、润色和拟标题。"
+        ),
+        (
+            "AI 数据使用",
+            "lock.shield",
+            "启用 AI 功能后，章节正文片段、设定、大纲、全局记忆、参考文本和审查上下文会发送给当前选择的模型服务。关闭设置里的数据授权后，模型相关功能会暂停，本地写作和导出仍可使用。"
+        ),
+        (
+            "长篇记忆",
+            "brain.head.profile",
+            "全局记忆、章节树、伏笔和 Strand Weave 用来帮助长篇保持连续性。保存章节后，系统会刷新近端缓存，并可继续整理跨章节记忆。"
+        ),
+        (
+            "质量审查",
+            "checklist",
+            "章节审查会检查情节推进、人物一致性、伏笔、节奏和 AI 味。阻断项应先修复，再接受候选稿或推进下一章。"
+        ),
+        (
+            "导出与备份",
+            "square.and.arrow.up",
+            "项目可以导出为备份、Markdown、DOCX 和 EPUB。长篇项目导出前建议先保存当前章节，并确认章节目录顺序。"
+        )
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Label("OpenWriting 使用手册", systemImage: "book.closed")
+                    .font(.title2.weight(.semibold))
+
+                Spacer()
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    ForEach(sections, id: \.title) { section in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(section.title, systemImage: section.symbol)
+                                .font(.headline)
+
+                            Text(section.body)
+                                .font(.body)
+                                .foregroundStyle(.secondary)
+                                .lineSpacing(3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if section.title != sections.last?.title {
+                            Divider()
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+        .padding(24)
     }
 }
 
