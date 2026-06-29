@@ -937,20 +937,20 @@ extension AIWritingService {
     static func genreTemplateContext(_ template: GenreTemplate) -> String {
         """
         ## 题材模板：\(template.name)
-        
+
         **类型**: \(template.category.rawValue)
         **简介**: \(template.description)
-        
+
         **核心卖点**: \(template.coreSellingPoint)
-        
+
         **节奏配置**:
         - 停滞阈值：\(template.stagnationThreshold) 章
         - 铺垫容忍：\(template.setupTolerance.displayName)
         - Strand 比例：Quest \(Int(template.strandConfig.questTarget * 100))% / Fire \(Int(template.strandConfig.fireTarget * 100))% / Constellation \(Int(template.strandConfig.constellationTarget * 100))%
-        
+
         **常见 Hook 模式**:
         \(template.preferredHookTypes.map { "- \($0.displayName)" }.joined(separator: "\n"))
-        
+
         **爽点类型**:
         \(template.preferredCoolPointPatterns.map { "- \($0.displayName)" }.joined(separator: "\n"))
 
@@ -968,13 +968,13 @@ extension AIWritingService {
     static func antiHallucinationContext(project: NovelProject) -> String {
         """
         ## 防幻觉铁律
-        
+
         1. **大纲即法律** — 严格遵循大纲，不擅自发挥。当前章节大纲：
         \(normalized(project.outlineText, fallback: "（未设置）"))
-        
+
         2. **设定即物理** — 遵守世界观设定，不自相矛盾。当前设定：
         \(normalized(project.referenceContextText, fallback: "（未设置）"))
-        
+
         3. **发明需识别** — 如果需要引入新角色、新设定、新地点，必须在正文后单独标注，格式：
         [新实体] 类型: xxx | 名称: xxx | 描述: xxx
         """
