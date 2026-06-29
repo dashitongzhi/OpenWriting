@@ -262,4 +262,58 @@ final class NovelProjectTests: XCTestCase {
         XCTAssertTrue(formatted.contains("人物关系"))
         XCTAssertTrue(formatted.contains("测试关系"))
     }
+
+    func testPrimaryWritingPromptsInjectStructuredLongTermMemory() {
+        var buckets = MemoryBuckets.empty
+        buckets.upsert(MemoryItem(
+            category: .storyFact,
+            subject: "玄铁令",
+            field: "归属",
+            value: "仍在沈青袖手中",
+            sourceChapter: 7
+        ))
+        let project = NovelProject(
+            id: "prompt-memory-project",
+            title: "长篇测试",
+            genre: "玄幻",
+            summary: "围绕玄铁令展开的长篇故事",
+            storyLength: .long,
+            updatedAt: "2026-06-06",
+            currentChapterTitle: "夜探山门",
+            currentChapterNumber: 8,
+            writtenChapters: 7,
+            chapterFocus: "沈青袖确认玄铁令的下一步用途",
+            draftText: "山门外的风压低了灯火。",
+            outlineText: "",
+            referenceContextText: "",
+            specialRequirements: "",
+            wordTargetText: "",
+            continuityNotes: "",
+            referenceDocuments: [],
+            persistedMemoryBuckets: buckets
+        )
+        let support = AIWritingService.WritingSupportContext(project: project)
+
+        let mainPrompt = AIWritingService.userPrompt(
+            project: project,
+            mode: .advanceChapter,
+            additionalInstruction: "",
+            length: .short,
+            support: support,
+            writingPlan: "- 承接山门外的场景。"
+        )
+        let planPrompt = AIWritingService.writingPlanUserPrompt(
+            project: project,
+            mode: .advanceChapter,
+            additionalInstruction: "",
+            length: .short,
+            support: support
+        )
+
+        XCTAssertTrue(project.enhancedMemoryContext.contains("仍在沈青袖手中"))
+        XCTAssertTrue(mainPrompt.contains("结构化长期记忆"))
+        XCTAssertTrue(mainPrompt.contains("仍在沈青袖手中"))
+        XCTAssertTrue(planPrompt.contains("结构化长期记忆"))
+        XCTAssertTrue(planPrompt.contains("仍在沈青袖手中"))
+    }
 }

@@ -1,6 +1,7 @@
 import AuthenticationServices
 import CloudKit
 import Foundation
+import OSLog
 import Security
 
 struct AppleAccountProfile: Codable, Hashable {
@@ -50,6 +51,13 @@ struct AccountProjectSnapshot: Codable {
     var activeProjectID: NovelProject.ID?
     var recentProjects: [NovelProject]
     var updatedAt: Date
+}
+
+struct ICloudSnapshotRecordPlan: Equatable {
+    var snapshotRecordName: String
+    var projectRecordNames: [String]
+    var chapterRecordNames: [String]
+    var deletedRecordNames: [String]
 }
 
 enum ICloudSyncAvailability {
@@ -266,8 +274,12 @@ actor ICloudProjectStore {
             throw StoreError.readFailed(error.localizedDescription)
         }
 
-        if let indexSnapshot = try await loadIndexedSnapshot(from: record, scope: scope, database: database) {
-            return indexSnapshot
+        do {
+            if let indexSnapshot = try await loadIndexedSnapshot(from: record, scope: scope, database: database) {
+                return indexSnapshot
+            }
+        } catch {
+            AppLogger.sync.error("CloudKit indexed snapshot failed, falling back to asset: \(error.localizedDescription, privacy: .public)")
         }
 
         guard let asset = record[CloudKitKey.payloadAsset] as? CKAsset,
@@ -312,20 +324,20 @@ actor ICloudProjectStore {
                 existingRecordsByID.merge(previousProjectRecords) { current, _ in current }
             }
 
-            var deletedRecordIDs = Set(previousProjectIDs)
-                .subtracting(snapshot.recentProjects.map(\.id))
-                .map { Self.projectRecordID(for: $0, scope: scope) }
-            let currentChapterRecordIDs = Set(chapterRecordIDs)
-            let previousChapterRecordIDs = previousProjectRecordIDs.compactMap { existingRecordsByID[$0] }.flatMap { record in
-                chapterIDs(from: record)?.map {
-                    Self.chapterRecordID(
-                        for: $0,
-                        projectID: ((record[CloudKitKey.projectID] as? NSString) as String?) ?? "",
-                        scope: scope
-                    )
-                } ?? []
+            let previousChapterIDsByProjectID: [String: [String]] = Dictionary(uniqueKeysWithValues: previousProjectIDs.map { projectID in
+                let recordID = Self.projectRecordID(for: projectID, scope: scope)
+                let previousChapterIDs: [String] = existingRecordsByID[recordID].flatMap { self.chapterIDs(from: $0) } ?? []
+                return (projectID, previousChapterIDs)
+            })
+            let recordPlan = Self.cloudKitRecordPlan(
+                for: snapshot,
+                scope: scope,
+                previousProjectIDs: previousProjectIDs,
+                previousChapterIDsByProjectID: previousChapterIDsByProjectID
+            )
+            let deletedRecordIDs = recordPlan.deletedRecordNames.map {
+                CKRecord.ID(recordName: $0)
             }
-            deletedRecordIDs.append(contentsOf: Set(previousChapterRecordIDs).subtracting(currentChapterRecordIDs))
 
             let encoder = self.encoder
             let sanitizedScope = Self.sanitized(scope)
@@ -355,6 +367,13 @@ actor ICloudProjectStore {
                 }
             }
 
+            let snapshotPayloadData = try await MainActor.run {
+                try encoder.encode(snapshot)
+            }
+            let snapshotPayloadURL = try writeTemporaryPayload(
+                snapshotPayloadData,
+                identifier: "snapshot_\(sanitizedScope)"
+            )
             let projectRecords = try projectPayloads.map { payload in
                 let payloadURL = try writeTemporaryPayload(
                     payload.data,
@@ -387,6 +406,7 @@ actor ICloudProjectStore {
             }
 
             defer {
+                try? fileManager.removeItem(at: snapshotPayloadURL)
                 for (_, payloadURL) in projectRecords {
                     try? fileManager.removeItem(at: payloadURL)
                 }
@@ -401,14 +421,37 @@ actor ICloudProjectStore {
             indexRecord[CloudKitKey.updatedAt] = snapshot.updatedAt as NSDate
             indexRecord[CloudKitKey.activeProjectID] = snapshot.activeProjectID.map { $0 as NSString }
             indexRecord[CloudKitKey.projectIDs] = snapshot.recentProjects.map(\.id) as NSArray
-            indexRecord[CloudKitKey.payloadAsset] = nil
+            indexRecord[CloudKitKey.payloadAsset] = CKAsset(fileURL: snapshotPayloadURL)
+
+            let payloadRecords = projectRecords.map { $0.0 } + chapterRecords.map { $0.0 }
+            if !payloadRecords.isEmpty {
+                _ = try await database.modifyRecords(
+                    saving: payloadRecords,
+                    deleting: [],
+                    savePolicy: .changedKeys,
+                    atomically: false
+                )
+            }
 
             _ = try await database.modifyRecords(
-                saving: [indexRecord] + projectRecords.map { $0.0 } + chapterRecords.map { $0.0 },
-                deleting: deletedRecordIDs,
+                saving: [indexRecord],
+                deleting: [],
                 savePolicy: .changedKeys,
-                atomically: false
+                atomically: true
             )
+
+            if !deletedRecordIDs.isEmpty {
+                do {
+                    _ = try await database.modifyRecords(
+                        saving: [],
+                        deleting: deletedRecordIDs,
+                        savePolicy: .changedKeys,
+                        atomically: false
+                    )
+                } catch {
+                    AppLogger.sync.error("CloudKit stale payload cleanup failed: \(error.localizedDescription, privacy: .public)")
+                }
+            }
         } catch let error as StoreError {
             throw error
         } catch {
@@ -461,12 +504,57 @@ actor ICloudProjectStore {
         }
     }
 
+    nonisolated static func cloudKitRecordPlan(
+        for snapshot: AccountProjectSnapshot,
+        scope: String,
+        previousProjectIDs: [String] = [],
+        previousChapterIDsByProjectID: [String: [String]] = [:]
+    ) -> ICloudSnapshotRecordPlan {
+        let projectIDs = snapshot.recentProjects.map(\.id)
+        let projectRecordNames = projectIDs.map { projectRecordName(for: $0, scope: scope) }
+        let chapterRecordNames = snapshot.recentProjects.flatMap { project in
+            project.chapterDrafts.map { chapterRecordName(for: $0.id, projectID: project.id, scope: scope) }
+        }
+        let currentProjectIDs = Set(projectIDs)
+        let currentChapterRecordNames = Set(chapterRecordNames)
+        let deletedProjectRecordNames = Set(previousProjectIDs)
+            .subtracting(currentProjectIDs)
+            .map { projectRecordName(for: $0, scope: scope) }
+        let deletedChapterRecordNames = previousChapterIDsByProjectID.flatMap { projectID, chapterIDs in
+            chapterIDs.map { chapterRecordName(for: $0, projectID: projectID, scope: scope) }
+        }
+        .filter { !currentChapterRecordNames.contains($0) }
+
+        return ICloudSnapshotRecordPlan(
+            snapshotRecordName: snapshotRecordName(for: scope),
+            projectRecordNames: projectRecordNames,
+            chapterRecordNames: chapterRecordNames,
+            deletedRecordNames: (deletedProjectRecordNames + deletedChapterRecordNames).sorted()
+        )
+    }
+
+    nonisolated static func snapshotRecordName(for scope: String) -> String {
+        "snapshot_\(sanitized(scope))"
+    }
+
+    nonisolated static func projectRecordName(for projectID: String, scope: String) -> String {
+        "project_\(sanitized(scope))_\(sanitized(projectID))"
+    }
+
+    nonisolated static func chapterRecordName(
+        for chapterID: String,
+        projectID: String,
+        scope: String
+    ) -> String {
+        "chapter_\(sanitized(scope))_\(sanitized(projectID))_\(sanitized(chapterID))"
+    }
+
     private nonisolated static func snapshotRecordID(for scope: String) -> CKRecord.ID {
-        CKRecord.ID(recordName: "snapshot_\(sanitized(scope))")
+        CKRecord.ID(recordName: snapshotRecordName(for: scope))
     }
 
     private nonisolated static func projectRecordID(for projectID: String, scope: String) -> CKRecord.ID {
-        CKRecord.ID(recordName: "project_\(sanitized(scope))_\(sanitized(projectID))")
+        CKRecord.ID(recordName: projectRecordName(for: projectID, scope: scope))
     }
 
     private nonisolated static func chapterRecordID(
@@ -474,7 +562,7 @@ actor ICloudProjectStore {
         projectID: String,
         scope: String
     ) -> CKRecord.ID {
-        CKRecord.ID(recordName: "chapter_\(sanitized(scope))_\(sanitized(projectID))_\(sanitized(chapterID))")
+        CKRecord.ID(recordName: chapterRecordName(for: chapterID, projectID: projectID, scope: scope))
     }
 
     private func loadIndexedSnapshot(

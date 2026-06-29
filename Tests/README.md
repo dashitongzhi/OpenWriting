@@ -99,7 +99,7 @@ cd /Users/kral/Desktop/OpenWriting
 - `ContextRankerTests.swift` - 上下文排序测试
 
 ### 低优先级
-- `MemorySystemTests.swift` - 记忆系统测试
+- `DomainModelsTests.swift` - 领域模型与结构化记忆测试
 - `StrandWeaveTrackerTests.swift` - 叙事线追踪测试
 - `WritingMemoryBucketsTests.swift` - 写作记忆桶测试
 

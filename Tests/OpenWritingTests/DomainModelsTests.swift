@@ -303,6 +303,16 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertNotNil(decoded)
     }
 
+    func testPersistedTimestampCodecParsesLegacyDateLabels() {
+        let dateOnly = PersistedTimestampCodec.parse("2026-06-06")
+        let chineseDateTime = PersistedTimestampCodec.parse("2026年6月6日 14:30")
+        let currentYearDisplay = PersistedTimestampCodec.parse("6月6日 14:30")
+
+        XCTAssertNotNil(dateOnly)
+        XCTAssertNotNil(chineseDateTime)
+        XCTAssertNotNil(currentYearDisplay)
+    }
+
     // MARK: - OutlineGenerationProfile Tests
 
     func testOutlineGenerationProfileCompletion() {
@@ -352,11 +362,318 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(profile.filledOptionalFieldCount, 7)
     }
 
+    func testPersistedTimestampCodecRejectsAmbiguousSmallEpochNumbers() {
+        XCTAssertNil(PersistedTimestampCodec.parse("2026"))
+        XCTAssertNotNil(PersistedTimestampCodec.parse("1717603200"))
+    }
+
+    func testLegacyNovelProjectPayloadDecodesWithCurrentSchemaAndTimestampFallbacks() throws {
+        let legacyJSON = """
+        {
+          "id": "legacy-project",
+          "title": "旧项目",
+          "genre": "玄幻",
+          "summary": "旧版本保存的项目",
+          "currentChapterNumber": 3,
+          "writtenChapters": 2,
+          "chapterDrafts": [
+            {
+              "id": "chapter-without-saved-at",
+              "chapterNumber": 2,
+              "chapterTitle": "旧章",
+              "content": "旧章节正文"
+            }
+          ],
+          "referenceDocuments": [
+            {
+              "id": "reference-without-imported-at",
+              "title": "人物设定",
+              "content": "沈青袖持有玄铁令"
+            }
+          ],
+          "continuityNotes": "人物关系\\n- 沈青袖与陆白互相信任"
+        }
+        """
+
+        let project = try JSONDecoder().decode(NovelProject.self, from: Data(legacyJSON.utf8))
+
+        XCTAssertEqual(project.schemaVersion, NovelProject.currentSchemaVersion)
+        XCTAssertEqual(project.id, "legacy-project")
+        XCTAssertEqual(project.storyLength, .long)
+        XCTAssertEqual(project.currentChapterTitle, "开篇设定")
+        XCTAssertEqual(project.chapterDrafts.first?.chapterTitle, "旧章")
+        XCTAssertEqual(project.referenceDocuments.first?.category, .character)
+        XCTAssertTrue(project.globalMemorySnapshot.hasStructuredContent)
+        XCTAssertFalse(project.updatedAt.isEmpty)
+        XCTAssertFalse(project.chapterDrafts.first?.savedAt.isEmpty ?? true)
+        XCTAssertFalse(project.referenceDocuments.first?.importedAt.isEmpty ?? true)
+    }
+
+    @MainActor
+    func testAppStateAcceptsInjectedAIService() {
+        let userDefaults = makeIsolatedUserDefaults()
+        let store = ProjectFileStore(
+            baseDirectoryURL: FileManager.default.temporaryDirectory,
+            baseDirectoryName: "OpenWritingTests-\(UUID().uuidString)"
+        )
+        let aiService = MockAIWritingService()
+
+        let appState = AppState(
+            userDefaults: userDefaults,
+            projectStore: store,
+            aiService: aiService
+        )
+
+        XCTAssertTrue(appState.aiService is MockAIWritingService)
+    }
+
+    @MainActor
+    func testLogoutWithLocalCleanupCancelsPendingAccountPersistence() async throws {
+        let userDefaults = makeIsolatedUserDefaults()
+        let store = makeIsolatedProjectStore()
+        let account = AppleAccountProfile(
+            userID: "apple-user-\(UUID().uuidString)",
+            email: "writer@example.com",
+            fullName: "Writer"
+        )
+        let project = makeProject(
+            id: "account-project",
+            title: "账号项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        let encodedProjects = try JSONEncoder().encode([project])
+        userDefaults.set(project.id, forKey: AppState.activeProjectIDStorageKey(for: account.userID))
+        userDefaults.set(encodedProjects, forKey: AppState.recentProjectsStorageKey(for: account.userID))
+        userDefaults.set(1_772_000_000.0, forKey: AppState.projectSnapshotTimestampStorageKey(for: account.userID))
+
+        let appState = AppState(userDefaults: userDefaults, projectStore: store)
+        appState.activeAccount = account
+        appState.recentProjects = [project]
+
+        XCTAssertTrue(appState.logoutAccount(removingLocalData: true))
+        try await Task.sleep(for: .milliseconds(350))
+
+        XCTAssertNil(store.loadProjects(for: account.userID))
+        XCTAssertNil(userDefaults.object(forKey: AppState.activeProjectIDStorageKey(for: account.userID)))
+        XCTAssertNil(userDefaults.object(forKey: AppState.recentProjectsStorageKey(for: account.userID)))
+        XCTAssertNil(userDefaults.object(forKey: AppState.projectSnapshotTimestampStorageKey(for: account.userID)))
+        XCTAssertNil(appState.activeAccount)
+    }
+
+    @MainActor
+    func testLogoutInvalidatesPendingCloudSaveGeneration() {
+        let userDefaults = makeIsolatedUserDefaults()
+        let store = makeIsolatedProjectStore()
+        let account = AppleAccountProfile(
+            userID: "apple-user-\(UUID().uuidString)",
+            email: "writer@example.com",
+            fullName: "Writer"
+        )
+        let appState = AppState(userDefaults: userDefaults, projectStore: store)
+        appState.activeAccount = account
+        appState.cloudSaveGeneration = 41
+
+        XCTAssertTrue(appState.logoutAccount())
+
+        XCTAssertNil(appState.cloudSaveTask)
+        XCTAssertEqual(appState.cloudSaveGeneration, 42)
+        XCTAssertNil(appState.activeAccount)
+    }
+
+    func testCloudKitRecordPlanScopesSnapshotRecordsByAccount() {
+        var project = makeProject(
+            id: "shared-project",
+            title: "共享项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        project.chapterDrafts = [
+            ChapterDraft(
+                id: "chapter-1",
+                chapterNumber: 1,
+                chapterTitle: "第一章",
+                content: "正文"
+            )
+        ]
+        let snapshot = AccountProjectSnapshot(
+            activeProjectID: project.id,
+            recentProjects: [project],
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+
+        let firstAccountPlan = ICloudProjectStore.cloudKitRecordPlan(for: snapshot, scope: "apple-user-1")
+        let secondAccountPlan = ICloudProjectStore.cloudKitRecordPlan(for: snapshot, scope: "apple-user-2")
+
+        XCTAssertEqual(firstAccountPlan.snapshotRecordName, "snapshot_apple-user-1")
+        XCTAssertEqual(firstAccountPlan.projectRecordNames, ["project_apple-user-1_shared-project"])
+        XCTAssertEqual(firstAccountPlan.chapterRecordNames, ["chapter_apple-user-1_shared-project_chapter-1"])
+        XCTAssertTrue(firstAccountPlan.deletedRecordNames.isEmpty)
+        XCTAssertNotEqual(firstAccountPlan.snapshotRecordName, secondAccountPlan.snapshotRecordName)
+        XCTAssertNotEqual(firstAccountPlan.projectRecordNames, secondAccountPlan.projectRecordNames)
+        XCTAssertNotEqual(firstAccountPlan.chapterRecordNames, secondAccountPlan.chapterRecordNames)
+    }
+
+    func testCloudKitRecordPlanDeletesOnlyStaleScopedPayloads() {
+        var project = makeProject(
+            id: "keep-project",
+            title: "保留项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        project.chapterDrafts = [
+            ChapterDraft(
+                id: "chapter-keep",
+                chapterNumber: 1,
+                chapterTitle: "保留章节",
+                content: "正文"
+            )
+        ]
+        let snapshot = AccountProjectSnapshot(
+            activeProjectID: project.id,
+            recentProjects: [project],
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+
+        let plan = ICloudProjectStore.cloudKitRecordPlan(
+            for: snapshot,
+            scope: "apple-user-1",
+            previousProjectIDs: ["keep-project", "stale-project"],
+            previousChapterIDsByProjectID: [
+                "keep-project": ["chapter-keep", "chapter-stale"],
+                "stale-project": ["orphan-chapter"]
+            ]
+        )
+
+        XCTAssertEqual(plan.deletedRecordNames, [
+            "chapter_apple-user-1_keep-project_chapter-stale",
+            "chapter_apple-user-1_stale-project_orphan-chapter",
+            "project_apple-user-1_stale-project"
+        ])
+        XCTAssertFalse(plan.deletedRecordNames.contains(plan.snapshotRecordName))
+        XCTAssertFalse(plan.deletedRecordNames.contains("project_apple-user-1_keep-project"))
+        XCTAssertFalse(plan.deletedRecordNames.contains("chapter_apple-user-1_keep-project_chapter-keep"))
+    }
+
+    func testCloudMergePreservesLocalOnlyProjectAndNewestChapterDraft() {
+        var localShared = makeProject(
+            id: "shared",
+            title: "共享项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        var localChapter = ChapterDraft(
+            id: "chapter-1",
+            chapterNumber: 1,
+            chapterTitle: "本机章节",
+            content: "本机更新正文"
+        )
+        localChapter.savedAtDate = Date(timeIntervalSince1970: 1_772_020_000)
+        localShared.chapterDrafts = [localChapter]
+        localShared.chapterCatalog = [ChapterDraftMetadata(chapterDraft: localChapter)]
+
+        var remoteShared = makeProject(
+            id: "shared",
+            title: "共享项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_010_000)
+        )
+        var remoteChapter = ChapterDraft(
+            id: "chapter-1",
+            chapterNumber: 1,
+            chapterTitle: "远端章节",
+            content: "远端旧正文"
+        )
+        remoteChapter.savedAtDate = Date(timeIntervalSince1970: 1_772_005_000)
+        remoteShared.chapterDrafts = [remoteChapter]
+        remoteShared.chapterCatalog = [ChapterDraftMetadata(chapterDraft: remoteChapter)]
+
+        let localOnly = makeProject(
+            id: "local-only",
+            title: "本机独有",
+            updatedAt: Date(timeIntervalSince1970: 1_772_015_000)
+        )
+
+        let merged = AppState.mergeCloudProjects(local: [localShared, localOnly], remote: [remoteShared])
+
+        XCTAssertTrue(merged.contains { $0.id == localOnly.id })
+        let shared = merged.first { $0.id == "shared" }
+        XCTAssertEqual(shared?.chapterDrafts.first?.chapterTitle, "本机章节")
+        XCTAssertEqual(shared?.chapterDrafts.first?.content, "本机更新正文")
+        XCTAssertEqual(shared?.chapterCatalog.first?.chapterTitle, "本机章节")
+        XCTAssertEqual(shared?.updatedAtDate, localChapter.savedAtDate)
+    }
+
+    func testCloudMergeKeepsRemoteChapterWhenItIsNewer() {
+        var local = makeProject(
+            id: "shared",
+            title: "共享项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        var localChapter = ChapterDraft(
+            id: "chapter-1",
+            chapterNumber: 1,
+            chapterTitle: "本机章节",
+            content: "本机旧正文"
+        )
+        localChapter.savedAtDate = Date(timeIntervalSince1970: 1_772_005_000)
+        local.chapterDrafts = [localChapter]
+
+        var remote = makeProject(
+            id: "shared",
+            title: "共享项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_010_000)
+        )
+        var remoteChapter = ChapterDraft(
+            id: "chapter-1",
+            chapterNumber: 1,
+            chapterTitle: "远端章节",
+            content: "远端更新正文"
+        )
+        remoteChapter.savedAtDate = Date(timeIntervalSince1970: 1_772_020_000)
+        remote.chapterDrafts = [remoteChapter]
+
+        let merged = AppState.mergeCloudProjects(local: [local], remote: [remote])
+
+        XCTAssertEqual(merged.first?.chapterDrafts.first?.chapterTitle, "远端章节")
+        XCTAssertEqual(merged.first?.chapterCatalog.first?.chapterTitle, "远端章节")
+        XCTAssertEqual(merged.first?.updatedAtDate, remoteChapter.savedAtDate)
+    }
+
     private func makeIsolatedUserDefaults() -> UserDefaults {
         let suiteName = "OpenWritingTests.\(UUID().uuidString)"
         let userDefaults = UserDefaults(suiteName: suiteName)!
         userDefaults.removePersistentDomain(forName: suiteName)
         return userDefaults
+    }
+
+    private func makeIsolatedProjectStore() -> ProjectFileStore {
+        ProjectFileStore(
+            baseDirectoryURL: FileManager.default.temporaryDirectory,
+            baseDirectoryName: "OpenWritingTests-\(UUID().uuidString)"
+        )
+    }
+
+    private func makeProject(
+        id: String,
+        title: String,
+        updatedAt: Date
+    ) -> NovelProject {
+        var project = NovelProject(
+            id: id,
+            title: title,
+            genre: "都市",
+            summary: "摘要",
+            updatedAt: "2026-06-06",
+            currentChapterTitle: "开篇设定",
+            currentChapterNumber: 1,
+            writtenChapters: 0,
+            chapterFocus: "推进当前章节。",
+            draftText: "",
+            outlineText: "",
+            referenceContextText: "",
+            specialRequirements: "",
+            wordTargetText: "",
+            continuityNotes: "",
+            referenceDocuments: []
+        )
+        project.updatedAtDate = updatedAt
+        return project
     }
 
     private func seedRawOpenWritingAPIKey(_ value: String) {
@@ -454,6 +771,36 @@ final class DomainModelsTests: XCTestCase {
 
         XCTAssertTrue(result.hasBlockingIssues)
         XCTAssertTrue(result.blockingIssues.contains { $0.description.contains("缺少原文证据") })
+    }
+
+    func testQualityReviewerDefaultsUnknownSeverityToMedium() {
+        let json = reviewJSON(issues: """
+        [
+          {
+            "dimension": "logic",
+            "severity": "unclear",
+            "blocking": false,
+            "description": "表达略显笼统",
+            "evidence": "",
+            "fix_hint": "补充具体动作",
+            "location": "第3段"
+          }
+        ]
+        """)
+
+        let result = ChapterQualityReviewer.parseReviewResult(from: json)
+
+        XCTAssertFalse(result.hasBlockingIssues)
+        XCTAssertEqual(result.issues.first?.severity, .medium)
+    }
+
+    func testQualityReviewerTreatsMissingSummaryAsHighPrioritySchemaIssue() {
+        let result = ChapterQualityReviewer.parseReviewResult(from: reviewJSON(summary: ""))
+
+        XCTAssertFalse(result.hasBlockingIssues)
+        XCTAssertTrue(result.issues.contains {
+            $0.severity == .high && $0.description.contains("缺少整体评价")
+        })
     }
 
     func testQualityReviewerLocalHeuristicsAddActionableIssueForShortLongformChapter() {
@@ -581,55 +928,53 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(results.first?.subject, "银色纹路")
     }
 
-    func testMemoryManagerMarksConflictingActiveItemAsContradicted() {
-        let manager = MemoryManager()
-        let first = MemoryManagerItem(
-            bucket: .characterState,
+    func testMemoryBucketsMarksConflictingActiveItemAsContradicted() {
+        var buckets = MemoryBuckets.empty
+        let first = MemoryItem(
+            category: .characterState,
             subject: "林照",
             field: "境界",
             value: "筑基初期",
             sourceChapter: 10
         )
-        let second = MemoryManagerItem(
-            bucket: .characterState,
+        let second = MemoryItem(
+            category: .characterState,
             subject: "林照",
             field: "境界",
             value: "金丹后期",
             sourceChapter: 11
         )
 
-        manager.upsertItem(first)
-        manager.upsertItem(second)
+        buckets.upsert(first)
+        buckets.upsert(second)
 
-        XCTAssertEqual(manager.memoryPack.semanticMemory.allActiveItems.count, 1)
-        XCTAssertEqual(manager.memoryPack.semanticMemory.contradictedItems.count, 1)
-        XCTAssertEqual(manager.stats.contradictedItems, 1)
+        XCTAssertEqual(buckets.allActiveItems.count, 1)
+        XCTAssertEqual(buckets.characterState.filter { $0.status == .contradicted }.count, 1)
     }
 
-    func testMemoryManagerDoesNotDuplicateSameActiveValue() {
-        let manager = MemoryManager()
-        let first = MemoryManagerItem(
-            bucket: .worldRules,
+    func testMemoryBucketsDoesNotDuplicateSameActiveValue() {
+        var buckets = MemoryBuckets.empty
+        let first = MemoryItem(
+            category: .worldRule,
             subject: "灵脉",
             field: "限制",
             value: "夜间潮汐增强",
-            sourceChapter: 1,
-            evidence: "第一章"
+            sourceChapter: 1
         )
-        let second = MemoryManagerItem(
-            bucket: .worldRules,
+        let second = MemoryItem(
+            category: .worldRule,
             subject: "灵脉",
             field: "限制",
             value: "夜间潮汐增强",
-            sourceChapter: 2,
-            evidence: "第二章"
+            sourceChapter: 2
         )
 
-        manager.upsertItem(first)
-        manager.upsertItem(second)
+        buckets.upsert(first)
+        buckets.upsert(second)
 
-        XCTAssertEqual(manager.memoryPack.semanticMemory.items.count, 1)
-        XCTAssertEqual(manager.memoryPack.semanticMemory.allActiveItems.first?.evidence, "第二章")
+        XCTAssertEqual(buckets.worldRules.filter { $0.status == .active }.count, 1)
+        XCTAssertEqual(buckets.worldRules.filter { $0.status == .outdated }.count, 1)
+        XCTAssertEqual(buckets.allActiveItems.first?.sourceChapter, 2)
     }
 
     func testContextRankerExtractsExtendedCJKEntities() {
@@ -822,5 +1167,89 @@ final class DomainModelsTests: XCTestCase {
           "overall_summary": "\(summary)"
         }
         """
+    }
+}
+
+private struct MockAIWritingService: AIWritingServicing {
+    enum MockError: Error {
+        case unused
+    }
+
+    func validateConnection(configuration: AIConnectionConfiguration) async throws -> String {
+        configuration.modelName
+    }
+
+    func generateStoryOutline(
+        configuration: AIConnectionConfiguration,
+        project: NovelProject,
+        profile: OutlineGenerationProfile
+    ) async throws -> String {
+        throw MockError.unused
+    }
+
+    func continueChapterEnhanced(
+        configuration: AIConnectionConfiguration,
+        project: NovelProject,
+        mode: AIWritingMode,
+        additionalInstruction: String,
+        length: AIWritingLength,
+        enableReview: Bool
+    ) async throws -> EnhancedWritingResult {
+        throw MockError.unused
+    }
+
+    func polishFullDraft(
+        configuration: AIConnectionConfiguration,
+        project: NovelProject,
+        draft: String,
+        instruction: String
+    ) async throws -> String {
+        throw MockError.unused
+    }
+
+    func polishSelection(
+        configuration: AIConnectionConfiguration,
+        project: NovelProject,
+        selectedText: String,
+        instruction: String,
+        fullDraft: String,
+        precedingContext: String,
+        followingContext: String
+    ) async throws -> String {
+        throw MockError.unused
+    }
+
+    func suggestChapterTitle(
+        configuration: AIConnectionConfiguration,
+        project: NovelProject,
+        chapterContent: String
+    ) async throws -> String {
+        throw MockError.unused
+    }
+
+    func refreshGlobalMemory(
+        configuration: AIConnectionConfiguration,
+        project: NovelProject,
+        savedChapter: ChapterDraft
+    ) async throws -> String {
+        throw MockError.unused
+    }
+
+    func refreshChapterTree(
+        configuration: AIConnectionConfiguration,
+        project: NovelProject,
+        savedChapter: ChapterDraft
+    ) async throws -> ChapterTreeRefresh {
+        throw MockError.unused
+    }
+
+    func generateText(
+        configuration: AIConnectionConfiguration,
+        systemPrompt: String,
+        userPrompt: String,
+        temperature: Double,
+        maxTokens: Int
+    ) async throws -> String {
+        throw MockError.unused
     }
 }

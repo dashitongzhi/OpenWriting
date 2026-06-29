@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 extension AppState {
     var isAccountSignedIn: Bool {
@@ -48,9 +49,28 @@ extension AppState {
         }
     }
 
-    func logoutAccount() {
-        guard activeAccount != nil else { return }
+    @discardableResult
+    func logoutAccount(removingLocalData: Bool = false) -> Bool {
+        guard let account = activeAccount else { return true }
         cloudSaveTask?.cancel()
+        cloudSaveTask = nil
+        cloudSaveGeneration &+= 1
+        var didRemoveLocalData = true
+        if removingLocalData {
+            let accountProjectStorageKey = Self.recentProjectsStorageKey(for: account.userID)
+            recentProjectsPersistTasks[accountProjectStorageKey]?.cancel()
+            recentProjectsPersistTasks.removeValue(forKey: accountProjectStorageKey)
+
+            do {
+                try projectStore.removeProjects(for: account.userID)
+                userDefaults.removeObject(forKey: Self.activeProjectIDStorageKey(for: account.userID))
+                userDefaults.removeObject(forKey: Self.recentProjectsStorageKey(for: account.userID))
+                userDefaults.removeObject(forKey: Self.projectSnapshotTimestampStorageKey(for: account.userID))
+            } catch {
+                didRemoveLocalData = false
+                AppLogger.persistence.error("Account local data cleanup failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
         activeAccount = nil
         currentProjectSnapshotTimestamp = Self.doubleValue(
             forKey: Self.projectSnapshotTimestampStorageKey(for: nil),
@@ -62,6 +82,7 @@ extension AppState {
             await refreshCommerceEntitlements()
             await refreshCloudAvailability()
         }
+        return didRemoveLocalData
     }
 
     func refreshICloudProjects() async {

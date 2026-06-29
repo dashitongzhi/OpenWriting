@@ -9,7 +9,7 @@ enum StrandType: String, Codable, CaseIterable {
     case quest = "Quest"           // 主线剧情
     case fire = "Fire"             // 感情线
     case constellation = "Constellation" // 世界观扩展
-    
+
     var displayName: String {
         switch self {
         case .quest: return "主线剧情"
@@ -17,7 +17,7 @@ enum StrandType: String, Codable, CaseIterable {
         case .constellation: return "世界观扩展"
         }
     }
-    
+
     var icon: String {
         switch self {
         case .quest: return "⚔️"
@@ -25,7 +25,7 @@ enum StrandType: String, Codable, CaseIterable {
         case .constellation: return "🌌"
         }
     }
-    
+
     var description: String {
         switch self {
         case .quest: return "推动核心冲突与主线发展"
@@ -76,7 +76,7 @@ struct ChapterStrandRecord: Codable, Identifiable {
     let confidence: Double // 0-1, AI 判断的置信度
     let notes: String?
     let recordedAt: Date
-    
+
     init(chapterNumber: Int, primaryStrand: StrandType, secondaryStrand: StrandType? = nil,
          confidence: Double = 0.8, notes: String? = nil) {
         self.id = UUID()
@@ -96,13 +96,13 @@ struct RhythmAlert: Identifiable {
     let strand: StrandType
     let message: String
     let severity: AlertSeverity
-    
+
     enum AlertType {
         case consecutiveExcess  // 连续超标
         case gapExcess          // 断档超标
         case ratioImbalance     // 比例失衡
     }
-    
+
     enum AlertSeverity {
         case warning    // 警告
         case critical   // 严重
@@ -113,25 +113,25 @@ struct RhythmAlert: Identifiable {
 class StrandWeaveTracker: ObservableObject, Codable {
     /// 章节记录
     @Published var records: [ChapterStrandRecord]
-    
+
     /// 理想比例（默认 Quest 60%, Fire 20%, Constellation 20%）
     @Published var idealRatio: [StrandType: Double]
-    
+
     /// 节奏红线配置
     @Published var redLineConfig: RhythmRedLineConfig
-    
+
     enum CodingKeys: String, CodingKey {
         case records, questRatio, fireRatio, constellationRatio
         case maxConsecutiveQuest, maxGapFire, maxGapConstellation
     }
-    
+
     init(idealRatio: [StrandType: Double] = [.quest: 0.6, .fire: 0.2, .constellation: 0.2],
          redLineConfig: RhythmRedLineConfig = RhythmRedLineConfig()) {
         self.records = []
         self.idealRatio = idealRatio
         self.redLineConfig = redLineConfig
     }
-    
+
     required init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         records = try c.decodeIfPresent([ChapterStrandRecord].self, forKey: .records) ?? []
@@ -146,7 +146,7 @@ class StrandWeaveTracker: ObservableObject, Codable {
             maxConsecutiveQuest: maxCQ, maxGapFire: maxGF, maxGapConstellation: maxGC
         )
     }
-    
+
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(records, forKey: .records)
@@ -157,9 +157,9 @@ class StrandWeaveTracker: ObservableObject, Codable {
         try c.encode(redLineConfig.maxGapFire, forKey: .maxGapFire)
         try c.encode(redLineConfig.maxGapConstellation, forKey: .maxGapConstellation)
     }
-    
+
     // MARK: - Recording
-    
+
     /// 记录章节的 Strand 类型
     func recordChapter(_ record: ChapterStrandRecord) {
         // 移除同章节的旧记录
@@ -167,17 +167,17 @@ class StrandWeaveTracker: ObservableObject, Codable {
         records.append(record)
         records.sort { $0.chapterNumber < $1.chapterNumber }
     }
-    
+
     /// AI 自动判断章节的 Strand 类型
     func classifyChapter(chapterContent: String, configuration: AIConnectionConfiguration) async throws -> ChapterStrandRecord {
         let systemPrompt = """
         你是一位叙事结构分析专家。请判断给定章节的主要叙事线索类型。
-        
+
         Strand 类型：
         - Quest（主线剧情）：推动核心冲突，主角面对主要挑战
         - Fire（感情线）：人物关系发展，情感互动
         - Constellation（世界观扩展）：背景设定、势力介绍、世界观展开
-        
+
         请输出 JSON：
         ```json
         {
@@ -187,11 +187,11 @@ class StrandWeaveTracker: ObservableObject, Codable {
           "reason": "判断理由"
         }
         ```
-        
+
         primary 和 secondary 的值只能是: quest, fire, constellation
         secondary 可以为 null（如果章节只有一种明显线索）
         """
-        
+
         let response = try await AIWritingService.generateText(
             configuration: configuration,
             systemPrompt: systemPrompt,
@@ -199,33 +199,33 @@ class StrandWeaveTracker: ObservableObject, Codable {
             temperature: 0.2,
             maxTokens: 500
         )
-        
+
         return parseClassification(response: response, chapterContent: chapterContent)
     }
-    
+
     // MARK: - Analysis
-    
+
     /// 计算当前比例
     func currentRatio() -> [StrandType: Double] {
         guard !records.isEmpty else {
             return [.quest: 0, .fire: 0, .constellation: 0]
         }
-        
+
         let counts = Dictionary(grouping: records, by: { $0.primaryStrand })
             .mapValues { Double($0.count) }
         let total = Double(records.count)
-        
+
         return [
             .quest: (counts[.quest] ?? 0) / total,
             .fire: (counts[.fire] ?? 0) / total,
             .constellation: (counts[.constellation] ?? 0) / total
         ]
     }
-    
+
     /// 检查节奏红线
     func checkRedLines() -> [RhythmAlert] {
         var alerts: [RhythmAlert] = []
-        
+
         // 1. 检查 Quest 连续超标
         let consecutiveQuest = countRecentConsecutive(.quest)
         if consecutiveQuest >= redLineConfig.maxConsecutiveQuest {
@@ -236,7 +236,7 @@ class StrandWeaveTracker: ObservableObject, Codable {
                 severity: .critical
             ))
         }
-        
+
         // 2. 检查 Fire 断档
         let fireGap = countGapSince(.fire)
         if fireGap >= redLineConfig.maxGapFire {
@@ -247,7 +247,7 @@ class StrandWeaveTracker: ObservableObject, Codable {
                 severity: .warning
             ))
         }
-        
+
         // 3. 检查 Constellation 断档
         let constellationGap = countGapSince(.constellation)
         if constellationGap >= redLineConfig.maxGapConstellation {
@@ -258,7 +258,7 @@ class StrandWeaveTracker: ObservableObject, Codable {
                 severity: .warning
             ))
         }
-        
+
         // 4. 检查比例失衡
         let ratio = currentRatio()
         for strand in StrandType.allCases {
@@ -274,14 +274,14 @@ class StrandWeaveTracker: ObservableObject, Codable {
                 ))
             }
         }
-        
+
         return alerts
     }
-    
+
     /// 建议下一章的 Strand 类型
     func suggestNextStrand() -> StrandType {
         let alerts = checkRedLines()
-        
+
         // 优先处理严重告警
         if let critical = alerts.first(where: { $0.severity == .critical }) {
             switch critical.strand {
@@ -296,17 +296,17 @@ class StrandWeaveTracker: ObservableObject, Codable {
                 return .quest
             }
         }
-        
+
         // 处理断档告警
         if let gapAlert = alerts.first(where: { $0.type == .gapExcess }) {
             return gapAlert.strand
         }
-        
+
         // 按理想比例推荐
         let ratio = currentRatio()
         var maxDeficit: Double = -1
         var suggested: StrandType = .quest
-        
+
         for strand in StrandType.allCases {
             let current = ratio[strand] ?? 0
             let ideal = idealRatio[strand] ?? 0.33
@@ -316,12 +316,12 @@ class StrandWeaveTracker: ObservableObject, Codable {
                 suggested = strand
             }
         }
-        
+
         return suggested
     }
-    
+
     // MARK: - Helpers
-    
+
     /// 计算最近连续同类型章节数
     private func countRecentConsecutive(_ strand: StrandType) -> Int {
         let sortedRecords = records.sorted { $0.chapterNumber > $1.chapterNumber }
@@ -338,7 +338,7 @@ class StrandWeaveTracker: ObservableObject, Codable {
         }
         return count
     }
-    
+
     /// 计算距离上次出现某类型的间隔章节数
     private func countGapSince(_ strand: StrandType) -> Int {
         let latestChapterNumber = records.map(\.chapterNumber).max() ?? 0
@@ -350,23 +350,23 @@ class StrandWeaveTracker: ObservableObject, Codable {
         }
         return max(0, latestChapterNumber - lastRecord.chapterNumber)
     }
-    
+
     /// 解析 AI 分类结果
     private func parseClassification(response: String, chapterContent: String) -> ChapterStrandRecord {
         let jsonString = extractJSON(from: response)
-        
+
         guard let data = jsonString.data(using: .utf8),
               let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let primaryStr = parsed["primary"] as? String else {
             // Fallback: 默认为 Quest
             return ChapterStrandRecord(chapterNumber: nextChapterNumber, primaryStrand: .quest, confidence: 0.5)
         }
-        
+
         let primary = StrandType(rawValue: primaryStr.capitalized) ?? .quest
         let secondary: StrandType? = (parsed["secondary"] as? String).flatMap { StrandType(rawValue: $0.capitalized) }
         let confidence = parsed["confidence"] as? Double ?? 0.7
         let reason = parsed["reason"] as? String
-        
+
         return ChapterStrandRecord(
             chapterNumber: nextChapterNumber,
             primaryStrand: primary,
@@ -379,7 +379,7 @@ class StrandWeaveTracker: ObservableObject, Codable {
     private var nextChapterNumber: Int {
         (records.map(\.chapterNumber).max() ?? 0) + 1
     }
-    
+
     private func extractJSON(from text: String) -> String {
         if let startRange = text.range(of: "```json"),
            let endRange = text.range(of: "```", range: startRange.upperBound..<text.endIndex) {
@@ -401,7 +401,7 @@ struct RhythmRedLineConfig: Codable {
     var maxGapFire: Int
     /// Constellation 断档章节数上限
     var maxGapConstellation: Int
-    
+
     init(maxConsecutiveQuest: Int = 5, maxGapFire: Int = 10, maxGapConstellation: Int = 15) {
         self.maxConsecutiveQuest = maxConsecutiveQuest
         self.maxGapFire = maxGapFire

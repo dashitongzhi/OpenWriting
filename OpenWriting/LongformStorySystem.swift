@@ -2189,9 +2189,6 @@ enum LongformStorySystem {
 }
 
 extension NovelProject {
-    private static let longformRuntimeLock = NSLock()
-    private static var longformRuntimeCache: [String: LongformStoryRuntimeState] = [:]
-
     var longformRuntimeState: LongformStoryRuntimeState {
         get {
             if let persistedLongformRuntimeState {

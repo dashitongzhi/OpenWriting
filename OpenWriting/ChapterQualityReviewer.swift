@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 // MARK: - Unified Chapter Quality Review System
 //
@@ -476,7 +477,7 @@ enum UnifiedQualityReviewer {
 
     private struct AIReviewIssue: Decodable {
         let dimension: String
-        let severity: String
+        let severity: String?
         let description: String
         let evidence: String?
         let fix_hint: String?
@@ -489,6 +490,7 @@ enum UnifiedQualityReviewer {
 
         guard let data = cleaned.data(using: .utf8),
               let response = try? JSONDecoder().decode(AIReviewResponse.self, from: data) else {
+            AppLogger.quality.error("Quality review JSON decode failed, falling back to heuristic parse.")
             return fallbackParse(from: cleaned)
         }
 
@@ -642,7 +644,7 @@ enum UnifiedQualityReviewer {
         if overallSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             schemaIssues.append(ReviewIssue(
                 dimension: .logicIntegrity,
-                severity: .critical,
+                severity: .high,
                 description: "审查结果缺少整体评价，无法确认九维审查是否真实完成。",
                 evidence: "",
                 fixHint: "请重新运行质量审查，要求模型返回 overall_summary。",
@@ -690,8 +692,8 @@ enum UnifiedQualityReviewer {
         )
     }
 
-    private static func reviewSeverity(from rawValue: String) -> ReviewSeverity {
-        let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    private static func reviewSeverity(from rawValue: String?) -> ReviewSeverity {
+        let normalized = (rawValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if let severity = ReviewSeverity(rawValue: normalized) {
             return severity
         }
@@ -714,7 +716,7 @@ enum UnifiedQualityReviewer {
             return .low
         }
 
-        return .critical
+        return .medium
     }
 
     // MARK: - Penalty-Based Score Calculation (webnovel-writer methodology)

@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 struct ProjectExportSummary {
     let directoryURL: URL
@@ -127,16 +128,24 @@ enum ProjectExportService {
         }
 
         let decoder = JSONDecoder()
-        guard let manifestData = try? Data(contentsOf: manifestURL),
-              let manifest = try? decoder.decode(Manifest.self, from: manifestData)
-        else {
+        guard let manifestData = try? Data(contentsOf: manifestURL) else {
+            AppLogger.export.error("Export manifest could not be read: \(manifestURL.path, privacy: .public)")
+            throw ProjectExportError.invalidManifest(manifestURL)
+        }
+
+        guard let manifest = try? decoder.decode(Manifest.self, from: manifestData) else {
+            AppLogger.export.error("Export manifest could not be decoded: \(manifestURL.path, privacy: .public)")
             throw ProjectExportError.invalidManifest(manifestURL)
         }
 
         let projectURL = directoryURL.appendingPathComponent("project.json", isDirectory: false)
-        guard let projectData = try? Data(contentsOf: projectURL),
-              let project = try? decoder.decode(NovelProject.self, from: projectData)
-        else {
+        guard let projectData = try? Data(contentsOf: projectURL) else {
+            AppLogger.export.error("Export project JSON could not be read: \(projectURL.path, privacy: .public)")
+            throw ProjectExportError.unreadableProjectJSON(projectURL)
+        }
+
+        guard let project = try? decoder.decode(NovelProject.self, from: projectData) else {
+            AppLogger.export.error("Export project JSON could not be decoded: \(projectURL.path, privacy: .public)")
             throw ProjectExportError.unreadableProjectJSON(projectURL)
         }
 

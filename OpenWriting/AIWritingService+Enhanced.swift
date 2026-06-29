@@ -392,6 +392,10 @@ extension AIWritingService {
 
         \(AntiAIWritingGuide.formattedGuide)
 
+        \(CBNStructureGuide.formattedGuide)
+
+        \(NarrativeStageGuide.formattedGuide)
+
         题材约束（\(genreTemplate.name)）：
         \(genreTemplate.formattedForPrompt)
 

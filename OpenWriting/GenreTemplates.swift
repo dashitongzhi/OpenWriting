@@ -25,9 +25,9 @@ enum LegacyGenreCategory: String, Codable, CaseIterable, Identifiable {
     case urban = "都市现代"
     case romance = "言情"
     case suspense = "悬疑"
-    
+
     var id: String { rawValue }
-    
+
     var genres: [LegacyGenreTemplate] {
         LegacyGenreTemplateLibrary.allTemplates.filter { $0.category == self }
     }
@@ -40,7 +40,7 @@ struct LegacyGenreTemplate: Identifiable, Codable {
     let aliases: [String]
     let category: LegacyGenreCategory
     let description: String
-    
+
     /// 世界观核心规则
     let worldRules: [String]
     /// 典型角色原型
@@ -53,14 +53,14 @@ struct LegacyGenreTemplate: Identifiable, Codable {
     let pleasurePointTypes: [String]
     /// 推荐的 Strand Weave 比例 (Quest, Fire, Constellation)
     let strandRatio: (quest: Double, fire: Double, constellation: Double)
-    
+
     enum CodingKeys: String, CodingKey {
         case id, name, aliases, category, description
         case worldRules, characterArchetypes, pacingGuide
         case hookPatterns, pleasurePointTypes
         case questRatio, fireRatio, constellationRatio
     }
-    
+
     init(id: String, name: String, aliases: [String] = [], category: LegacyGenreCategory,
          description: String, worldRules: [String], characterArchetypes: [String],
          pacingGuide: String, hookPatterns: [String], pleasurePointTypes: [String],
@@ -77,7 +77,7 @@ struct LegacyGenreTemplate: Identifiable, Codable {
         self.pleasurePointTypes = pleasurePointTypes
         self.strandRatio = strandRatio
     }
-    
+
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
@@ -95,7 +95,7 @@ struct LegacyGenreTemplate: Identifiable, Codable {
         let con = try c.decodeIfPresent(Double.self, forKey: .constellationRatio) ?? 0.2
         strandRatio = (q, f, con)
     }
-    
+
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id)
@@ -116,9 +116,9 @@ struct LegacyGenreTemplate: Identifiable, Codable {
 
 /// 题材模板库
 enum LegacyGenreTemplateLibrary {
-    
+
     static let allTemplates: [LegacyGenreTemplate] = xuanhuanGenres + urbanGenres + romanceGenres + suspenseGenres
-    
+
     /// 通过名称或别名查找题材
     static func lookup(_ input: String) -> LegacyGenreTemplate? {
         let normalized = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -127,7 +127,7 @@ enum LegacyGenreTemplateLibrary {
             template.aliases.contains(where: { $0.lowercased() == normalized })
         }
     }
-    
+
     /// 支持复合题材查找（如 "都市脑洞+规则怪谈"）
     static func lookupComposite(_ input: String) -> [LegacyGenreTemplate] {
         let separators: [Character] = ["+", "/", "、", "与"]
@@ -135,9 +135,9 @@ enum LegacyGenreTemplateLibrary {
             .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
         return parts.compactMap { lookup($0) }
     }
-    
+
     // MARK: - 玄幻修仙类
-    
+
     static let xuanhuanGenres: [LegacyGenreTemplate] = [
         LegacyGenreTemplate(
             id: "xianxia", name: "修仙", aliases: ["玄幻", "修真", "玄幻修仙"],
@@ -252,9 +252,9 @@ enum LegacyGenreTemplateLibrary {
             pleasurePointTypes: ["科技升级", "舰队壮大", "击败外星势力", "发现新文明", "AI觉醒"]
         )
     ]
-    
+
     // MARK: - 都市现代类
-    
+
     static let urbanGenres: [LegacyGenreTemplate] = [
         LegacyGenreTemplate(
             id: "urban-powers", name: "都市异能", aliases: ["都市修真", "都市超能力"],
@@ -353,9 +353,9 @@ enum LegacyGenreTemplateLibrary {
             pleasurePointTypes: ["人物成长", "命运抗争", "人性光辉", "社会反思", "情感共鸣"]
         )
     ]
-    
+
     // MARK: - 言情类
-    
+
     static let romanceGenres: [LegacyGenreTemplate] = [
         LegacyGenreTemplate(
             id: "ancient-romance", name: "古言", aliases: ["古代言情", "古风言情"],
@@ -454,9 +454,9 @@ enum LegacyGenreTemplateLibrary {
             pleasurePointTypes: ["甜蜜互动", "突破境界", "前世真相", "共渡天劫", "终成眷属"]
         )
     ]
-    
+
     // MARK: - 悬疑类
-    
+
     static let suspenseGenres: [LegacyGenreTemplate] = [
         LegacyGenreTemplate(
             id: "rules-mystery", name: "规则怪谈", aliases: ["怪谈", "规则类怪谈"],

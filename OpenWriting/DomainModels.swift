@@ -15,11 +15,15 @@ nonisolated enum PersistedTimestampCodec {
         guard !trimmedValue.isEmpty else { return nil }
 
         if let seconds = Double(trimmedValue) {
-            return Date(timeIntervalSince1970: seconds)
+            return dateFromEpochSeconds(seconds)
         }
 
         if let date = iso8601Formatter(withFractionalSeconds: true).date(from: trimmedValue)
             ?? iso8601Formatter(withFractionalSeconds: false).date(from: trimmedValue) {
+            return date
+        }
+
+        if let date = parseLegacyDateLabel(trimmedValue) {
             return date
         }
 
@@ -43,6 +47,13 @@ nonisolated enum PersistedTimestampCodec {
         parse(rawValue)
     }
 
+    static func decodeOrNow<Key: CodingKey>(
+        _ container: KeyedDecodingContainer<Key>,
+        forKey key: Key
+    ) -> Date {
+        decodeOptional(container, forKey: key) ?? now()
+    }
+
     static func decodeRequired<Key: CodingKey>(
         _ container: KeyedDecodingContainer<Key>,
         forKey key: Key
@@ -63,11 +74,11 @@ nonisolated enum PersistedTimestampCodec {
         forKey key: Key
     ) -> Date? {
         if let doubleValue = try? container.decodeIfPresent(Double.self, forKey: key) {
-            return Date(timeIntervalSince1970: doubleValue)
+            return dateFromEpochSeconds(doubleValue)
         }
 
         if let intValue = try? container.decodeIfPresent(Int.self, forKey: key) {
-            return Date(timeIntervalSince1970: Double(intValue))
+            return dateFromEpochSeconds(Double(intValue))
         }
 
         if let stringValue = try? container.decodeIfPresent(String.self, forKey: key) {
@@ -138,8 +149,52 @@ nonisolated enum PersistedTimestampCodec {
     private static func formatter(_ format: String) -> DateFormatter {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_Hans_CN")
+        formatter.isLenient = false
         formatter.dateFormat = format
         return formatter
+    }
+
+    private static func parseLegacyDateLabel(_ value: String) -> Date? {
+        let fullYearFormats = [
+            "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd HH:mm",
+            "yyyy-MM-dd",
+            "yyyy/M/d HH:mm:ss",
+            "yyyy/M/d HH:mm",
+            "yyyy/M/d",
+            "yyyy年M月d日 HH:mm:ss",
+            "yyyy年M月d日 HH:mm"
+        ]
+
+        for format in fullYearFormats {
+            if let date = formatter(format).date(from: value) {
+                return date
+            }
+        }
+
+        let currentYearFormats = [
+            "M月d日 HH:mm:ss",
+            "M月d日 HH:mm",
+            "M/d HH:mm:ss",
+            "M/d HH:mm"
+        ]
+
+        for format in currentYearFormats {
+            if let parsedDate = formatter(format).date(from: value) {
+                return date(byApplyingCurrentYearTo: parsedDate)
+            }
+        }
+
+        if let compactYearDate = formatter("yy/M/d HH:mm").date(from: value) {
+            return compactYearDate
+        }
+
+        return nil
+    }
+
+    private static func dateFromEpochSeconds(_ seconds: Double) -> Date? {
+        guard seconds >= 1_000_000_000 else { return nil }
+        return Date(timeIntervalSince1970: seconds)
     }
 
     private static func parseClockTime(from value: String, prefix: String?) -> DateComponents? {
@@ -168,6 +223,12 @@ nonisolated enum PersistedTimestampCodec {
         components.hour = time.hour
         components.minute = time.minute
         components.second = 0
+        return calendar.date(from: components)
+    }
+
+    private static func date(byApplyingCurrentYearTo date: Date) -> Date? {
+        var components = calendar.dateComponents([.month, .day, .hour, .minute, .second], from: date)
+        components.year = calendar.component(.year, from: Date())
         return calendar.date(from: components)
     }
 }
@@ -462,7 +523,7 @@ nonisolated struct ChapterDraftVersion: Identifiable, Codable, Hashable {
         chapterTitle = try container.decode(String.self, forKey: .chapterTitle)
         content = try container.decode(String.self, forKey: .content)
         reason = try container.decodeIfPresent(String.self, forKey: .reason) ?? "历史版本"
-        savedAtTimestamp = try PersistedTimestampCodec.decodeRequired(container, forKey: .savedAt)
+        savedAtTimestamp = PersistedTimestampCodec.decodeOrNow(container, forKey: .savedAt)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -536,7 +597,7 @@ nonisolated struct ChapterDraft: Identifiable, Codable, Hashable {
         chapterNumber = try container.decode(Int.self, forKey: .chapterNumber)
         chapterTitle = try container.decode(String.self, forKey: .chapterTitle)
         content = try container.decode(String.self, forKey: .content)
-        savedAtTimestamp = try PersistedTimestampCodec.decodeRequired(container, forKey: .savedAt)
+        savedAtTimestamp = PersistedTimestampCodec.decodeOrNow(container, forKey: .savedAt)
         versionHistory = try container.decodeIfPresent([ChapterDraftVersion].self, forKey: .versionHistory) ?? []
     }
 
@@ -1545,7 +1606,10 @@ struct PlotThreadList: Codable, Hashable {
 }
 
 struct NovelProject: Identifiable, Codable, @unchecked Sendable {
+    static let currentSchemaVersion = 2
+
     let id: String
+    var schemaVersion: Int
     let title: String
     let genre: String
     let summary: String
@@ -1599,6 +1663,7 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
 
     enum CodingKeys: String, CodingKey {
         case id
+        case schemaVersion
         case title
         case genre
         case summary
@@ -1644,6 +1709,7 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
 
     init(
         id: String,
+        schemaVersion: Int = NovelProject.currentSchemaVersion,
         title: String,
         genre: String,
         summary: String,
@@ -1684,6 +1750,7 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
         persistedLongformRuntimeState: LongformStoryRuntimeState? = nil
     ) {
         self.id = id
+        self.schemaVersion = max(schemaVersion, 1)
         self.title = title
         self.genre = genre
         self.summary = summary
@@ -1734,11 +1801,13 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
+        let decodedSchemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        schemaVersion = max(decodedSchemaVersion, Self.currentSchemaVersion)
         title = try container.decode(String.self, forKey: .title)
         genre = try container.decode(String.self, forKey: .genre)
         summary = try container.decode(String.self, forKey: .summary)
         storyLength = try container.decodeIfPresent(NovelLength.self, forKey: .storyLength) ?? .long
-        updatedAtTimestamp = try PersistedTimestampCodec.decodeRequired(container, forKey: .updatedAt)
+        updatedAtTimestamp = PersistedTimestampCodec.decodeOrNow(container, forKey: .updatedAt)
         currentChapterTitle = try container.decodeIfPresent(String.self, forKey: .currentChapterTitle) ?? "开篇设定"
         currentVolumeNumber = try container.decodeIfPresent(Int.self, forKey: .currentVolumeNumber) ?? 1
         currentChapterNumber = try container.decodeIfPresent(Int.self, forKey: .currentChapterNumber) ?? 1
@@ -1784,6 +1853,7 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
+        try container.encode(Self.currentSchemaVersion, forKey: .schemaVersion)
         try container.encode(title, forKey: .title)
         try container.encode(genre, forKey: .genre)
         try container.encode(summary, forKey: .summary)
@@ -2334,7 +2404,7 @@ struct ReferenceDocument: Identifiable, Codable, Hashable {
         id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
         title = try container.decode(String.self, forKey: .title)
         content = try container.decode(String.self, forKey: .content)
-        importedAtTimestamp = try PersistedTimestampCodec.decodeRequired(container, forKey: .importedAt)
+        importedAtTimestamp = PersistedTimestampCodec.decodeOrNow(container, forKey: .importedAt)
         category = try container.decodeIfPresent(ReferenceMaterialCategory.self, forKey: .category)
             ?? ReferenceMaterialCategory.infer(fromTitle: title, content: content)
     }

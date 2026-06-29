@@ -215,6 +215,9 @@ extension AIWritingService {
         全局记忆：
         \(bounded(project.continuityNotes, fallback: "暂无，请优先保持当前正文语气、叙事视角和冲突方向。", limit: 2_200))
 
+        结构化长期记忆（人物状态、关系、世界规则、剧情事实、时间线、伏笔和读者承诺的当前真实状态）：
+        \(bounded(project.enhancedMemoryContext, fallback: "暂无结构化长期记忆。", limit: 2_400))
+
         作品大纲：
         \(bounded(project.outlineText, fallback: "暂无大纲，请依据项目摘要和当前章节目标稳步推进。", limit: 3_200))
 
@@ -301,6 +304,9 @@ extension AIWritingService {
         全局记忆：
         \(bounded(project.continuityNotes, fallback: "暂无全局记忆。", limit: 1_800))
 
+        结构化长期记忆（拍点必须避开与既有人物状态、关系和伏笔冲突）：
+        \(bounded(project.enhancedMemoryContext, fallback: "暂无结构化长期记忆。", limit: 1_800))
+
         章节树关键约束：
         \(support.chapterTreeFocus)
 
@@ -358,6 +364,12 @@ extension AIWritingService {
         章节树关键约束：
         \(support.chapterTreeFocus)
 
+        全局记忆（用于核对人物、关系、地点、道具和世界状态的当前真实状态）：
+        \(bounded(project.continuityNotes, fallback: "暂无全局记忆。", limit: 1_600))
+
+        结构化长期记忆（修订时不得改写或遗忘这些已建立事实）：
+        \(bounded(project.enhancedMemoryContext, fallback: "暂无结构化长期记忆。", limit: 1_600))
+
         本章执行验收：
         \(writingExecutionContractPrompt(project: project))
 
@@ -405,6 +417,12 @@ extension AIWritingService {
 
         本次续写拍点：
         \(normalized(writingPlan, fallback: "请至少推进一个新的情节增量。"))
+
+        全局记忆（返修时必须保持这些已建立事实一致）：
+        \(bounded(project.continuityNotes, fallback: "暂无全局记忆。", limit: 1_400))
+
+        结构化长期记忆（用于核对人物状态、关系变化、伏笔和世界规则）：
+        \(bounded(project.enhancedMemoryContext, fallback: "暂无结构化长期记忆。", limit: 1_400))
 
         本章执行验收：
         \(writingExecutionContractPrompt(project: project))
@@ -493,6 +511,9 @@ extension AIWritingService {
         全局记忆：
         \(bounded(project.continuityNotes, fallback: "暂无全局记忆。", limit: 1_400))
 
+        结构化长期记忆：
+        \(bounded(project.enhancedMemoryContext, fallback: "暂无结构化长期记忆。", limit: 1_600))
+
         章节树关键约束：
         \(bounded(project.outlineSummary, fallback: "暂无章节树约束。", limit: 1_200))
 
@@ -534,6 +555,9 @@ extension AIWritingService {
 
         全局记忆：
         \(bounded(project.continuityNotes, fallback: "暂无全局记忆。", limit: 1_000))
+
+        结构化长期记忆：
+        \(bounded(project.enhancedMemoryContext, fallback: "暂无结构化长期记忆。", limit: 1_200))
 
         特殊要求与启用写作 Skill：
         \(bounded(project.specialRequirements, fallback: "暂无特殊要求或启用 Skill。", limit: 1_200))
@@ -925,20 +949,20 @@ extension AIWritingService {
     static func genreTemplateContext(_ template: GenreTemplate) -> String {
         """
         ## 题材模板：\(template.name)
-        
+
         **类型**: \(template.category.rawValue)
         **简介**: \(template.description)
-        
+
         **核心卖点**: \(template.coreSellingPoint)
-        
+
         **节奏配置**:
         - 停滞阈值：\(template.stagnationThreshold) 章
         - 铺垫容忍：\(template.setupTolerance.displayName)
         - Strand 比例：Quest \(Int(template.strandConfig.questTarget * 100))% / Fire \(Int(template.strandConfig.fireTarget * 100))% / Constellation \(Int(template.strandConfig.constellationTarget * 100))%
-        
+
         **常见 Hook 模式**:
         \(template.preferredHookTypes.map { "- \($0.displayName)" }.joined(separator: "\n"))
-        
+
         **爽点类型**:
         \(template.preferredCoolPointPatterns.map { "- \($0.displayName)" }.joined(separator: "\n"))
 
@@ -956,13 +980,13 @@ extension AIWritingService {
     static func antiHallucinationContext(project: NovelProject) -> String {
         """
         ## 防幻觉铁律
-        
+
         1. **大纲即法律** — 严格遵循大纲，不擅自发挥。当前章节大纲：
         \(normalized(project.outlineText, fallback: "（未设置）"))
-        
+
         2. **设定即物理** — 遵守世界观设定，不自相矛盾。当前设定：
         \(normalized(project.referenceContextText, fallback: "（未设置）"))
-        
+
         3. **发明需识别** — 如果需要引入新角色、新设定、新地点，必须在正文后单独标注，格式：
         [新实体] 类型: xxx | 名称: xxx | 描述: xxx
         """

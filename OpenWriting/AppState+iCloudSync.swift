@@ -1,5 +1,6 @@
 import AuthenticationServices
 import Foundation
+import OSLog
 
 extension AppState {
     func noteLocalProjectMutation() {
@@ -83,12 +84,13 @@ extension AppState {
                 } catch is CancellationError {
                     return
                 } catch {
+                    AppLogger.sync.error("CloudKit background save failed: \(error.localizedDescription, privacy: .public)")
                     await MainActor.run {
                         guard self.cloudSaveGeneration == saveGeneration else { return }
                         self.setCloudSyncStatus(
                             title: "本机保存",
                             symbolName: "icloud.slash",
-                            message: error.localizedDescription
+                            message: UserFacingError.syncMessage(for: error)
                         )
                     }
                 }
@@ -155,6 +157,7 @@ extension AppState {
                 return false
             }
         } catch {
+            AppLogger.sync.error("Apple credential state refresh failed: \(error.localizedDescription, privacy: .public)")
             return true
         }
     }
@@ -225,10 +228,11 @@ extension AppState {
                 message: "当前设备上的项目已与 iCloud 对齐。"
             )
         } catch {
+            AppLogger.sync.error("Manual iCloud synchronization failed: \(error.localizedDescription, privacy: .public)")
             setCloudSyncStatus(
                 title: "本机保存",
                 symbolName: "icloud.slash",
-                message: error.localizedDescription
+                message: UserFacingError.syncMessage(for: error)
             )
         }
     }
@@ -236,21 +240,89 @@ extension AppState {
     func applyCloudSnapshot(_ snapshot: AccountProjectSnapshot) {
         let previousActiveProjectID = activeProjectID
         let previousSelectedProjectID = selectedProjectID
-        let snapshotProjectIDs = Set(snapshot.recentProjects.map(\.id))
+        let mergedProjects = Self.mergeCloudProjects(local: recentProjects, remote: snapshot.recentProjects)
+        let mergedProjectIDs = Set(mergedProjects.map(\.id))
         let preservedSelection = Self.preservedCloudSelection(
             selectedProjectID: previousSelectedProjectID,
             activeProjectID: previousActiveProjectID,
             snapshotActiveProjectID: snapshot.activeProjectID,
-            projectIDs: snapshotProjectIDs
+            projectIDs: mergedProjectIDs
         )
 
-        currentProjectSnapshotTimestamp = snapshot.updatedAt.timeIntervalSince1970
+        currentProjectSnapshotTimestamp = max(currentProjectSnapshotTimestamp, snapshot.updatedAt.timeIntervalSince1970)
         isHydratingAccountScopedData = true
-        recentProjects = snapshot.recentProjects
+        recentProjects = mergedProjects
         activeProjectID = preservedSelection
         selectedProjectID = preservedSelection
         normalizeProjectSelection()
         isHydratingAccountScopedData = false
+    }
+
+    static func mergeCloudProjects(local: [NovelProject], remote: [NovelProject]) -> [NovelProject] {
+        var localByID = Dictionary(uniqueKeysWithValues: local.map { ($0.id, $0) })
+        var merged: [NovelProject] = []
+        var visitedIDs = Set<NovelProject.ID>()
+
+        for remoteProject in remote {
+            if let localProject = localByID.removeValue(forKey: remoteProject.id) {
+                merged.append(mergeCloudProject(local: localProject, remote: remoteProject))
+            } else {
+                merged.append(remoteProject)
+            }
+            visitedIDs.insert(remoteProject.id)
+        }
+
+        let remainingLocal = local
+            .filter { !visitedIDs.contains($0.id) }
+            .sorted { $0.updatedAtDate > $1.updatedAtDate }
+        merged.append(contentsOf: remainingLocal)
+        return merged.sorted { lhs, rhs in
+            if lhs.updatedAtDate == rhs.updatedAtDate {
+                return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+            }
+            return lhs.updatedAtDate > rhs.updatedAtDate
+        }
+    }
+
+    private static func mergeCloudProject(local: NovelProject, remote: NovelProject) -> NovelProject {
+        var merged = remote.updatedAtDate >= local.updatedAtDate ? remote : local
+        merged.chapterDrafts = mergeCloudChapterDrafts(local: local.chapterDrafts, remote: remote.chapterDrafts)
+        merged.chapterCatalog = merged.chapterDrafts
+            .map(ChapterDraftMetadata.init)
+            .sorted(by: ChapterDraftMetadata.sortDescending)
+
+        if local.updatedAtDate > remote.updatedAtDate {
+            merged.draftText = local.draftText
+            merged.currentChapterTitle = local.currentChapterTitle
+            merged.currentVolumeNumber = local.currentVolumeNumber
+            merged.currentChapterNumber = local.currentChapterNumber
+            merged.chapterFocus = local.chapterFocus
+            merged.updatedAtDate = local.updatedAtDate
+        }
+
+        if let newestChapterDate = merged.chapterDrafts.map(\.savedAtDate).max(),
+           newestChapterDate > merged.updatedAtDate {
+            merged.updatedAtDate = newestChapterDate
+        }
+
+        return merged
+    }
+
+    private static func mergeCloudChapterDrafts(
+        local: [ChapterDraft],
+        remote: [ChapterDraft]
+    ) -> [ChapterDraft] {
+        var draftsByID = Dictionary(uniqueKeysWithValues: local.map { ($0.id, $0) })
+        for remoteDraft in remote {
+            if let localDraft = draftsByID[remoteDraft.id] {
+                draftsByID[remoteDraft.id] = remoteDraft.savedAtDate >= localDraft.savedAtDate
+                    ? remoteDraft
+                    : localDraft
+            } else {
+                draftsByID[remoteDraft.id] = remoteDraft
+            }
+        }
+        return draftsByID.values.sorted(by: ChapterDraft.sortDescending)
     }
 
     static func preservedCloudSelection(
