@@ -966,16 +966,12 @@ struct WritingDeskView: View {
                 }
             }
 
-            if let review = displayedChapterReview(for: project) {
+            if let presentation = displayedChapterReviewPresentation(for: project) {
                 ChapterQualityReviewPanel(
-                    review: review,
-                    minimumAcceptedScore: LongformStorySystem.minimumAcceptedScore(for: project.storyLength),
+                    review: presentation.review,
+                    minimumAcceptedScore: presentation.minimumAcceptedScore,
                     onOpenFullReport: {
-                        qualityReviewDashboardPresentation = QualityReviewDashboardPresentation(
-                            review: review,
-                            chapterTitle: project.currentChapterSummary,
-                            minimumAcceptedScore: LongformStorySystem.minimumAcceptedScore(for: project.storyLength)
-                        )
+                        qualityReviewDashboardPresentation = presentation
                     }
                 )
             }
@@ -1055,27 +1051,48 @@ struct WritingDeskView: View {
     }
 
     private func displayedChapterReview(for project: NovelProject) -> ChapterReviewResult? {
+        displayedChapterReviewPresentation(for: project)?.review
+    }
+
+    private func displayedChapterReviewPresentation(for project: NovelProject) -> QualityReviewDashboardPresentation? {
+        let minimumAcceptedScore = LongformStorySystem.minimumAcceptedScore(for: project.storyLength)
+
         if let latestChapterReview {
             let normalizedSuggestion = aiSuggestion.trimmingCharacters(in: .whitespacesAndNewlines)
             let reviewedSuggestion = latestReviewedAISuggestionText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !normalizedSuggestion.isEmpty, reviewedSuggestion == normalizedSuggestion {
-                return latestChapterReview
+                return QualityReviewDashboardPresentation(
+                    review: latestChapterReview,
+                    chapterTitle: project.currentChapterSummary,
+                    minimumAcceptedScore: minimumAcceptedScore
+                )
             }
 
             if latestChapterReviewDraftContext == chapterSaveValidationContext(for: project) {
-                return latestChapterReview
+                return QualityReviewDashboardPresentation(
+                    review: latestChapterReview,
+                    chapterTitle: project.currentChapterSummary,
+                    minimumAcceptedScore: minimumAcceptedScore
+                )
             }
         }
 
         let currentVolume = max(project.currentVolumeNumber, 1)
         let currentChapter = max(project.currentChapterNumber, 1)
-        return project.qualityReviewReports
-            .sorted { $0.reviewedAt > $1.reviewedAt }
+        let matchingReport = project.qualityReviewReports.sorted { $0.reviewedAt > $1.reviewedAt }
             .first {
                 $0.resolvedVolumeNumber == currentVolume
                     && $0.chapterNumber == currentChapter
-            }?
-            .unifiedResult
+            }
+        guard let report = matchingReport,
+            let review = report.unifiedResult
+        else { return nil }
+
+        return QualityReviewDashboardPresentation(
+            review: review,
+            chapterTitle: report.chapterTitle,
+            minimumAcceptedScore: minimumAcceptedScore
+        )
     }
 
     private func strandWeaveIndicator(for project: NovelProject) -> some View {
@@ -3445,8 +3462,11 @@ struct WritingDeskView: View {
         mutableDraft.replaceCharacters(in: range, with: replacementText)
         appState.updateDraftText(mutableDraft as String, for: project.id)
         draftSelection = WritingDeskDraftSelection(
-            range: NSRange(location: range.location, length: (replacementText as NSString).length),
-            text: replacementText
+            range: NSRange(
+                location: range.location + (replacementText as NSString).length,
+                length: 0
+            ),
+            text: ""
         )
         findStatusMessage = "已替换 1 处“\(query)”。"
         focusDraftEditor()

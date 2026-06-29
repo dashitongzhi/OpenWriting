@@ -303,6 +303,16 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertNotNil(decoded)
     }
 
+    func testPersistedTimestampCodecParsesLegacyDateLabels() {
+        let dateOnly = PersistedTimestampCodec.parse("2026-06-06")
+        let chineseDateTime = PersistedTimestampCodec.parse("2026年6月6日 14:30")
+        let currentYearDisplay = PersistedTimestampCodec.parse("6月6日 14:30")
+
+        XCTAssertNotNil(dateOnly)
+        XCTAssertNotNil(chineseDateTime)
+        XCTAssertNotNil(currentYearDisplay)
+    }
+
     // MARK: - OutlineGenerationProfile Tests
 
     func testOutlineGenerationProfileCompletion() {
@@ -357,6 +367,48 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertNotNil(PersistedTimestampCodec.parse("1717603200"))
     }
 
+    func testLegacyNovelProjectPayloadDecodesWithCurrentSchemaAndTimestampFallbacks() throws {
+        let legacyJSON = """
+        {
+          "id": "legacy-project",
+          "title": "旧项目",
+          "genre": "玄幻",
+          "summary": "旧版本保存的项目",
+          "currentChapterNumber": 3,
+          "writtenChapters": 2,
+          "chapterDrafts": [
+            {
+              "id": "chapter-without-saved-at",
+              "chapterNumber": 2,
+              "chapterTitle": "旧章",
+              "content": "旧章节正文"
+            }
+          ],
+          "referenceDocuments": [
+            {
+              "id": "reference-without-imported-at",
+              "title": "人物设定",
+              "content": "沈青袖持有玄铁令"
+            }
+          ],
+          "continuityNotes": "人物关系\\n- 沈青袖与陆白互相信任"
+        }
+        """
+
+        let project = try JSONDecoder().decode(NovelProject.self, from: Data(legacyJSON.utf8))
+
+        XCTAssertEqual(project.schemaVersion, NovelProject.currentSchemaVersion)
+        XCTAssertEqual(project.id, "legacy-project")
+        XCTAssertEqual(project.storyLength, .long)
+        XCTAssertEqual(project.currentChapterTitle, "开篇设定")
+        XCTAssertEqual(project.chapterDrafts.first?.chapterTitle, "旧章")
+        XCTAssertEqual(project.referenceDocuments.first?.category, .character)
+        XCTAssertTrue(project.globalMemorySnapshot.hasStructuredContent)
+        XCTAssertFalse(project.updatedAt.isEmpty)
+        XCTAssertFalse(project.chapterDrafts.first?.savedAt.isEmpty ?? true)
+        XCTAssertFalse(project.referenceDocuments.first?.importedAt.isEmpty ?? true)
+    }
+
     @MainActor
     func testAppStateAcceptsInjectedAIService() {
         let userDefaults = makeIsolatedUserDefaults()
@@ -406,6 +458,98 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertNil(userDefaults.object(forKey: AppState.recentProjectsStorageKey(for: account.userID)))
         XCTAssertNil(userDefaults.object(forKey: AppState.projectSnapshotTimestampStorageKey(for: account.userID)))
         XCTAssertNil(appState.activeAccount)
+    }
+
+    @MainActor
+    func testLogoutInvalidatesPendingCloudSaveGeneration() {
+        let userDefaults = makeIsolatedUserDefaults()
+        let store = makeIsolatedProjectStore()
+        let account = AppleAccountProfile(
+            userID: "apple-user-\(UUID().uuidString)",
+            email: "writer@example.com",
+            fullName: "Writer"
+        )
+        let appState = AppState(userDefaults: userDefaults, projectStore: store)
+        appState.activeAccount = account
+        appState.cloudSaveGeneration = 41
+
+        XCTAssertTrue(appState.logoutAccount())
+
+        XCTAssertNil(appState.cloudSaveTask)
+        XCTAssertEqual(appState.cloudSaveGeneration, 42)
+        XCTAssertNil(appState.activeAccount)
+    }
+
+    func testCloudKitRecordPlanScopesSnapshotRecordsByAccount() {
+        var project = makeProject(
+            id: "shared-project",
+            title: "共享项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        project.chapterDrafts = [
+            ChapterDraft(
+                id: "chapter-1",
+                chapterNumber: 1,
+                chapterTitle: "第一章",
+                content: "正文"
+            )
+        ]
+        let snapshot = AccountProjectSnapshot(
+            activeProjectID: project.id,
+            recentProjects: [project],
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+
+        let firstAccountPlan = ICloudProjectStore.cloudKitRecordPlan(for: snapshot, scope: "apple-user-1")
+        let secondAccountPlan = ICloudProjectStore.cloudKitRecordPlan(for: snapshot, scope: "apple-user-2")
+
+        XCTAssertEqual(firstAccountPlan.snapshotRecordName, "snapshot_apple-user-1")
+        XCTAssertEqual(firstAccountPlan.projectRecordNames, ["project_apple-user-1_shared-project"])
+        XCTAssertEqual(firstAccountPlan.chapterRecordNames, ["chapter_apple-user-1_shared-project_chapter-1"])
+        XCTAssertTrue(firstAccountPlan.deletedRecordNames.isEmpty)
+        XCTAssertNotEqual(firstAccountPlan.snapshotRecordName, secondAccountPlan.snapshotRecordName)
+        XCTAssertNotEqual(firstAccountPlan.projectRecordNames, secondAccountPlan.projectRecordNames)
+        XCTAssertNotEqual(firstAccountPlan.chapterRecordNames, secondAccountPlan.chapterRecordNames)
+    }
+
+    func testCloudKitRecordPlanDeletesOnlyStaleScopedPayloads() {
+        var project = makeProject(
+            id: "keep-project",
+            title: "保留项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        project.chapterDrafts = [
+            ChapterDraft(
+                id: "chapter-keep",
+                chapterNumber: 1,
+                chapterTitle: "保留章节",
+                content: "正文"
+            )
+        ]
+        let snapshot = AccountProjectSnapshot(
+            activeProjectID: project.id,
+            recentProjects: [project],
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+
+        let plan = ICloudProjectStore.cloudKitRecordPlan(
+            for: snapshot,
+            scope: "apple-user-1",
+            previousProjectIDs: ["keep-project", "stale-project"],
+            previousChapterIDsByProjectID: [
+                "keep-project": ["chapter-keep", "chapter-stale"],
+                "stale-project": ["orphan-chapter"]
+            ]
+        )
+
+        XCTAssertEqual(plan.deletedRecordNames, [
+            "chapter_apple-user-1_keep-project_chapter-stale",
+            "chapter_apple-user-1_stale-project_orphan-chapter",
+            "project_apple-user-1_stale-project"
+        ])
+        XCTAssertFalse(plan.deletedRecordNames.contains(plan.snapshotRecordName))
+        XCTAssertFalse(plan.deletedRecordNames.contains("project_apple-user-1_keep-project"))
+        XCTAssertFalse(plan.deletedRecordNames.contains("chapter_apple-user-1_keep-project_chapter-keep"))
     }
 
     func testCloudMergePreservesLocalOnlyProjectAndNewestChapterDraft() {

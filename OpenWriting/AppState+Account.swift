@@ -53,6 +53,8 @@ extension AppState {
     func logoutAccount(removingLocalData: Bool = false) -> Bool {
         guard let account = activeAccount else { return true }
         cloudSaveTask?.cancel()
+        cloudSaveTask = nil
+        cloudSaveGeneration &+= 1
         var didRemoveLocalData = true
         if removingLocalData {
             let accountProjectStorageKey = Self.recentProjectsStorageKey(for: account.userID)

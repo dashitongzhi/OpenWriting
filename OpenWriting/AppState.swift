@@ -201,14 +201,16 @@ final class AppState {
             forKey: StorageKey.isWritingFocusModeEnabled,
             userDefaults: userDefaults
         ) ?? false
-        self.draftEditorFontSize = Self.doubleValue(
+        let storedDraftEditorFontSize = Self.doubleValue(
             forKey: StorageKey.draftEditorFontSize,
             userDefaults: userDefaults
         ) ?? 16
-        self.draftEditorLineSpacing = Self.doubleValue(
+        self.draftEditorFontSize = min(max(storedDraftEditorFontSize, 13), 24)
+        let storedDraftEditorLineSpacing = Self.doubleValue(
             forKey: StorageKey.draftEditorLineSpacing,
             userDefaults: userDefaults
         ) ?? 5
+        self.draftEditorLineSpacing = min(max(storedDraftEditorLineSpacing, 2), 14)
         self.hasAcceptedAIDataTransfer = Self.boolValue(
             forKey: StorageKey.hasAcceptedAIDataTransfer,
             userDefaults: userDefaults
