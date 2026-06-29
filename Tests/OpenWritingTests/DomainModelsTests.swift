@@ -303,6 +303,59 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertNotNil(decoded)
     }
 
+    func testPersistedTimestampCodecParsesLegacyDateLabels() {
+        let dateOnly = PersistedTimestampCodec.parse("2026-06-06")
+        let chineseDateTime = PersistedTimestampCodec.parse("2026年6月6日 14:30")
+        let currentYearDisplay = PersistedTimestampCodec.parse("6月6日 14:30")
+
+        XCTAssertNotNil(dateOnly)
+        XCTAssertNotNil(chineseDateTime)
+        XCTAssertNotNil(currentYearDisplay)
+        XCTAssertNil(PersistedTimestampCodec.parse("2026"))
+    }
+
+    func testLegacyNovelProjectPayloadDecodesWithCurrentSchemaAndTimestampFallbacks() throws {
+        let legacyJSON = """
+        {
+          "id": "legacy-project",
+          "title": "旧项目",
+          "genre": "玄幻",
+          "summary": "旧版本保存的项目",
+          "currentChapterNumber": 3,
+          "writtenChapters": 2,
+          "chapterDrafts": [
+            {
+              "id": "chapter-without-saved-at",
+              "chapterNumber": 2,
+              "chapterTitle": "旧章",
+              "content": "旧章节正文"
+            }
+          ],
+          "referenceDocuments": [
+            {
+              "id": "reference-without-imported-at",
+              "title": "人物设定",
+              "content": "沈青袖持有玄铁令"
+            }
+          ],
+          "continuityNotes": "人物关系\\n- 沈青袖与陆白互相信任"
+        }
+        """
+
+        let project = try JSONDecoder().decode(NovelProject.self, from: Data(legacyJSON.utf8))
+
+        XCTAssertEqual(project.schemaVersion, NovelProject.currentSchemaVersion)
+        XCTAssertEqual(project.id, "legacy-project")
+        XCTAssertEqual(project.storyLength, .long)
+        XCTAssertEqual(project.currentChapterTitle, "开篇设定")
+        XCTAssertEqual(project.chapterDrafts.first?.chapterTitle, "旧章")
+        XCTAssertEqual(project.referenceDocuments.first?.category, .character)
+        XCTAssertTrue(project.globalMemorySnapshot.hasStructuredContent)
+        XCTAssertFalse(project.updatedAt.isEmpty)
+        XCTAssertFalse(project.chapterDrafts.first?.savedAt.isEmpty ?? true)
+        XCTAssertFalse(project.referenceDocuments.first?.importedAt.isEmpty ?? true)
+    }
+
     // MARK: - OutlineGenerationProfile Tests
 
     func testOutlineGenerationProfileCompletion() {
@@ -581,55 +634,54 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(results.first?.subject, "银色纹路")
     }
 
-    func testMemoryManagerMarksConflictingActiveItemAsContradicted() {
-        let manager = MemoryManager()
-        let first = MemoryManagerItem(
-            bucket: .characterState,
+    func testMemoryBucketsMarksConflictingActiveItemAsContradicted() {
+        var buckets = MemoryBuckets.empty
+        let first = MemoryItem(
+            category: .characterState,
             subject: "林照",
             field: "境界",
             value: "筑基初期",
             sourceChapter: 10
         )
-        let second = MemoryManagerItem(
-            bucket: .characterState,
+        let second = MemoryItem(
+            category: .characterState,
             subject: "林照",
             field: "境界",
             value: "金丹后期",
             sourceChapter: 11
         )
 
-        manager.upsertItem(first)
-        manager.upsertItem(second)
+        buckets.upsert(first)
+        buckets.upsert(second)
 
-        XCTAssertEqual(manager.memoryPack.semanticMemory.allActiveItems.count, 1)
-        XCTAssertEqual(manager.memoryPack.semanticMemory.contradictedItems.count, 1)
-        XCTAssertEqual(manager.stats.contradictedItems, 1)
+        XCTAssertEqual(buckets.allActiveItems.count, 1)
+        XCTAssertEqual(buckets.characterState.filter { $0.status == .contradicted }.count, 1)
+        XCTAssertEqual(buckets.conflicts.count, 1)
     }
 
-    func testMemoryManagerDoesNotDuplicateSameActiveValue() {
-        let manager = MemoryManager()
-        let first = MemoryManagerItem(
-            bucket: .worldRules,
+    func testMemoryBucketsDoesNotDuplicateSameActiveValue() {
+        var buckets = MemoryBuckets.empty
+        let first = MemoryItem(
+            category: .worldRule,
             subject: "灵脉",
             field: "限制",
             value: "夜间潮汐增强",
-            sourceChapter: 1,
-            evidence: "第一章"
+            sourceChapter: 1
         )
-        let second = MemoryManagerItem(
-            bucket: .worldRules,
+        let second = MemoryItem(
+            category: .worldRule,
             subject: "灵脉",
             field: "限制",
             value: "夜间潮汐增强",
-            sourceChapter: 2,
-            evidence: "第二章"
+            sourceChapter: 2
         )
 
-        manager.upsertItem(first)
-        manager.upsertItem(second)
+        XCTAssertFalse(buckets.upsert(first))
+        XCTAssertTrue(buckets.upsert(second))
 
-        XCTAssertEqual(manager.memoryPack.semanticMemory.items.count, 1)
-        XCTAssertEqual(manager.memoryPack.semanticMemory.allActiveItems.first?.evidence, "第二章")
+        XCTAssertEqual(buckets.worldRules.count, 2)
+        XCTAssertEqual(buckets.worldRules.filter { $0.status == .active }.count, 1)
+        XCTAssertEqual(buckets.allActiveItems.first?.sourceChapter, 2)
     }
 
     func testContextRankerExtractsExtendedCJKEntities() {
