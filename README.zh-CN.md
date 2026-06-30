@@ -267,6 +267,7 @@ open OpenWriting.xcodeproj
 | --- | --- |
 | `./scripts/build-debug.sh` | Debug 构建 |
 | `./scripts/run-debug.sh` | 运行 Debug 版本 |
+| `./scripts/git-preflight.sh` | 本地 Git ref / 默认分支前置检查 |
 | `./scripts/run-smoke-checks.sh` | 冒烟检查 |
 | `./scripts/run-longform-quality-checks.sh` | 长篇质量检查 |
 | `./scripts/run-longform-evals.sh` | 长篇管线评测 |
