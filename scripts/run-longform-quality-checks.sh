@@ -1,4 +1,7 @@
-#!/bin/zsh
+#!/bin/sh
+if [ -z "${ZSH_VERSION:-}" ]; then
+  exec /bin/zsh -f "$0" "$@"
+fi
 
 set -euo pipefail
 
@@ -25,6 +28,7 @@ EVAL_SEEDS="$REPO_ROOT/LongformEvals/seeds.json"
 TEST_PACKAGE="$REPO_ROOT/Tests/Package.swift"
 TEST_README="$REPO_ROOT/Tests/README.md"
 SHARED_SCHEME="$REPO_ROOT/OpenWriting.xcodeproj/xcshareddata/xcschemes/OpenWriting.xcscheme"
+APP_ENTRY="$REPO_ROOT/OpenWriting/OpenWritingApp.swift"
 
 fail() {
     echo "error: $1" >&2
@@ -262,14 +266,22 @@ require_text "$RUN_ALL" "no hosted OpenWritingTests classes discovered" \
     "run-all checks must fail loudly if hosted test discovery returns no classes"
 require_text "$RUN_ALL" '"-only-testing:OpenWritingTests/$test_class"' \
     "run-all checks must run each hosted test class through xcodebuild"
-require_text "$RUN_ALL" 'rm -rf "$DERIVED_DATA_PATH"' \
-    "run-all checks must clear stale hosted XCTest DerivedData before running tests"
+require_text "$RUN_ALL" 'OpenWritingChecksDerivedData-${USER:-user}-$$' \
+    "run-all checks must isolate hosted XCTest DerivedData per run"
+require_text "$RUN_ALL" 'CODE_SIGN_IDENTITY="-"' \
+    "run-all checks must ad-hoc sign the hosted macOS app before LaunchServices starts it"
+require_text "$RUN_ALL" "-parallel-testing-enabled NO" \
+    "run-all checks must run hosted macOS XCTest classes serially"
 reject_text "$RUN_ALL" "RUN_HOSTED_XCTEST" \
     "run-all checks must not hide hosted tests behind RUN_HOSTED_XCTEST"
 require_text "$RUN_ALL" "-scheme OpenWriting" \
     "run-all checks must run the shared OpenWriting scheme tests"
 require_text "$SHARED_SCHEME" "OpenWritingTests.xctest" \
     "shared Xcode scheme must include OpenWritingTests"
+require_text "$SHARED_SCHEME" "Xcode.IDEFoundation.Launcher.PosixSpawn" \
+    "shared Xcode scheme must use PosixSpawn for hosted macOS XCTest launches"
+reject_text "$APP_ENTRY" "NSApp.setActivationPolicy(.prohibited)" \
+    "test startup must not switch the hosted app into prohibited activation policy before XCTest injects"
 require_text "$TEST_PACKAGE" "XcodeOnlyPlaceholder" \
     "Tests Package.swift must not advertise a broken SwiftPM app-test target"
 require_text "$TEST_README" '不要用 `swift test`' \

@@ -1,11 +1,16 @@
-#!/bin/zsh
+#!/bin/sh
+if [ -z "${ZSH_VERSION:-}" ]; then
+  exec /bin/zsh -f "$0" "$@"
+fi
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
-DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-/tmp/OpenWritingChecksDerivedData}"
+if [[ -z "${DERIVED_DATA_PATH:-}" ]]; then
+  DERIVED_DATA_PATH="/tmp/OpenWritingChecksDerivedData-${USER:-user}-$$"
+fi
 XCODEBUILD="$DEVELOPER_DIR/usr/bin/xcodebuild"
 HOST_ARCH="$(uname -m)"
 MACOS_DESTINATION="platform=macOS,arch=$HOST_ARCH"
@@ -32,7 +37,7 @@ git -C "$REPO_ROOT" diff --check
 git -C "$REPO_ROOT" diff --cached --check
 
 echo "Running smoke checks"
-zsh "$SCRIPT_DIR/run-smoke-checks.sh"
+zsh -f "$SCRIPT_DIR/run-smoke-checks.sh"
 
 echo "Running Swift typecheck"
 SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
@@ -69,10 +74,9 @@ swift_files=(
 xcrun swiftc -typecheck -parse-as-library -sdk "$SDK_PATH" "$swift_files[@]"
 
 echo "Running Debug build"
-zsh "$SCRIPT_DIR/build-debug.sh"
+zsh -f "$SCRIPT_DIR/build-debug.sh"
 
 echo "Running hosted Xcode tests"
-rm -rf "$DERIVED_DATA_PATH"
 for test_class in "${TEST_CLASSES[@]}"; do
   echo "Running OpenWritingTests/$test_class"
   "$XCODEBUILD" \
@@ -81,8 +85,12 @@ for test_class in "${TEST_CLASSES[@]}"; do
     -scheme OpenWriting \
     -destination "$MACOS_DESTINATION" \
     -derivedDataPath "$DERIVED_DATA_PATH" \
+    -parallel-testing-enabled NO \
     "-only-testing:OpenWritingTests/$test_class" \
-    CODE_SIGNING_ALLOWED=NO \
+    CODE_SIGNING_ALLOWED=YES \
+    CODE_SIGN_STYLE=Manual \
+    CODE_SIGN_IDENTITY="-" \
+    DEVELOPMENT_TEAM= \
     ENABLE_DEBUG_DYLIB=NO
 done
 
