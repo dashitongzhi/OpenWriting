@@ -24,11 +24,14 @@ jobs:
 
     steps:
       - name: Build review prompt from PR diff
+        id: review_bundle
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require("fs");
+            const path = require("path");
             const { owner, repo } = context.repo;
+            const reviewStartedAt = new Date().toISOString();
             let pr = context.payload.pull_request;
 
             if (!pr) {
@@ -60,6 +63,31 @@ jobs:
               .map((file) => `- ${file.status} ${file.filename} (+${file.additions}/-${file.deletions})`)
               .join("\n");
 
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner,
+              repo,
+              pull_number: pr.number,
+              per_page: 100,
+            });
+            const quotaPattern = /\b(quota|usage limit|usage limits|rate limit|billing limit)\b/i;
+            const copilotQuotaReviews = reviews
+              .filter((review) => review.user && review.user.login === "copilot-pull-request-reviewer")
+              .filter((review) => quotaPattern.test(review.body || ""));
+            const copilotQuotaSignal = copilotQuotaReviews.length > 0;
+            const issueComments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: pr.number,
+              per_page: 100,
+            });
+            const codexQuotaComments = issueComments
+              .filter((comment) => comment.user && /codex|chatgpt/i.test(comment.user.login))
+              .filter((comment) => quotaPattern.test(comment.body || ""));
+            const codexQuotaReviews = reviews
+              .filter((review) => review.user && /codex|chatgpt/i.test(review.user.login))
+              .filter((review) => quotaPattern.test(review.body || ""));
+            const codexQuotaSignal = codexQuotaComments.length > 0 || codexQuotaReviews.length > 0;
+
             const maxDiffChars = 180000;
             let remainingDiffChars = maxDiffChars;
             let diffWasTruncated = false;
@@ -88,6 +116,27 @@ jobs:
             const clippedDiff =
               diffSections.join("\n") +
               (diffWasTruncated ? "\n\n[Diff truncated for review budget.]" : "");
+
+            const diffBundle = `# PR Diff Bundle
+
+            Repository: ${owner}/${repo}
+            PR: #${pr.number} ${pr.title}
+            Author: ${pr.user.login}
+            Base: ${pr.base.ref} (${pr.base.sha})
+            Head: ${pr.head.ref} (${pr.head.sha})
+            Changed files: ${files.length}
+            Diff truncated: ${diffWasTruncated ? "yes" : "no"}
+            Codex quota signal: ${codexQuotaSignal ? "yes" : "no"}
+            Copilot quota signal: ${copilotQuotaSignal ? "yes" : "no"}
+
+            ## Files
+            ${fileSummary || "(No file summary available.)"}
+
+            ## Diff
+            \`\`\`diff
+            ${clippedDiff}
+            \`\`\`
+            `;
 
             const prompt = `You are reviewing a GitHub pull request for ${owner}/${repo}.
 
@@ -125,11 +174,85 @@ jobs:
             \`\`\`
             `;
 
+            const instructions = `# Continue This Review
+
+            This bundle is reusable when the hosted reviewer is unavailable because of usage limits,
+            quota limits, provider failures, or a Copilot quota review.
+
+            ## Retry in GitHub Actions
+
+            Re-run this workflow from the Actions tab, or run:
+
+            \`\`\`sh
+            gh workflow run codex-pr-review.yml -R ${owner}/${repo} -f pr_number=${pr.number}
+            \`\`\`
+
+            ## Continue locally
+
+            1. Open \`review-prompt.md\`.
+            2. Submit it to Codex, Copilot, or another trusted reviewer.
+            3. Use \`diff-bundle.md\` for context if the reviewer cannot read the artifact directly.
+            4. Post the review back to PR #${pr.number}: ${pr.html_url}
+            `;
+
+            const metadata = {
+              repository: `${owner}/${repo}`,
+              prNumber: pr.number,
+              prTitle: pr.title,
+              prUrl: pr.html_url,
+              author: pr.user.login,
+              base: { ref: pr.base.ref, sha: pr.base.sha },
+              head: { ref: pr.head.ref, sha: pr.head.sha },
+              changedFiles: files.length,
+              diffWasTruncated,
+              reviewStartedAt,
+              codexQuotaSignal,
+              copilotQuotaSignal,
+              codexQuotaComments: codexQuotaComments.map((comment) => ({
+                id: comment.id,
+                createdAt: comment.created_at,
+                author: comment.user && comment.user.login,
+                body: comment.body,
+              })),
+              codexQuotaReviews: codexQuotaReviews.map((review) => ({
+                id: review.id,
+                submittedAt: review.submitted_at,
+                author: review.user && review.user.login,
+                body: review.body,
+              })),
+              copilotQuotaReviews: copilotQuotaReviews.map((review) => ({
+                id: review.id,
+                submittedAt: review.submitted_at,
+                body: review.body,
+              })),
+            };
+
+            const bundleDir = "codex-pr-review-bundle";
+            fs.mkdirSync(bundleDir, { recursive: true });
+            fs.writeFileSync(path.join(bundleDir, "review-prompt.md"), prompt);
+            fs.writeFileSync(path.join(bundleDir, "diff-bundle.md"), diffBundle);
+            fs.writeFileSync(path.join(bundleDir, "continue-review.md"), instructions);
+            fs.writeFileSync(path.join(bundleDir, "metadata.json"), `${JSON.stringify(metadata, null, 2)}\n`);
             fs.writeFileSync(".codex-pr-review-prompt.md", prompt);
+            fs.writeFileSync(".codex-pr-review-diff-bundle.md", diffBundle);
+            fs.writeFileSync(".codex-pr-review-quota-signal.json", `${JSON.stringify(metadata, null, 2)}\n`);
             fs.writeFileSync(".codex-pr-review-pr-number", String(pr.number));
+            fs.writeFileSync(".codex-pr-review-started-at", `${reviewStartedAt}\n`);
+            core.setOutput("pr_number", String(pr.number));
+            core.setOutput("codex_quota_signal", codexQuotaSignal ? "true" : "false");
+            core.setOutput("copilot_quota_signal", copilotQuotaSignal ? "true" : "false");
+
+      - name: Upload review prompt and diff bundle
+        if: ${{ always() && steps.review_bundle.outputs.pr_number != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-pr-review-bundle-pr-${{ steps.review_bundle.outputs.pr_number }}
+          path: codex-pr-review-bundle/
+          retention-days: 14
 
       - name: Run Codex review
         id: codex
+        continue-on-error: true
         uses: openai/codex-action@v1
         with:
           openai-api-key: ${{ secrets.CODEX_REVIEW_API_KEY }}
@@ -141,25 +264,127 @@ jobs:
           output-file: .codex-pr-review.md
 
       - name: Publish review comment
+        id: publish_review
+        if: ${{ always() && steps.review_bundle.outputs.pr_number != '' }}
         uses: actions/github-script@v7
+        env:
+          CODEX_OUTCOME: ${{ steps.codex.outcome }}
+          CODEX_CONCLUSION: ${{ steps.codex.conclusion }}
+          EXTERNAL_CODEX_QUOTA_SIGNAL: ${{ steps.review_bundle.outputs.codex_quota_signal }}
+          COPILOT_QUOTA_SIGNAL: ${{ steps.review_bundle.outputs.copilot_quota_signal }}
+          BUNDLE_ARTIFACT_NAME: codex-pr-review-bundle-pr-${{ steps.review_bundle.outputs.pr_number }}
         with:
           script: |
             const fs = require("fs");
             const marker = "<!-- codex-pr-review -->";
             const issue_number = Number(fs.readFileSync(".codex-pr-review-pr-number", "utf8").trim());
-            const body = `${marker}
-            ## Codex PR Review
-
-            ${fs.readFileSync(".codex-pr-review.md", "utf8").trim()}
-            `;
+            const reviewStartedAt = new Date(fs.readFileSync(".codex-pr-review-started-at", "utf8").trim());
             const { owner, repo } = context.repo;
-            const comments = await github.paginate(github.rest.issues.listComments, {
+            const quotaPattern = /\b(quota|usage limit|usage limits|rate limit|billing limit)\b/i;
+            const isFreshSignal = (timestamp) => {
+              const parsed = new Date(timestamp);
+              return !Number.isNaN(parsed.valueOf()) && parsed >= reviewStartedAt;
+            };
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const reviewPath = ".codex-pr-review.md";
+            const hasCodexReview =
+              fs.existsSync(reviewPath) && fs.readFileSync(reviewPath, "utf8").trim().length > 0;
+            const codexReview = hasCodexReview
+              ? fs.readFileSync(reviewPath, "utf8").trim()
+              : "";
+            const codexFailed = process.env.CODEX_OUTCOME && process.env.CODEX_OUTCOME !== "success";
+            const currentComments = await github.paginate(github.rest.issues.listComments, {
               owner,
               repo,
               issue_number,
               per_page: 100,
             });
-            const existing = comments.find((comment) => comment.body && comment.body.includes(marker));
+            const currentReviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner,
+              repo,
+              pull_number: issue_number,
+              per_page: 100,
+            });
+            const currentCodexQuotaSignal =
+              process.env.EXTERNAL_CODEX_QUOTA_SIGNAL === "true" ||
+              currentComments.some((comment) =>
+                comment.user && /codex|chatgpt/i.test(comment.user.login) && quotaPattern.test(comment.body || "")
+              ) ||
+              currentReviews.some((review) =>
+                review.user && /codex|chatgpt/i.test(review.user.login) && quotaPattern.test(review.body || "")
+              );
+            const currentCopilotQuotaSignal =
+              process.env.COPILOT_QUOTA_SIGNAL === "true" ||
+              currentReviews.some((review) =>
+                review.user && review.user.login === "copilot-pull-request-reviewer" && quotaPattern.test(review.body || "")
+              );
+            const freshCodexQuotaSignal =
+              currentComments.some((comment) =>
+                comment.user &&
+                /codex|chatgpt/i.test(comment.user.login) &&
+                quotaPattern.test(comment.body || "") &&
+                isFreshSignal(comment.created_at)
+              ) ||
+              currentReviews.some((review) =>
+                review.user &&
+                /codex|chatgpt/i.test(review.user.login) &&
+                quotaPattern.test(review.body || "") &&
+                isFreshSignal(review.submitted_at)
+              );
+            const freshCopilotQuotaSignal = currentReviews.some((review) =>
+              review.user &&
+              review.user.login === "copilot-pull-request-reviewer" &&
+              quotaPattern.test(review.body || "") &&
+              isFreshSignal(review.submitted_at)
+            );
+            core.setOutput("codex_quota_signal", currentCodexQuotaSignal ? "true" : "false");
+            core.setOutput("copilot_quota_signal", currentCopilotQuotaSignal ? "true" : "false");
+            core.setOutput("fresh_codex_quota_signal", freshCodexQuotaSignal ? "true" : "false");
+            core.setOutput("fresh_copilot_quota_signal", freshCopilotQuotaSignal ? "true" : "false");
+
+            const fallbackReasons = [];
+            if (codexFailed || !hasCodexReview) {
+              fallbackReasons.push(
+                `Codex review did not produce a usable result (outcome: ${process.env.CODEX_OUTCOME || "unknown"}, conclusion: ${process.env.CODEX_CONCLUSION || "unknown"}).`
+              );
+            }
+            if (currentCodexQuotaSignal) {
+              fallbackReasons.push("Codex review reported a usage/quota limit.");
+            }
+            if (currentCopilotQuotaSignal) {
+              fallbackReasons.push("Copilot review reported a usage/quota limit.");
+            }
+
+            const fallbackSection = fallbackReasons.length > 0
+              ? `
+            ## Review Fallback
+
+            ${fallbackReasons.map((reason) => `- ${reason}`).join("\n")}
+
+            A reusable review prompt and diff bundle were uploaded as the \`${process.env.BUNDLE_ARTIFACT_NAME}\` artifact on [this workflow run](${runUrl}).
+
+            To retry the hosted review, re-run this workflow from Actions or run:
+
+            \`\`\`sh
+            gh workflow run codex-pr-review.yml -R ${owner}/${repo} -f pr_number=${issue_number}
+            \`\`\`
+
+            To continue locally, download the artifact, open \`review-prompt.md\`, and submit it to Codex, Copilot, or another trusted reviewer. Use \`diff-bundle.md\` as the preserved PR context, then paste the resulting findings back into this PR.
+            `
+              : `
+            ## Review Bundle
+
+            The reusable prompt and diff bundle for this review were uploaded as the \`${process.env.BUNDLE_ARTIFACT_NAME}\` artifact on [this workflow run](${runUrl}).
+            `;
+
+            const body = `${marker}
+            ## Codex PR Review
+
+            ${hasCodexReview ? codexReview : "Automated review output was not available."}
+
+            ${fallbackSection}
+            `;
+            const existing = currentComments.find((comment) => comment.body && comment.body.includes(marker));
             if (existing) {
               await github.rest.issues.updateComment({
                 owner,
@@ -175,3 +400,9 @@ jobs:
                 body,
               });
             }
+
+      - name: Fail non-quota Codex review errors
+        if: ${{ always() && steps.review_bundle.outputs.pr_number != '' && steps.codex.outcome != 'success' && steps.publish_review.outputs.fresh_codex_quota_signal != 'true' && steps.publish_review.outputs.fresh_copilot_quota_signal != 'true' }}
+        run: |
+          echo "::error::Codex review failed without a fresh Codex/Copilot quota signal from this workflow run. The reusable review bundle and PR comment were published, but this needs workflow/operator attention."
+          exit 1
