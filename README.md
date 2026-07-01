@@ -267,6 +267,7 @@ Common scripts:
 | --- | --- |
 | `./scripts/build-debug.sh` | Debug build |
 | `./scripts/run-debug.sh` | Run the Debug app |
+| `./scripts/git-preflight.sh` | Local Git ref/default-branch preflight |
 | `./scripts/run-smoke-checks.sh` | Smoke checks |
 | `./scripts/run-longform-quality-checks.sh` | Long-form quality checks |
 | `./scripts/run-longform-evals.sh` | Long-form pipeline evaluations |

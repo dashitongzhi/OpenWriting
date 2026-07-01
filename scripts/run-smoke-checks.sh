@@ -5,6 +5,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+if [[ "${OPENWRITING_GIT_PREFLIGHT_ALREADY_RAN:-0}" != "1" ]]; then
+    bash "$SCRIPT_DIR/git-preflight.sh"
+fi
+
 echo "Running build check"
 zsh "$SCRIPT_DIR/build-debug.sh"
 
