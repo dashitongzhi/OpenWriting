@@ -22,7 +22,7 @@ jobs:
   smoke:
     name: Smoke checks (macOS)
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 30
 
     steps:
