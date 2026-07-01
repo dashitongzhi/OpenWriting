@@ -22,10 +22,14 @@ discover_hosted_test_classes() {
     | sort -u
 }
 
-TEST_CLASSES=("${(@f)$(discover_hosted_test_classes)}")
-
 export DEVELOPER_DIR
 export DERIVED_DATA_PATH
+
+echo "Running git preflight"
+bash "$SCRIPT_DIR/git-preflight.sh"
+export OPENWRITING_GIT_PREFLIGHT_ALREADY_RAN=1
+
+TEST_CLASSES=("${(@f)$(discover_hosted_test_classes)}")
 
 if (( ${#TEST_CLASSES[@]} == 0 )); then
   echo "error: no hosted OpenWritingTests classes discovered" >&2

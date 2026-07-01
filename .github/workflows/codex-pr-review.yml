@@ -350,3 +350,9 @@ jobs:
                 body,
               });
             }
+
+      - name: Fail on current Codex review failure
+        if: ${{ always() && steps.review_bundle.outputs.pr_number != '' && steps.codex.outcome != 'success' }}
+        run: |
+          echo "::error::Codex review failed in the current run. The reusable review bundle and PR comment were published; inspect the Codex step logs to distinguish quota, credential, endpoint, or action failures."
+          exit 1

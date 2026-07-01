@@ -20,6 +20,8 @@ APP_STATE_ICLOUD="$REPO_ROOT/OpenWriting/AppState+iCloudSync.swift"
 PROJECT_STORE="$REPO_ROOT/OpenWriting/ProjectFileStore.swift"
 ENTITLEMENTS="$REPO_ROOT/OpenWriting/OpenWriting.entitlements"
 PROJECT_FILE="$REPO_ROOT/OpenWriting.xcodeproj/project.pbxproj"
+GIT_PREFLIGHT="$REPO_ROOT/scripts/git-preflight.sh"
+RUN_SMOKE="$REPO_ROOT/scripts/run-smoke-checks.sh"
 RUN_ALL="$REPO_ROOT/scripts/run-all-checks.sh"
 RUN_EVALS="$REPO_ROOT/scripts/run-longform-evals.sh"
 EVAL_RUNNER="$REPO_ROOT/LongformEvals/run_mock_eval.py"
@@ -248,8 +250,28 @@ require_text "$PROMPTS" "下一章 brief" \
 require_text "$PROMPTS" "近期质量趋势" \
     "generation prompts must include recent quality trend feedback"
 
+require_text "$GIT_PREFLIGHT" "for-each-ref" \
+    "git preflight must catch refs that break branch patrols"
+require_text "$GIT_PREFLIGHT" "git_repo log --all" \
+    "git preflight must catch refs that break git log --all branch patrols"
+require_text "$GIT_PREFLIGHT" 'refs/remotes/$REMOTE/HEAD' \
+    "git preflight must verify the remote default branch"
+require_text "$GIT_PREFLIGHT" "GIT_PREFLIGHT_REQUIRE_BRANCH" \
+    "git preflight must allow CI detached checkouts while preserving strict branch-patrol mode"
+require_text "$GIT_PREFLIGHT" "GIT_PREFLIGHT_REQUIRE_REMOTE_HEAD" \
+    "git preflight must allow CI checkouts without origin/HEAD while preserving strict branch-patrol mode"
+require_text "$GIT_PREFLIGHT" "MERGE_HEAD" \
+    "git preflight must block merge states before branch inspection"
+require_text "$GIT_PREFLIGHT" "rebase-merge" \
+    "git preflight must block rebase states before branch inspection"
+require_text "$GIT_PREFLIGHT" "diff --name-only --diff-filter=U" \
+    "git preflight must block unresolved conflicts before branch inspection"
+require_text "$RUN_SMOKE" "git-preflight.sh" \
+    "smoke checks must run git preflight before build checks"
 require_text "$RUN_ALL" "run-smoke-checks.sh" \
     "run-all checks must include smoke checks"
+require_text "$RUN_ALL" "git-preflight.sh" \
+    "run-all checks must run git preflight before project checks"
 require_text "$RUN_ALL" "swiftc -typecheck" \
     "run-all checks must include Swift typecheck"
 require_text "$RUN_ALL" "build-debug.sh" \
