@@ -252,6 +252,10 @@ require_text "$GIT_PREFLIGHT" "git_repo log --all" \
     "git preflight must catch refs that break git log --all branch patrols"
 require_text "$GIT_PREFLIGHT" 'refs/remotes/$REMOTE/HEAD' \
     "git preflight must verify the remote default branch"
+require_text "$GIT_PREFLIGHT" "GIT_PREFLIGHT_REQUIRE_BRANCH" \
+    "git preflight must allow CI detached checkouts while preserving strict branch-patrol mode"
+require_text "$GIT_PREFLIGHT" "GIT_PREFLIGHT_REQUIRE_REMOTE_HEAD" \
+    "git preflight must allow CI checkouts without origin/HEAD while preserving strict branch-patrol mode"
 require_text "$GIT_PREFLIGHT" "MERGE_HEAD" \
     "git preflight must block merge states before branch inspection"
 require_text "$GIT_PREFLIGHT" "rebase-merge" \

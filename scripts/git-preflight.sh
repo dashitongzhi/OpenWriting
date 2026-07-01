@@ -5,6 +5,8 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="${GIT_PREFLIGHT_REPO_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 REMOTE="${GIT_PREFLIGHT_REMOTE:-origin}"
+REQUIRE_BRANCH="${GIT_PREFLIGHT_REQUIRE_BRANCH:-0}"
+REQUIRE_REMOTE_HEAD="${GIT_PREFLIGHT_REQUIRE_REMOTE_HEAD:-0}"
 OID_PATTERN='^[0-9a-fA-F]{40}$'
 
 errors=()
@@ -60,7 +62,11 @@ fi
 
 current_branch="$(git_repo symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
 if [[ -z "$current_branch" ]]; then
-    fail "HEAD is detached or unborn. Switch to a named branch before branch inspection or sync: git switch <branch>"
+    if [[ "$REQUIRE_BRANCH" == "1" ]]; then
+        fail "HEAD is detached or unborn. Switch to a named branch before branch inspection or sync: git switch <branch>"
+    else
+        warn "HEAD is detached or unborn. Local build/test checks can continue, but branch inspection or sync scripts should run with GIT_PREFLIGHT_REQUIRE_BRANCH=1."
+    fi
 fi
 
 if [[ -f "$git_dir/MERGE_HEAD" ]]; then
@@ -130,7 +136,11 @@ fi
 
 default_ref="$(git_repo symbolic-ref --quiet "refs/remotes/$REMOTE/HEAD" 2>/dev/null || true)"
 if [[ -z "$default_ref" ]]; then
-    fail "remote default branch is not configured locally: refs/remotes/$REMOTE/HEAD\n  suggested fix: git -C '$REPO_ROOT' remote set-head '$REMOTE' -a"
+    if [[ "$REQUIRE_REMOTE_HEAD" == "1" ]]; then
+        fail "remote default branch is not configured locally: refs/remotes/$REMOTE/HEAD\n  suggested fix: git -C '$REPO_ROOT' remote set-head '$REMOTE' -a"
+    else
+        warn "remote default branch is not configured locally: refs/remotes/$REMOTE/HEAD. Local build/test checks can continue, but branch inspection or sync scripts should run with GIT_PREFLIGHT_REQUIRE_REMOTE_HEAD=1."
+    fi
 elif ! git check-ref-format "$default_ref" >/dev/null 2>&1; then
     fail "remote default branch points to an invalid ref name: refs/remotes/$REMOTE/HEAD -> $default_ref"
 elif ! git_repo rev-parse --verify --quiet "$default_ref^{commit}" >/dev/null; then
