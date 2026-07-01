@@ -1,0 +1,47 @@
+name: PR Merge Checks
+
+on:
+  pull_request:
+    branches:
+      - codex/xcode-migration
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-merge-checks-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Smoke checks (macOS)
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Show Xcode toolchain
+        run: |
+          xcode-select -p
+          xcodebuild -version
+          swift --version
+
+      - name: Install smoke-check dependencies
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            brew install ripgrep
+          fi
+
+      - name: Run smoke checks
+        env:
+          DERIVED_DATA_PATH: ${{ runner.temp }}/OpenWritingDerivedData-${{ github.run_id }}-${{ github.run_attempt }}
+        run: zsh -f ./scripts/run-smoke-checks.sh
