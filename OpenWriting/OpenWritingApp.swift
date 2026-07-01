@@ -34,7 +34,6 @@ final class OpenWritingAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         guard !Self.isRunningUnitTests else {
-            NSApp.setActivationPolicy(.prohibited)
             return
         }
 

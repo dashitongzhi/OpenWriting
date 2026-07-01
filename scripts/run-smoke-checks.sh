@@ -1,4 +1,7 @@
-#!/bin/zsh
+#!/bin/sh
+if [ -z "${ZSH_VERSION:-}" ]; then
+  exec /bin/zsh -f "$0" "$@"
+fi
 
 set -euo pipefail
 
@@ -10,14 +13,14 @@ if [[ "${OPENWRITING_GIT_PREFLIGHT_ALREADY_RAN:-0}" != "1" ]]; then
 fi
 
 echo "Running build check"
-zsh "$SCRIPT_DIR/build-debug.sh"
+zsh -f "$SCRIPT_DIR/build-debug.sh"
 
 echo "Checking diff whitespace"
 git -C "$REPO_ROOT" diff --check
 git -C "$REPO_ROOT" diff --cached --check
 
 echo "Checking longform quality gates"
-zsh "$SCRIPT_DIR/run-longform-quality-checks.sh"
+zsh -f "$SCRIPT_DIR/run-longform-quality-checks.sh"
 
 echo "Checking docs for removed polish flow"
 if rg -n "润色" "$REPO_ROOT/README.md" "$REPO_ROOT/INDEX.md"; then
