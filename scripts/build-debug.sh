@@ -16,6 +16,11 @@ DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-/tmp/OpenWritingDerivedData}"
 HOST_ARCH="$(uname -m)"
 MACOS_DESTINATION="platform=macOS,arch=$HOST_ARCH"
 
+if [[ "${OPENWRITING_GIT_PREFLIGHT_ALREADY_RAN:-0}" != "1" ]]; then
+    bash "$SCRIPT_DIR/git-preflight.sh"
+    export OPENWRITING_GIT_PREFLIGHT_ALREADY_RAN=1
+fi
+
 if [[ ! -d "$DEVELOPER_DIR" ]]; then
     echo "error: Xcode developer directory not found: $DEVELOPER_DIR" >&2
     exit 1
