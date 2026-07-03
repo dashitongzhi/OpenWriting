@@ -10,6 +10,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 if [[ "${OPENWRITING_GIT_PREFLIGHT_ALREADY_RAN:-0}" != "1" ]]; then
     bash "$SCRIPT_DIR/git-preflight.sh"
+    export OPENWRITING_GIT_PREFLIGHT_ALREADY_RAN=1
 fi
 
 echo "Running build check"
