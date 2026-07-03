@@ -552,6 +552,7 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertFalse(plan.deletedRecordNames.contains("chapter_apple-user-1_keep-project_chapter-keep"))
     }
 
+    @MainActor
     func testCloudMergePreservesLocalOnlyProjectAndNewestChapterDraft() {
         var localShared = makeProject(
             id: "shared",
@@ -599,6 +600,7 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(shared?.updatedAtDate, localChapter.savedAtDate)
     }
 
+    @MainActor
     func testCloudMergeKeepsRemoteChapterWhenItIsNewer() {
         var local = makeProject(
             id: "shared",
