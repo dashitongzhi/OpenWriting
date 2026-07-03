@@ -15,6 +15,7 @@ DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-/tmp/OpenWritingHostedXCTestGuardDerived
 XCODEBUILD="$DEVELOPER_DIR/usr/bin/xcodebuild"
 HOST_ARCH="$(uname -m)"
 MACOS_DESTINATION="platform=macOS,arch=$HOST_ARCH"
+MACOS_DEPLOYMENT_TARGET="${MACOS_DEPLOYMENT_TARGET:-$(sw_vers -productVersion)}"
 ONLY_TESTING="OpenWritingTests/HostedXCTestLaunchGuardTests/testOpenWritingTestsLaunchInsideAppHost"
 
 if [[ ! -d "$DEVELOPER_DIR" ]]; then
@@ -32,6 +33,7 @@ echo "Project: $PROJECT_PATH"
 echo "Developer dir: $DEVELOPER_DIR"
 echo "DerivedData: $DERIVED_DATA_PATH"
 echo "Destination: $MACOS_DESTINATION"
+echo "Deployment target: $MACOS_DEPLOYMENT_TARGET"
 echo "Only testing: $ONLY_TESTING"
 
 exec "$XCODEBUILD" \
@@ -42,6 +44,7 @@ exec "$XCODEBUILD" \
     -derivedDataPath "$DERIVED_DATA_PATH" \
     -parallel-testing-enabled NO \
     "-only-testing:$ONLY_TESTING" \
+    MACOSX_DEPLOYMENT_TARGET="$MACOS_DEPLOYMENT_TARGET" \
     CODE_SIGNING_ALLOWED=YES \
     CODE_SIGN_STYLE=Manual \
     CODE_SIGN_IDENTITY="-" \
