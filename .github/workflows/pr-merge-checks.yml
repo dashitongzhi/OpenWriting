@@ -55,3 +55,8 @@ jobs:
         env:
           DERIVED_DATA_PATH: ${{ runner.temp }}/OpenWritingDerivedData-${{ github.run_id }}-${{ github.run_attempt }}
         run: zsh -f ./scripts/run-smoke-checks.sh
+
+      - name: Run hosted XCTest launch guard
+        env:
+          DERIVED_DATA_PATH: ${{ runner.temp }}/OpenWritingHostedXCTestGuardDerivedData-${{ github.run_id }}-${{ github.run_attempt }}
+        run: zsh -f ./scripts/run-hosted-xctest-guard.sh

@@ -13,6 +13,7 @@
 		B0010000000000000000000B /* SearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00100000000000000000006 /* SearchTests.swift */; };
 		B0010000000000000000000C /* ProjectExportServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00100000000000000000007 /* ProjectExportServiceTests.swift */; };
 		B00100000000000000000016 /* TestFactories.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00100000000000000000017 /* TestFactories.swift */; };
+		B00100000000000000000019 /* HostedXCTestLaunchGuardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00100000000000000000018 /* HostedXCTestLaunchGuardTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -34,6 +35,7 @@
 		B00100000000000000000006 /* SearchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/SearchTests.swift; sourceTree = "<group>"; };
 		B00100000000000000000007 /* ProjectExportServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/ProjectExportServiceTests.swift; sourceTree = "<group>"; };
 		B00100000000000000000017 /* TestFactories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/TestFactories.swift; sourceTree = "<group>"; };
+		B00100000000000000000018 /* HostedXCTestLaunchGuardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/HostedXCTestLaunchGuardTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -84,6 +86,7 @@
 			isa = PBXGroup;
 			children = (
 				B00100000000000000000005 /* DomainModelsTests.swift */,
+				B00100000000000000000018 /* HostedXCTestLaunchGuardTests.swift */,
 				B00100000000000000000003 /* NovelProjectTests.swift */,
 				B00100000000000000000007 /* ProjectExportServiceTests.swift */,
 				B00100000000000000000004 /* ProjectFileStoreTests.swift */,
@@ -207,6 +210,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				B0010000000000000000000A /* DomainModelsTests.swift in Sources */,
+				B00100000000000000000019 /* HostedXCTestLaunchGuardTests.swift in Sources */,
 				B00100000000000000000008 /* NovelProjectTests.swift in Sources */,
 				B0010000000000000000000C /* ProjectExportServiceTests.swift in Sources */,
 				B00100000000000000000009 /* ProjectFileStoreTests.swift in Sources */,
