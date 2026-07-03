@@ -10,3 +10,4 @@ xcuserdata/
 dist/
 *.dmg
 LongformEvals/runs/
+.codex-pr-review-bundles/
