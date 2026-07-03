@@ -70,6 +70,8 @@ jobs:
               per_page: 100,
             });
             const quotaPattern = /\b(quota|usage limit|usage limits|rate limit|billing limit)\b/i;
+            const codexQuotaBotLogins = new Set(["chatgpt-codex-connector"]);
+            const isCodexQuotaAuthor = (user) => user && codexQuotaBotLogins.has(user.login);
             const copilotQuotaReviews = reviews
               .filter((review) => review.user && review.user.login === "copilot-pull-request-reviewer")
               .filter((review) => quotaPattern.test(review.body || ""));
@@ -81,10 +83,10 @@ jobs:
               per_page: 100,
             });
             const codexQuotaComments = issueComments
-              .filter((comment) => comment.user && /codex|chatgpt/i.test(comment.user.login))
+              .filter((comment) => isCodexQuotaAuthor(comment.user))
               .filter((comment) => quotaPattern.test(comment.body || ""));
             const codexQuotaReviews = reviews
-              .filter((review) => review.user && /codex|chatgpt/i.test(review.user.login))
+              .filter((review) => isCodexQuotaAuthor(review.user))
               .filter((review) => quotaPattern.test(review.body || ""));
             const codexQuotaSignal = codexQuotaComments.length > 0 || codexQuotaReviews.length > 0;
 
@@ -281,6 +283,8 @@ jobs:
             const reviewStartedAt = new Date(fs.readFileSync(".codex-pr-review-started-at", "utf8").trim());
             const { owner, repo } = context.repo;
             const quotaPattern = /\b(quota|usage limit|usage limits|rate limit|billing limit)\b/i;
+            const codexQuotaBotLogins = new Set(["chatgpt-codex-connector"]);
+            const isCodexQuotaAuthor = (user) => user && codexQuotaBotLogins.has(user.login);
             const isFreshSignal = (timestamp) => {
               const parsed = new Date(timestamp);
               return !Number.isNaN(parsed.valueOf()) && parsed >= reviewStartedAt;
@@ -308,10 +312,10 @@ jobs:
             const currentCodexQuotaSignal =
               process.env.EXTERNAL_CODEX_QUOTA_SIGNAL === "true" ||
               currentComments.some((comment) =>
-                comment.user && /codex|chatgpt/i.test(comment.user.login) && quotaPattern.test(comment.body || "")
+                isCodexQuotaAuthor(comment.user) && quotaPattern.test(comment.body || "")
               ) ||
               currentReviews.some((review) =>
-                review.user && /codex|chatgpt/i.test(review.user.login) && quotaPattern.test(review.body || "")
+                isCodexQuotaAuthor(review.user) && quotaPattern.test(review.body || "")
               );
             const currentCopilotQuotaSignal =
               process.env.COPILOT_QUOTA_SIGNAL === "true" ||
@@ -320,14 +324,12 @@ jobs:
               );
             const freshCodexQuotaSignal =
               currentComments.some((comment) =>
-                comment.user &&
-                /codex|chatgpt/i.test(comment.user.login) &&
+                isCodexQuotaAuthor(comment.user) &&
                 quotaPattern.test(comment.body || "") &&
                 isFreshSignal(comment.created_at)
               ) ||
               currentReviews.some((review) =>
-                review.user &&
-                /codex|chatgpt/i.test(review.user.login) &&
+                isCodexQuotaAuthor(review.user) &&
                 quotaPattern.test(review.body || "") &&
                 isFreshSignal(review.submitted_at)
               );
@@ -402,7 +404,7 @@ jobs:
             }
 
       - name: Fail non-quota Codex review errors
-        if: ${{ always() && steps.review_bundle.outputs.pr_number != '' && steps.codex.outcome != 'success' && steps.publish_review.outputs.fresh_codex_quota_signal != 'true' && steps.publish_review.outputs.fresh_copilot_quota_signal != 'true' }}
+        if: ${{ always() && steps.review_bundle.outputs.pr_number != '' && steps.codex.outcome != 'success' && steps.publish_review.outputs.fresh_codex_quota_signal != 'true' }}
         run: |
-          echo "::error::Codex review failed without a fresh Codex/Copilot quota signal from this workflow run. The reusable review bundle and PR comment were published, but this needs workflow/operator attention."
+          echo "::error::Codex review failed without a fresh Codex quota signal from this workflow run. The reusable review bundle and PR comment were published, but this needs workflow/operator attention."
           exit 1
