@@ -272,8 +272,6 @@ jobs:
         env:
           CODEX_OUTCOME: ${{ steps.codex.outcome }}
           CODEX_CONCLUSION: ${{ steps.codex.conclusion }}
-          EXTERNAL_CODEX_QUOTA_SIGNAL: ${{ steps.review_bundle.outputs.codex_quota_signal }}
-          COPILOT_QUOTA_SIGNAL: ${{ steps.review_bundle.outputs.copilot_quota_signal }}
           BUNDLE_ARTIFACT_NAME: codex-pr-review-bundle-pr-${{ steps.review_bundle.outputs.pr_number }}
         with:
           script: |
@@ -309,19 +307,6 @@ jobs:
               pull_number: issue_number,
               per_page: 100,
             });
-            const currentCodexQuotaSignal =
-              process.env.EXTERNAL_CODEX_QUOTA_SIGNAL === "true" ||
-              currentComments.some((comment) =>
-                isCodexQuotaAuthor(comment.user) && quotaPattern.test(comment.body || "")
-              ) ||
-              currentReviews.some((review) =>
-                isCodexQuotaAuthor(review.user) && quotaPattern.test(review.body || "")
-              );
-            const currentCopilotQuotaSignal =
-              process.env.COPILOT_QUOTA_SIGNAL === "true" ||
-              currentReviews.some((review) =>
-                review.user && review.user.login === "copilot-pull-request-reviewer" && quotaPattern.test(review.body || "")
-              );
             const freshCodexQuotaSignal =
               currentComments.some((comment) =>
                 isCodexQuotaAuthor(comment.user) &&
@@ -336,11 +321,11 @@ jobs:
             const freshCopilotQuotaSignal = currentReviews.some((review) =>
               review.user &&
               review.user.login === "copilot-pull-request-reviewer" &&
-              quotaPattern.test(review.body || "") &&
-              isFreshSignal(review.submitted_at)
+                quotaPattern.test(review.body || "") &&
+                isFreshSignal(review.submitted_at)
             );
-            core.setOutput("codex_quota_signal", currentCodexQuotaSignal ? "true" : "false");
-            core.setOutput("copilot_quota_signal", currentCopilotQuotaSignal ? "true" : "false");
+            core.setOutput("codex_quota_signal", freshCodexQuotaSignal ? "true" : "false");
+            core.setOutput("copilot_quota_signal", freshCopilotQuotaSignal ? "true" : "false");
             core.setOutput("fresh_codex_quota_signal", freshCodexQuotaSignal ? "true" : "false");
             core.setOutput("fresh_copilot_quota_signal", freshCopilotQuotaSignal ? "true" : "false");
 
@@ -350,10 +335,10 @@ jobs:
                 `Codex review did not produce a usable result (outcome: ${process.env.CODEX_OUTCOME || "unknown"}, conclusion: ${process.env.CODEX_CONCLUSION || "unknown"}).`
               );
             }
-            if (currentCodexQuotaSignal) {
+            if (freshCodexQuotaSignal) {
               fallbackReasons.push("Codex review reported a usage/quota limit.");
             }
-            if (currentCopilotQuotaSignal) {
+            if (freshCopilotQuotaSignal) {
               fallbackReasons.push("Copilot review reported a usage/quota limit.");
             }
 
