@@ -3,6 +3,8 @@ set -euo pipefail
 
 WORKFLOW_FILE="codex-pr-review.yml"
 ARTIFACT_PREFIX="codex-pr-review-bundle-pr-"
+COMMENT_MARKER="<!-- codex-pr-review -->"
+GH_BIN="${GH_BIN:-gh}"
 
 usage() {
   cat <<'USAGE'
@@ -14,7 +16,7 @@ Usage:
 
 Options:
   --repo OWNER/REPO      GitHub repository. Defaults to the current gh repo.
-  --run-id RUN_ID        Download from a specific GitHub Actions run.
+  --run-id RUN_ID        Download from a specific GitHub Actions run. Overrides auto-detection.
   --output-dir DIR       Directory to prepare. Defaults to .codex-pr-review-bundles/pr-<pr-number>.
   -h, --help             Show this help.
 
@@ -32,6 +34,98 @@ die() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"
+}
+
+extract_run_id_from_body() {
+  local body="$1"
+
+  if [[ "$body" =~ /actions/runs/([0-9]+) ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+
+  return 1
+}
+
+latest_codex_comment_body() {
+  local fallback_only="$1"
+  local fallback_filter=""
+
+  if [[ "$fallback_only" == "true" ]]; then
+    fallback_filter='and (.body | contains("## Review Fallback"))'
+  fi
+
+  "$GH_BIN" pr view "$pr_number" \
+    -R "$repo" \
+    --json comments \
+    --jq '.comments
+      | map(select(
+          .body != null
+          and (.body | contains("'"$COMMENT_MARKER"'"))
+          and (.body | contains("'"$artifact_name"'"))
+          and (.body | test("/actions/runs/[0-9]+"))
+          '"$fallback_filter"'
+        ))
+      | sort_by(.updatedAt // .createdAt)
+      | reverse
+      | .[0].body // ""'
+}
+
+resolve_run_id_from_pr_comment() {
+  local body=""
+  local run=""
+
+  body="$(latest_codex_comment_body true 2>/dev/null || true)"
+  if [[ -n "$body" ]]; then
+    run="$(extract_run_id_from_body "$body" || true)"
+    if [[ -n "$run" ]]; then
+      printf '%s\t%s\n' "$run" "latest Codex fallback PR comment"
+      return 0
+    fi
+  fi
+
+  body="$(latest_codex_comment_body false 2>/dev/null || true)"
+  if [[ -n "$body" ]]; then
+    run="$(extract_run_id_from_body "$body" || true)"
+    if [[ -n "$run" ]]; then
+      printf '%s\t%s\n' "$run" "latest Codex PR comment"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+run_has_artifact() {
+  local candidate_run_id="$1"
+  local found=""
+
+  found="$("$GH_BIN" api "repos/${repo}/actions/runs/${candidate_run_id}/artifacts" \
+    --jq '.artifacts[]? | select(.name == "'"$artifact_name"'" and (.expired != true)) | .name' \
+    2>/dev/null || true)"
+
+  [[ "$found" == "$artifact_name" ]]
+}
+
+resolve_run_id_from_workflow_artifacts() {
+  local candidate_run_id=""
+
+  while IFS= read -r candidate_run_id; do
+    [[ "$candidate_run_id" =~ ^[0-9]+$ ]] || continue
+
+    if run_has_artifact "$candidate_run_id"; then
+      printf '%s\t%s\n' "$candidate_run_id" "latest ${WORKFLOW_FILE} run with ${artifact_name} artifact"
+      return 0
+    fi
+  done < <("$GH_BIN" run list \
+    -R "$repo" \
+    --workflow "$WORKFLOW_FILE" \
+    --limit 50 \
+    --json databaseId,createdAt \
+    --jq 'sort_by(.createdAt) | reverse | .[].databaseId' \
+    2>/dev/null || true)
+
+  return 1
 }
 
 pr_number=""
@@ -81,10 +175,10 @@ if [[ -n "$run_id" && ! "$run_id" =~ ^[0-9]+$ ]]; then
   die "--run-id must be a positive integer"
 fi
 
-require_command gh
+require_command "$GH_BIN"
 
 if [[ -z "$repo" ]]; then
-  repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null)" \
+  repo="$("$GH_BIN" repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null)" \
     || die "Could not detect the GitHub repository. Pass --repo OWNER/REPO."
 fi
 [[ "$repo" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]] || die "--repo must look like OWNER/REPO"
@@ -104,13 +198,37 @@ else
 fi
 abs_output_dir="$(cd "$output_dir" && pwd)"
 
-download_args=(-R "$repo" -n "$artifact_name" -D "$abs_output_dir")
-if [[ -n "$run_id" ]]; then
-  download_args=("$run_id" "${download_args[@]}")
+run_source="--run-id"
+if [[ -z "$run_id" ]]; then
+  echo "Resolving the latest exact Actions run for PR #$pr_number..."
+
+  resolution="$(resolve_run_id_from_pr_comment || true)"
+  if [[ -z "$resolution" ]]; then
+    resolution="$(resolve_run_id_from_workflow_artifacts || true)"
+  fi
+
+  if [[ -z "$resolution" ]]; then
+    cat >&2 <<EOF
+error: Could not resolve an exact GitHub Actions run for PR #$pr_number.
+
+Looked for:
+  - latest Codex PR comment containing '$artifact_name' and an Actions run URL
+  - latest $WORKFLOW_FILE run whose artifacts include '$artifact_name'
+
+If you know the exact Actions run, retry with:
+  scripts/download-codex-review-bundle.sh $pr_number --repo $repo --run-id <run-id> --output-dir <fresh-dir>
+EOF
+    exit 1
+  fi
+
+  IFS=$'\t' read -r run_id run_source <<< "$resolution"
 fi
 
-echo "Downloading artifact '$artifact_name' from $repo..."
-if ! gh run download "${download_args[@]}"; then
+download_args=(-R "$repo" -n "$artifact_name" -D "$abs_output_dir")
+download_args=("$run_id" "${download_args[@]}")
+
+echo "Downloading artifact '$artifact_name' from $repo run $run_id ($run_source)..."
+if ! "$GH_BIN" run download "${download_args[@]}"; then
   cat >&2 <<EOF
 
 Could not download the review bundle artifact.
@@ -118,9 +236,11 @@ Could not download the review bundle artifact.
 Expected artifact: $artifact_name
 Workflow: $WORKFLOW_FILE
 Repository: $repo
+Run ID: $run_id
+Run source: $run_source
 
 If the hosted review has not produced a bundle yet, trigger or re-run it:
-  gh workflow run $WORKFLOW_FILE -R $repo -f pr_number=$pr_number
+  $GH_BIN workflow run $WORKFLOW_FILE -R $repo -f pr_number=$pr_number
 
 If you know the exact Actions run, retry with:
   scripts/download-codex-review-bundle.sh $pr_number --repo $repo --run-id <run-id> --output-dir <fresh-dir>
@@ -159,6 +279,8 @@ Review bundle ready:
   Repository: $repo
   PR: #$pr_number
   Artifact: $artifact_name
+  Run ID: $run_id
+  Run source: $run_source
   Directory: $abs_output_dir
 
 Primary files:
@@ -172,11 +294,11 @@ Next local review instructions:
   4. Ask it to return exactly the workflow sections: Findings, Tests And Risk, Merge Recommendation.
   5. Save the local review as $abs_output_dir/local-review.md.
   6. Post it back to the PR with:
-     gh pr comment $pr_number -R $repo --body-file "$abs_output_dir/local-review.md"
+     $GH_BIN pr comment $pr_number -R $repo --body-file "$abs_output_dir/local-review.md"
 
 PR:
   $pr_url
 
 To retry the hosted workflow instead:
-  gh workflow run $WORKFLOW_FILE -R $repo -f pr_number=$pr_number
+  $GH_BIN workflow run $WORKFLOW_FILE -R $repo -f pr_number=$pr_number
 EOF
