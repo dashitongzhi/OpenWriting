@@ -5,10 +5,30 @@ const { execFileSync } = require("node:child_process");
 
 const DEFAULT_COMMENT_MARKER = "<!-- codex-pr-review -->";
 const DEFAULT_WORKFLOW_FILE = "codex-pr-review.yml";
+const trustedCommentAuthors = new Set(["github-actions", "github-actions[bot]"]);
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 function extractRunIdFromBody(body) {
   const match = String(body || "").match(/\/actions\/runs\/([0-9]+)/);
   return match ? match[1] : "";
+}
+
+function commentAuthorLogin(comment) {
+  return (comment && comment.author && comment.author.login) ||
+    (comment && comment.user && comment.user.login) ||
+    "";
+}
+
+function isTrustedCommentAuthor(comment) {
+  return trustedCommentAuthors.has(commentAuthorLogin(comment));
+}
+
+function bodyHasExactArtifactName(body, artifactName) {
+  const artifactPattern = new RegExp(`(^|[^A-Za-z0-9_-])${escapeRegExp(artifactName)}(?=$|[^A-Za-z0-9_-])`);
+  return artifactPattern.test(String(body || ""));
 }
 
 function latestMatchingCommentBody(comments, { artifactName, commentMarker = DEFAULT_COMMENT_MARKER, fallbackOnly = false }) {
@@ -16,9 +36,10 @@ function latestMatchingCommentBody(comments, { artifactName, commentMarker = DEF
     .filter((comment) => {
       const body = comment && comment.body;
       return (
+        isTrustedCommentAuthor(comment) &&
         typeof body === "string" &&
         body.includes(commentMarker) &&
-        body.includes(artifactName) &&
+        bodyHasExactArtifactName(body, artifactName) &&
         /\/actions\/runs\/[0-9]+/.test(body) &&
         (!fallbackOnly || body.includes("## Review Fallback"))
       );
@@ -201,7 +222,9 @@ if (require.main === module) {
 }
 
 module.exports = {
+  bodyHasExactArtifactName,
   extractRunIdFromBody,
+  isTrustedCommentAuthor,
   latestMatchingCommentBody,
   resolveRunIdWithGh,
   selectRunIdFromComments,

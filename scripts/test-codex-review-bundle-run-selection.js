@@ -6,7 +6,9 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const {
+  bodyHasExactArtifactName,
   extractRunIdFromBody,
+  isTrustedCommentAuthor,
   resolveRunIdWithGh,
   selectRunIdFromComments,
   selectRunIdFromWorkflowArtifacts,
@@ -37,6 +39,7 @@ assert.equal(
 assert.deepEqual(
   selectRunIdFromComments([
     {
+      author: { login: "github-actions" },
       body: `<!-- codex-pr-review -->
 ## Codex PR Review
 Artifact: ${artifactName}
@@ -46,6 +49,7 @@ https://github.com/dashitongzhi/OpenWriting/actions/runs/111
       updatedAt: "2026-07-04T08:00:00Z",
     },
     {
+      author: { login: "github-actions" },
       body: `<!-- codex-pr-review -->
 ## Review Fallback
 Artifact: ${artifactName}
@@ -62,6 +66,7 @@ https://github.com/dashitongzhi/OpenWriting/actions/runs/222
 assert.deepEqual(
   selectRunIdFromComments([
     {
+      author: { login: "github-actions" },
       body: `<!-- codex-pr-review -->
 Artifact: codex-pr-review-bundle-pr-16
 https://github.com/dashitongzhi/OpenWriting/actions/runs/333
@@ -70,6 +75,7 @@ https://github.com/dashitongzhi/OpenWriting/actions/runs/333
       updatedAt: "2026-07-04T09:00:00Z",
     },
     {
+      author: { login: "github-actions" },
       body: `<!-- codex-pr-review -->
 Artifact: ${artifactName}
 https://github.com/dashitongzhi/OpenWriting/actions/runs/444
@@ -80,6 +86,89 @@ https://github.com/dashitongzhi/OpenWriting/actions/runs/444
   ], { artifactName }),
   { runId: "444", runSource: "latest Codex PR comment" },
   "comment selection must require the exact artifact name"
+);
+
+assert.equal(
+  isTrustedCommentAuthor({ author: { login: "github-actions" } }),
+  true,
+  "GitHub Actions comments should be trusted review bundle hints"
+);
+
+assert.equal(
+  isTrustedCommentAuthor({ author: { login: "octocat" } }),
+  false,
+  "ordinary user comments must not be trusted review bundle hints"
+);
+
+assert.equal(
+  bodyHasExactArtifactName(`Artifact: ${artifactName}`, artifactName),
+  true,
+  "artifact matching should accept the exact artifact name"
+);
+
+assert.equal(
+  bodyHasExactArtifactName(`Artifact: ${artifactName}0`, artifactName),
+  false,
+  "artifact matching should reject substring matches"
+);
+
+assert.deepEqual(
+  selectRunIdFromComments([
+    {
+      author: { login: "octocat" },
+      body: `<!-- codex-pr-review -->
+## Review Fallback
+Artifact: ${artifactName}
+https://github.com/dashitongzhi/OpenWriting/actions/runs/999
+`,
+      createdAt: "2026-07-04T10:00:00Z",
+      updatedAt: "2026-07-04T10:00:00Z",
+    },
+    {
+      author: { login: "github-actions" },
+      body: `<!-- codex-pr-review -->
+Artifact: ${artifactName}
+https://github.com/dashitongzhi/OpenWriting/actions/runs/555
+`,
+      createdAt: "2026-07-04T09:00:00Z",
+      updatedAt: "2026-07-04T09:00:00Z",
+    },
+  ], { artifactName }),
+  { runId: "555", runSource: "latest Codex PR comment" },
+  "untrusted fallback comments must be ignored instead of overriding trusted comments"
+);
+
+assert.equal(
+  selectRunIdFromComments([
+    {
+      author: { login: "octocat" },
+      body: `<!-- codex-pr-review -->
+## Review Fallback
+Artifact: ${artifactName}
+https://github.com/dashitongzhi/OpenWriting/actions/runs/999
+`,
+      createdAt: "2026-07-04T10:00:00Z",
+      updatedAt: "2026-07-04T10:00:00Z",
+    },
+  ], { artifactName }),
+  null,
+  "untrusted comments alone must not select a run id"
+);
+
+assert.equal(
+  selectRunIdFromComments([
+    {
+      author: { login: "github-actions" },
+      body: `<!-- codex-pr-review -->
+Artifact: ${artifactName}0
+https://github.com/dashitongzhi/OpenWriting/actions/runs/1000
+`,
+      createdAt: "2026-07-04T10:00:00Z",
+      updatedAt: "2026-07-04T10:00:00Z",
+    },
+  ], { artifactName }),
+  null,
+  "substring artifact names must not select a run id"
 );
 
 assert.deepEqual(
