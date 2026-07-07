@@ -40,6 +40,9 @@ echo "Checking diff whitespace"
 git -C "$REPO_ROOT" diff --check
 git -C "$REPO_ROOT" diff --cached --check
 
+echo "Running Codex PR review checks"
+zsh -f "$SCRIPT_DIR/run-codex-pr-review-checks.sh"
+
 echo "Running smoke checks"
 zsh -f "$SCRIPT_DIR/run-smoke-checks.sh"
 

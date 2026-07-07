@@ -51,6 +51,9 @@ jobs:
             brew install ripgrep
           fi
 
+      - name: Run Codex PR review checks
+        run: zsh -f ./scripts/run-codex-pr-review-checks.sh
+
       - name: Run smoke checks
         env:
           DERIVED_DATA_PATH: ${{ runner.temp }}/OpenWritingDerivedData-${{ github.run_id }}-${{ github.run_attempt }}
