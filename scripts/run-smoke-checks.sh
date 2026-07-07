@@ -13,9 +13,6 @@ if [[ "${OPENWRITING_GIT_PREFLIGHT_ALREADY_RAN:-0}" != "1" ]]; then
     export OPENWRITING_GIT_PREFLIGHT_ALREADY_RAN=1
 fi
 
-echo "Running Codex PR review checks"
-zsh -f "$SCRIPT_DIR/run-codex-pr-review-checks.sh"
-
 echo "Running build check"
 zsh -f "$SCRIPT_DIR/build-debug.sh"
 

@@ -21,4 +21,4 @@ The exact run selection lives in `select-codex-review-bundle-run.cjs` so it can 
 2. Current Codex action window handling.
 3. Exact review bundle run selection.
 
-`run-smoke-checks.sh` calls these checks, so they run locally and in PR merge checks.
+`run-all-checks.sh` calls these checks for local full verification, and the PR merge workflow runs the same scoped check script before smoke checks.
