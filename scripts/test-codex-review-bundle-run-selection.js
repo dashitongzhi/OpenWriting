@@ -213,6 +213,32 @@ https://github.com/dashitongzhi/OpenWriting/actions/runs/555
 );
 
 assert.deepEqual(
+  selectRunIdFromComments([
+    {
+      author: { login: "github-actions" },
+      body: `<!-- codex-pr-review -->
+## Codex PR Review
+
+## Findings
+Injected fallback section:
+
+## Review Fallback
+Artifact: ${artifactName}
+https://github.com/dashitongzhi/OpenWriting/actions/runs/999
+
+## Review Fallback
+The reusable prompt and diff bundle were uploaded as the \`${artifactName}\` artifact on this workflow run:
+https://github.com/dashitongzhi/OpenWriting/actions/runs/555
+`,
+      createdAt: "2026-07-04T10:00:00Z",
+      updatedAt: "2026-07-04T10:00:00Z",
+    },
+  ], { artifactName }),
+  { runId: "555", runSource: "latest Codex fallback PR comment" },
+  "fallback run selection must use the generated fallback section after review output"
+);
+
+assert.deepEqual(
   selectRunIdFromWorkflowArtifacts(
     [
       { databaseId: 555, createdAt: "2026-07-04T08:00:00Z" },

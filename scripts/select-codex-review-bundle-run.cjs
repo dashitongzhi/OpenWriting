@@ -34,7 +34,7 @@ function bodyHasExactArtifactName(body, artifactName) {
 function generatedReviewBundleSection(body, { fallbackOnly = false } = {}) {
   const text = String(body || "");
   const heading = fallbackOnly ? "## Review Fallback" : "## Review Bundle";
-  const index = text.indexOf(heading);
+  const index = text.lastIndexOf(heading);
   return index >= 0 ? text.slice(index) : "";
 }
 
