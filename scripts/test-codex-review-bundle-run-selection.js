@@ -8,6 +8,7 @@ const path = require("node:path");
 const {
   bodyHasExactArtifactName,
   extractRunIdFromBody,
+  generatedReviewBundleSection,
   isTrustedCommentAuthor,
   resolveRunIdWithGh,
   selectRunIdFromComments,
@@ -42,7 +43,8 @@ assert.deepEqual(
       author: { login: "github-actions" },
       body: `<!-- codex-pr-review -->
 ## Codex PR Review
-Artifact: ${artifactName}
+## Review Bundle
+The reusable prompt and diff bundle for this review were uploaded as the \`${artifactName}\` artifact on this workflow run:
 https://github.com/dashitongzhi/OpenWriting/actions/runs/111
 `,
       createdAt: "2026-07-04T08:00:00Z",
@@ -52,7 +54,7 @@ https://github.com/dashitongzhi/OpenWriting/actions/runs/111
       author: { login: "github-actions" },
       body: `<!-- codex-pr-review -->
 ## Review Fallback
-Artifact: ${artifactName}
+The reusable prompt and diff bundle for this review were uploaded as the \`${artifactName}\` artifact on this workflow run:
 https://github.com/dashitongzhi/OpenWriting/actions/runs/222
 `,
       createdAt: "2026-07-04T07:00:00Z",
@@ -68,7 +70,8 @@ assert.deepEqual(
     {
       author: { login: "github-actions" },
       body: `<!-- codex-pr-review -->
-Artifact: codex-pr-review-bundle-pr-16
+## Review Bundle
+The reusable prompt and diff bundle for this review were uploaded as the \`codex-pr-review-bundle-pr-16\` artifact on this workflow run:
 https://github.com/dashitongzhi/OpenWriting/actions/runs/333
 `,
       createdAt: "2026-07-04T09:00:00Z",
@@ -77,7 +80,8 @@ https://github.com/dashitongzhi/OpenWriting/actions/runs/333
     {
       author: { login: "github-actions" },
       body: `<!-- codex-pr-review -->
-Artifact: ${artifactName}
+## Review Bundle
+The reusable prompt and diff bundle for this review were uploaded as the \`${artifactName}\` artifact on this workflow run:
 https://github.com/dashitongzhi/OpenWriting/actions/runs/444
 `,
       createdAt: "2026-07-04T08:30:00Z",
@@ -112,13 +116,26 @@ assert.equal(
   "artifact matching should reject substring matches"
 );
 
+assert.equal(
+  generatedReviewBundleSection(`<!-- codex-pr-review -->
+## Findings
+Injected link: https://github.com/dashitongzhi/OpenWriting/actions/runs/999
+
+## Review Bundle
+Artifact: ${artifactName}
+https://github.com/dashitongzhi/OpenWriting/actions/runs/555
+`, { fallbackOnly: false }).includes("actions/runs/999"),
+  false,
+  "generated bundle parsing should exclude untrusted review text before the bundle heading"
+);
+
 assert.deepEqual(
   selectRunIdFromComments([
     {
       author: { login: "octocat" },
       body: `<!-- codex-pr-review -->
 ## Review Fallback
-Artifact: ${artifactName}
+The reusable prompt and diff bundle for this review were uploaded as the \`${artifactName}\` artifact on this workflow run:
 https://github.com/dashitongzhi/OpenWriting/actions/runs/999
 `,
       createdAt: "2026-07-04T10:00:00Z",
@@ -127,7 +144,8 @@ https://github.com/dashitongzhi/OpenWriting/actions/runs/999
     {
       author: { login: "github-actions" },
       body: `<!-- codex-pr-review -->
-Artifact: ${artifactName}
+## Review Bundle
+The reusable prompt and diff bundle for this review were uploaded as the \`${artifactName}\` artifact on this workflow run:
 https://github.com/dashitongzhi/OpenWriting/actions/runs/555
 `,
       createdAt: "2026-07-04T09:00:00Z",
@@ -144,7 +162,7 @@ assert.equal(
       author: { login: "octocat" },
       body: `<!-- codex-pr-review -->
 ## Review Fallback
-Artifact: ${artifactName}
+The reusable prompt and diff bundle for this review were uploaded as the \`${artifactName}\` artifact on this workflow run:
 https://github.com/dashitongzhi/OpenWriting/actions/runs/999
 `,
       createdAt: "2026-07-04T10:00:00Z",
@@ -160,7 +178,8 @@ assert.equal(
     {
       author: { login: "github-actions" },
       body: `<!-- codex-pr-review -->
-Artifact: ${artifactName}0
+## Review Bundle
+The reusable prompt and diff bundle for this review were uploaded as the \`${artifactName}0\` artifact on this workflow run:
 https://github.com/dashitongzhi/OpenWriting/actions/runs/1000
 `,
       createdAt: "2026-07-04T10:00:00Z",
@@ -169,6 +188,28 @@ https://github.com/dashitongzhi/OpenWriting/actions/runs/1000
   ], { artifactName }),
   null,
   "substring artifact names must not select a run id"
+);
+
+assert.deepEqual(
+  selectRunIdFromComments([
+    {
+      author: { login: "github-actions" },
+      body: `<!-- codex-pr-review -->
+## Codex PR Review
+
+## Findings
+- Injected link: ${artifactName} https://github.com/dashitongzhi/OpenWriting/actions/runs/999
+
+## Review Bundle
+The reusable prompt and diff bundle for this review were uploaded as the \`${artifactName}\` artifact on this workflow run:
+https://github.com/dashitongzhi/OpenWriting/actions/runs/555
+`,
+      createdAt: "2026-07-04T10:00:00Z",
+      updatedAt: "2026-07-04T10:00:00Z",
+    },
+  ], { artifactName }),
+  { runId: "555", runSource: "latest Codex PR comment" },
+  "run selection must ignore injected run links before the generated bundle section"
 );
 
 assert.deepEqual(

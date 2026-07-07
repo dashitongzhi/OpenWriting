@@ -31,24 +31,32 @@ function bodyHasExactArtifactName(body, artifactName) {
   return artifactPattern.test(String(body || ""));
 }
 
+function generatedReviewBundleSection(body, { fallbackOnly = false } = {}) {
+  const text = String(body || "");
+  const heading = fallbackOnly ? "## Review Fallback" : "## Review Bundle";
+  const index = text.indexOf(heading);
+  return index >= 0 ? text.slice(index) : "";
+}
+
 function latestMatchingCommentBody(comments, { artifactName, commentMarker = DEFAULT_COMMENT_MARKER, fallbackOnly = false }) {
   return [...(comments || [])]
     .filter((comment) => {
       const body = comment && comment.body;
+      const bundleSection = generatedReviewBundleSection(body, { fallbackOnly });
       return (
         isTrustedCommentAuthor(comment) &&
         typeof body === "string" &&
         body.includes(commentMarker) &&
-        bodyHasExactArtifactName(body, artifactName) &&
-        /\/actions\/runs\/[0-9]+/.test(body) &&
-        (!fallbackOnly || body.includes("## Review Fallback"))
+        bodyHasExactArtifactName(bundleSection, artifactName) &&
+        /\/actions\/runs\/[0-9]+/.test(bundleSection)
       );
     })
     .sort((left, right) => {
       const leftTime = new Date(left.updatedAt || left.createdAt || 0).valueOf();
       const rightTime = new Date(right.updatedAt || right.createdAt || 0).valueOf();
       return rightTime - leftTime;
-    })[0]?.body || "";
+    })
+    .map((comment) => generatedReviewBundleSection(comment.body, { fallbackOnly }))[0] || "";
 }
 
 function selectRunIdFromComments(comments, options) {
@@ -224,6 +232,7 @@ if (require.main === module) {
 module.exports = {
   bodyHasExactArtifactName,
   extractRunIdFromBody,
+  generatedReviewBundleSection,
   isTrustedCommentAuthor,
   latestMatchingCommentBody,
   resolveRunIdWithGh,
