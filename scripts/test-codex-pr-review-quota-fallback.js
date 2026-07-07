@@ -3,7 +3,12 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const { detectQuotaSignals } = require("./codex-pr-review-utils.cjs");
+const {
+  buildCodexReviewComment,
+  detectCodexReviewQuotaState,
+  detectQuotaSignals,
+  quotaSignalMetadata,
+} = require("./codex-pr-review-utils.cjs");
 
 const workflow = fs.readFileSync(".github/workflows/codex-pr-review.yml", "utf8");
 
@@ -72,6 +77,80 @@ assert.deepEqual(
   }),
   { freshCodexQuotaSignal: false, freshCopilotQuotaSignal: true },
   "fresh Copilot quota reviews must count for fallback messaging without suppressing Codex failures"
+);
+
+const initialQuotaSignals = detectCodexReviewQuotaState({
+  comments: [
+    {
+      id: 10,
+      user: { login: "chatgpt-codex-connector[bot]", type: "Bot" },
+      body: "Previous run hit a quota limit.",
+      created_at: "2026-07-04T11:58:00.000Z",
+    },
+  ],
+});
+const sharedQuotaSignals = detectCodexReviewQuotaState({
+  comments: [
+    {
+      id: 10,
+      user: { login: "chatgpt-codex-connector[bot]", type: "Bot" },
+      body: "Previous run hit a quota limit.",
+      created_at: "2026-07-04T12:01:00.000Z",
+    },
+    {
+      id: 11,
+      user: { login: "chatgpt-codex-connector[bot]", type: "Bot" },
+      body: "Current run hit a quota limit.",
+      created_at: "2026-07-04T12:02:00.000Z",
+    },
+  ],
+  reviews: [
+    {
+      id: 12,
+      user: { login: "copilot-pull-request-reviewer[bot]", type: "Bot" },
+      body: "Current run hit a usage limit.",
+      submitted_at: "2026-07-04T12:03:00.000Z",
+    },
+  ],
+  initialMetadata: quotaSignalMetadata(initialQuotaSignals),
+  actionStartedAt,
+  actionFinishedAt,
+});
+const sharedComment = buildCodexReviewComment({
+  codexReview: "No blocking findings.",
+  hasCodexReview: true,
+  codexFailed: false,
+  freshCodexQuotaSignal: sharedQuotaSignals.freshCodexQuotaSignal,
+  freshCopilotQuotaSignal: sharedQuotaSignals.freshCopilotQuotaSignal,
+  bundleArtifactName: "codex-pr-review-bundle-pr-42",
+  runUrl: "https://github.com/dashitongzhi/OpenWriting/actions/runs/123",
+  owner: "dashitongzhi",
+  repo: "OpenWriting",
+  issueNumber: 42,
+});
+
+assert.deepEqual(
+  sharedComment.fallbackReasons,
+  [
+    "Codex review reported a usage/quota limit.",
+    "Copilot review reported a usage/quota limit.",
+  ],
+  "shared quota/comment path should ignore initial signals and emit only current-run fallback reasons"
+);
+assert.match(
+  sharedComment.body,
+  /<!-- codex-pr-review -->\n## Codex PR Review\n\nNo blocking findings\./,
+  "shared comment builder should include the standard review marker and review body"
+);
+assert.match(
+  sharedComment.body,
+  /gh workflow run codex-pr-review\.yml -R dashitongzhi\/OpenWriting -f pr_number=42/,
+  "shared fallback comment should preserve the retry command"
+);
+assert.match(
+  sharedComment.body,
+  /codex-pr-review-bundle-pr-42/,
+  "shared fallback comment should include the review bundle artifact name"
 );
 
 function pickFreshQuotaSignals({ comments = [], reviews = [] }) {

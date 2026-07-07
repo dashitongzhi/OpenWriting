@@ -36,7 +36,10 @@ jobs:
           script: |
             const fs = require("fs");
             const path = require("path");
-            const { detectQuotaSignals } = require("./scripts/codex-pr-review-utils.cjs");
+            const {
+              detectCodexReviewQuotaState,
+              quotaSignalMetadata,
+            } = require("./scripts/codex-pr-review-utils.cjs");
             const { owner, repo } = context.repo;
             const reviewStartedAt = new Date().toISOString();
             let pr = context.payload.pull_request;
@@ -82,11 +85,8 @@ jobs:
               issue_number: pr.number,
               per_page: 100,
             });
-            const quotaSignals = detectQuotaSignals({ comments: issueComments, reviews });
+            const quotaSignals = detectCodexReviewQuotaState({ comments: issueComments, reviews });
             const {
-              codexQuotaComments,
-              codexQuotaReviews,
-              copilotQuotaReviews,
               codexQuotaSignal,
               copilotQuotaSignal,
             } = quotaSignals;
@@ -211,23 +211,7 @@ jobs:
               reviewStartedAt,
               codexQuotaSignal,
               copilotQuotaSignal,
-              codexQuotaComments: codexQuotaComments.map((comment) => ({
-                id: comment.id,
-                createdAt: comment.created_at,
-                author: comment.user && comment.user.login,
-                body: comment.body,
-              })),
-              codexQuotaReviews: codexQuotaReviews.map((review) => ({
-                id: review.id,
-                submittedAt: review.submitted_at,
-                author: review.user && review.user.login,
-                body: review.body,
-              })),
-              copilotQuotaReviews: copilotQuotaReviews.map((review) => ({
-                id: review.id,
-                submittedAt: review.submitted_at,
-                body: review.body,
-              })),
+              ...quotaSignalMetadata(quotaSignals),
             };
 
             const bundleDir = "codex-pr-review-bundle";
@@ -294,16 +278,15 @@ jobs:
           script: |
             const fs = require("fs");
             const {
-              buildCodexQuotaSignalKeys,
-              detectQuotaSignals,
+              buildCodexReviewComment,
+              codexReviewCommentMarker,
+              detectCodexReviewQuotaState,
             } = require("./scripts/codex-pr-review-utils.cjs");
-            const marker = "<!-- codex-pr-review -->";
             const issue_number = Number(fs.readFileSync(".codex-pr-review-pr-number", "utf8").trim());
             const codexActionStartedAt = new Date(fs.readFileSync(".codex-pr-review-action-started-at", "utf8").trim());
             const codexActionFinishedAt = new Date(fs.readFileSync(".codex-pr-review-action-finished-at", "utf8").trim());
             const metadata = JSON.parse(fs.readFileSync(".codex-pr-review-quota-signal.json", "utf8"));
             const { owner, repo } = context.repo;
-            const initialCodexQuotaSignalKeys = buildCodexQuotaSignalKeys(metadata);
             const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
             const reviewPath = ".codex-pr-review.md";
             const hasCodexReview =
@@ -324,10 +307,10 @@ jobs:
               pull_number: issue_number,
               per_page: 100,
             });
-            const quotaSignals = detectQuotaSignals({
+            const quotaSignals = detectCodexReviewQuotaState({
               comments: currentComments,
               reviews: currentReviews,
-              initialCodexQuotaSignalKeys,
+              initialMetadata: metadata,
               actionStartedAt: codexActionStartedAt,
               actionFinishedAt: codexActionFinishedAt,
             });
@@ -340,49 +323,21 @@ jobs:
             core.setOutput("fresh_codex_quota_signal", freshCodexQuotaSignal ? "true" : "false");
             core.setOutput("fresh_copilot_quota_signal", freshCopilotQuotaSignal ? "true" : "false");
 
-            const fallbackReasons = [];
-            if (codexFailed || !hasCodexReview) {
-              fallbackReasons.push(
-                `Codex review did not produce a usable result (outcome: ${process.env.CODEX_OUTCOME || "unknown"}, conclusion: ${process.env.CODEX_CONCLUSION || "unknown"}).`
-              );
-            }
-            if (freshCodexQuotaSignal) {
-              fallbackReasons.push("Codex review reported a usage/quota limit.");
-            }
-            if (freshCopilotQuotaSignal) {
-              fallbackReasons.push("Copilot review reported a usage/quota limit.");
-            }
-
-            const fallbackSection = fallbackReasons.length > 0
-              ? `
-            ## Review Fallback
-
-            ${fallbackReasons.map((reason) => `- ${reason}`).join("\n")}
-
-            A reusable review prompt and diff bundle were uploaded as the \`${process.env.BUNDLE_ARTIFACT_NAME}\` artifact on [this workflow run](${runUrl}).
-
-            To retry the hosted review, re-run this workflow from Actions or run:
-
-            \`\`\`sh
-            gh workflow run codex-pr-review.yml -R ${owner}/${repo} -f pr_number=${issue_number}
-            \`\`\`
-
-            To continue locally, download the artifact, open \`review-prompt.md\`, and submit it to Codex, Copilot, or another trusted reviewer. Use \`diff-bundle.md\` as the preserved PR context, then paste the resulting findings back into this PR.
-            `
-              : `
-            ## Review Bundle
-
-            The reusable prompt and diff bundle for this review were uploaded as the \`${process.env.BUNDLE_ARTIFACT_NAME}\` artifact on [this workflow run](${runUrl}).
-            `;
-
-            const body = `${marker}
-            ## Codex PR Review
-
-            ${hasCodexReview ? codexReview : "Automated review output was not available."}
-
-            ${fallbackSection}
-            `;
-            const existing = currentComments.find((comment) => comment.body && comment.body.includes(marker));
+            const { body } = buildCodexReviewComment({
+              codexReview,
+              hasCodexReview,
+              codexFailed,
+              codexOutcome: process.env.CODEX_OUTCOME,
+              codexConclusion: process.env.CODEX_CONCLUSION,
+              freshCodexQuotaSignal,
+              freshCopilotQuotaSignal,
+              bundleArtifactName: process.env.BUNDLE_ARTIFACT_NAME,
+              runUrl,
+              owner,
+              repo,
+              issueNumber: issue_number,
+            });
+            const existing = currentComments.find((comment) => comment.body && comment.body.includes(codexReviewCommentMarker));
             if (existing) {
               await github.rest.issues.updateComment({
                 owner,

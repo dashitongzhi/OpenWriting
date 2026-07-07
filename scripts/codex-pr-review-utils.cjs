@@ -11,6 +11,7 @@ const copilotQuotaBotLogins = new Set([
   "copilot-pull-request-reviewer[bot]",
   "copilot-pull-request-reviewer",
 ]);
+const codexReviewCommentMarker = "<!-- codex-pr-review -->";
 
 function hasQuotaBody(signal) {
   return quotaPattern.test((signal && signal.body) || "");
@@ -123,11 +124,135 @@ function detectQuotaSignals({
   };
 }
 
+function detectCodexReviewQuotaState({
+  comments = [],
+  reviews = [],
+  initialMetadata,
+  actionStartedAt,
+  actionFinishedAt,
+} = {}) {
+  return detectQuotaSignals({
+    comments,
+    reviews,
+    initialCodexQuotaSignalKeys: buildCodexQuotaSignalKeys(initialMetadata),
+    actionStartedAt,
+    actionFinishedAt,
+  });
+}
+
+function quotaSignalMetadata(quotaSignals = {}) {
+  return {
+    codexQuotaComments: (quotaSignals.codexQuotaComments || []).map((comment) => ({
+      id: comment.id,
+      createdAt: comment.created_at,
+      author: comment.user && comment.user.login,
+      body: comment.body,
+    })),
+    codexQuotaReviews: (quotaSignals.codexQuotaReviews || []).map((review) => ({
+      id: review.id,
+      submittedAt: review.submitted_at,
+      author: review.user && review.user.login,
+      body: review.body,
+    })),
+    copilotQuotaReviews: (quotaSignals.copilotQuotaReviews || []).map((review) => ({
+      id: review.id,
+      submittedAt: review.submitted_at,
+      body: review.body,
+    })),
+  };
+}
+
+function buildCodexReviewFallbackReasons({
+  codexFailed = false,
+  hasCodexReview = false,
+  codexOutcome = "unknown",
+  codexConclusion = "unknown",
+  freshCodexQuotaSignal = false,
+  freshCopilotQuotaSignal = false,
+} = {}) {
+  const fallbackReasons = [];
+  if (codexFailed || !hasCodexReview) {
+    fallbackReasons.push(
+      `Codex review did not produce a usable result (outcome: ${codexOutcome || "unknown"}, conclusion: ${codexConclusion || "unknown"}).`
+    );
+  }
+  if (freshCodexQuotaSignal) {
+    fallbackReasons.push("Codex review reported a usage/quota limit.");
+  }
+  if (freshCopilotQuotaSignal) {
+    fallbackReasons.push("Copilot review reported a usage/quota limit.");
+  }
+  return fallbackReasons;
+}
+
+function buildCodexReviewComment({
+  marker = codexReviewCommentMarker,
+  codexReview = "",
+  hasCodexReview = false,
+  codexFailed = false,
+  codexOutcome = "unknown",
+  codexConclusion = "unknown",
+  freshCodexQuotaSignal = false,
+  freshCopilotQuotaSignal = false,
+  bundleArtifactName,
+  runUrl,
+  owner,
+  repo,
+  issueNumber,
+} = {}) {
+  const fallbackReasons = buildCodexReviewFallbackReasons({
+    codexFailed,
+    hasCodexReview,
+    codexOutcome,
+    codexConclusion,
+    freshCodexQuotaSignal,
+    freshCopilotQuotaSignal,
+  });
+
+  const fallbackSection = fallbackReasons.length > 0
+    ? `
+## Review Fallback
+
+${fallbackReasons.map((reason) => `- ${reason}`).join("\n")}
+
+A reusable review prompt and diff bundle were uploaded as the \`${bundleArtifactName}\` artifact on [this workflow run](${runUrl}).
+
+To retry the hosted review, re-run this workflow from Actions or run:
+
+\`\`\`sh
+gh workflow run codex-pr-review.yml -R ${owner}/${repo} -f pr_number=${issueNumber}
+\`\`\`
+
+To continue locally, download the artifact, open \`review-prompt.md\`, and submit it to Codex, Copilot, or another trusted reviewer. Use \`diff-bundle.md\` as the preserved PR context, then paste the resulting findings back into this PR.
+`
+    : `
+## Review Bundle
+
+The reusable prompt and diff bundle for this review were uploaded as the \`${bundleArtifactName}\` artifact on [this workflow run](${runUrl}).
+`;
+
+  return {
+    body: `${marker}
+## Codex PR Review
+
+${hasCodexReview ? codexReview : "Automated review output was not available."}
+
+${fallbackSection}
+`,
+    fallbackReasons,
+  };
+}
+
 module.exports = {
+  buildCodexReviewComment,
+  buildCodexReviewFallbackReasons,
   buildCodexQuotaSignalKeys,
+  codexReviewCommentMarker,
+  detectCodexReviewQuotaState,
   detectQuotaSignals,
   hasQuotaBody,
   isCodexQuotaActor,
   isCopilotQuotaActor,
   isDuringWindow,
+  quotaSignalMetadata,
 };
