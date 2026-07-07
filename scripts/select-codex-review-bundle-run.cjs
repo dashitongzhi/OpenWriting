@@ -75,14 +75,24 @@ function ghJson(ghBin, args) {
   return JSON.parse(output);
 }
 
+function fallbackGhJson(ghBin, args) {
+  try {
+    return ghJson(ghBin, args);
+  } catch (_) {
+    return null;
+  }
+}
+
 function resolveRunIdWithGh({ ghBin, repo, prNumber, artifactName, workflowFile = DEFAULT_WORKFLOW_FILE }) {
-  const pr = ghJson(ghBin, ["pr", "view", prNumber, "-R", repo, "--json", "comments"]);
-  const fromComments = selectRunIdFromComments(pr.comments || [], { artifactName });
-  if (fromComments) {
-    return fromComments;
+  const pr = fallbackGhJson(ghBin, ["pr", "view", prNumber, "-R", repo, "--json", "comments"]);
+  if (pr && Array.isArray(pr.comments)) {
+    const fromComments = selectRunIdFromComments(pr.comments, { artifactName });
+    if (fromComments) {
+      return fromComments;
+    }
   }
 
-  const runs = ghJson(ghBin, [
+  const runs = fallbackGhJson(ghBin, [
     "run",
     "list",
     "-R",
@@ -94,6 +104,10 @@ function resolveRunIdWithGh({ ghBin, repo, prNumber, artifactName, workflowFile 
     "--json",
     "databaseId,createdAt",
   ]);
+  if (!Array.isArray(runs)) {
+    return null;
+  }
+
   const artifactsByRunId = {};
 
   for (const run of [...runs].sort((left, right) => {
@@ -106,8 +120,12 @@ function resolveRunIdWithGh({ ghBin, repo, prNumber, artifactName, workflowFile 
       continue;
     }
 
-    const artifactResponse = ghJson(ghBin, ["api", `repos/${repo}/actions/runs/${runId}/artifacts`]);
-    artifactsByRunId[runId] = artifactResponse.artifacts || [];
+    const artifactResponse = fallbackGhJson(ghBin, ["api", `repos/${repo}/actions/runs/${runId}/artifacts`]);
+    if (!artifactResponse || !Array.isArray(artifactResponse.artifacts)) {
+      continue;
+    }
+
+    artifactsByRunId[runId] = artifactResponse.artifacts;
     const selected = selectRunIdFromWorkflowArtifacts([run], artifactsByRunId, { artifactName, workflowFile });
     if (selected) {
       return selected;
