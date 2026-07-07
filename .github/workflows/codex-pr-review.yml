@@ -23,6 +23,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Check out trusted review helpers
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+
       - name: Build review prompt from PR diff
         id: review_bundle
         uses: actions/github-script@v7
@@ -30,6 +36,7 @@ jobs:
           script: |
             const fs = require("fs");
             const path = require("path");
+            const { detectQuotaSignals } = require("./scripts/codex-pr-review-utils.cjs");
             const { owner, repo } = context.repo;
             const reviewStartedAt = new Date().toISOString();
             let pr = context.payload.pull_request;
@@ -69,45 +76,20 @@ jobs:
               pull_number: pr.number,
               per_page: 100,
             });
-            const quotaPattern = /\b(quota|usage limit|usage limits|rate limit|billing limit)\b/i;
-            const copilotQuotaBotLogins = new Set([
-              "copilot-pull-request-reviewer[bot]",
-              "copilot-pull-request-reviewer",
-            ]);
-            const codexQuotaBotLogins = new Set([
-              "chatgpt-codex-connector[bot]",
-              "chatgpt-codex-connector",
-            ]);
-            const codexQuotaAppSlugs = new Set(["chatgpt-codex-connector"]);
-            const isCodexQuotaActor = (signal) => {
-              const user = signal && signal.user;
-              if (!user || user.type !== "Bot" || !codexQuotaBotLogins.has(user.login)) {
-                return false;
-              }
-              const app = signal.performed_via_github_app;
-              return !app || codexQuotaAppSlugs.has(app.slug);
-            };
-            const isCopilotQuotaActor = (signal) => {
-              const user = signal && signal.user;
-              return user && user.type === "Bot" && copilotQuotaBotLogins.has(user.login);
-            };
-            const copilotQuotaReviews = reviews
-              .filter((review) => isCopilotQuotaActor(review))
-              .filter((review) => quotaPattern.test(review.body || ""));
-            const copilotQuotaSignal = copilotQuotaReviews.length > 0;
             const issueComments = await github.paginate(github.rest.issues.listComments, {
               owner,
               repo,
               issue_number: pr.number,
               per_page: 100,
             });
-            const codexQuotaComments = issueComments
-              .filter((comment) => isCodexQuotaActor(comment))
-              .filter((comment) => quotaPattern.test(comment.body || ""));
-            const codexQuotaReviews = reviews
-              .filter((review) => isCodexQuotaActor(review))
-              .filter((review) => quotaPattern.test(review.body || ""));
-            const codexQuotaSignal = codexQuotaComments.length > 0 || codexQuotaReviews.length > 0;
+            const quotaSignals = detectQuotaSignals({ comments: issueComments, reviews });
+            const {
+              codexQuotaComments,
+              codexQuotaReviews,
+              copilotQuotaReviews,
+              codexQuotaSignal,
+              copilotQuotaSignal,
+            } = quotaSignals;
 
             const maxDiffChars = 180000;
             let remainingDiffChars = maxDiffChars;
@@ -311,46 +293,17 @@ jobs:
         with:
           script: |
             const fs = require("fs");
+            const {
+              buildCodexQuotaSignalKeys,
+              detectQuotaSignals,
+            } = require("./scripts/codex-pr-review-utils.cjs");
             const marker = "<!-- codex-pr-review -->";
             const issue_number = Number(fs.readFileSync(".codex-pr-review-pr-number", "utf8").trim());
             const codexActionStartedAt = new Date(fs.readFileSync(".codex-pr-review-action-started-at", "utf8").trim());
             const codexActionFinishedAt = new Date(fs.readFileSync(".codex-pr-review-action-finished-at", "utf8").trim());
             const metadata = JSON.parse(fs.readFileSync(".codex-pr-review-quota-signal.json", "utf8"));
             const { owner, repo } = context.repo;
-            const quotaPattern = /\b(quota|usage limit|usage limits|rate limit|billing limit)\b/i;
-            const copilotQuotaBotLogins = new Set([
-              "copilot-pull-request-reviewer[bot]",
-              "copilot-pull-request-reviewer",
-            ]);
-            const codexQuotaBotLogins = new Set([
-              "chatgpt-codex-connector[bot]",
-              "chatgpt-codex-connector",
-            ]);
-            const codexQuotaAppSlugs = new Set(["chatgpt-codex-connector"]);
-            const isCodexQuotaActor = (signal) => {
-              const user = signal && signal.user;
-              if (!user || user.type !== "Bot" || !codexQuotaBotLogins.has(user.login)) {
-                return false;
-              }
-              const app = signal.performed_via_github_app;
-              return !app || codexQuotaAppSlugs.has(app.slug);
-            };
-            const isCopilotQuotaActor = (signal) => {
-              const user = signal && signal.user;
-              return user && user.type === "Bot" && copilotQuotaBotLogins.has(user.login);
-            };
-            const initialCodexQuotaSignalKeys = new Set([
-              ...(metadata.codexQuotaComments || []).map((comment) => `comment:${comment.id}`),
-              ...(metadata.codexQuotaReviews || []).map((review) => `review:${review.id}`),
-            ]);
-            const isDuringThisCodexAction = (timestamp) => {
-              const parsed = new Date(timestamp);
-              return (
-                !Number.isNaN(parsed.valueOf()) &&
-                parsed >= codexActionStartedAt &&
-                parsed <= codexActionFinishedAt
-              );
-            };
+            const initialCodexQuotaSignalKeys = buildCodexQuotaSignalKeys(metadata);
             const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
             const reviewPath = ".codex-pr-review.md";
             const hasCodexReview =
@@ -371,24 +324,17 @@ jobs:
               pull_number: issue_number,
               per_page: 100,
             });
-            const freshCodexQuotaSignal =
-              currentComments.some((comment) =>
-                isCodexQuotaActor(comment) &&
-                quotaPattern.test(comment.body || "") &&
-                !initialCodexQuotaSignalKeys.has(`comment:${comment.id}`) &&
-                isDuringThisCodexAction(comment.created_at)
-              ) ||
-              currentReviews.some((review) =>
-                isCodexQuotaActor(review) &&
-                quotaPattern.test(review.body || "") &&
-                !initialCodexQuotaSignalKeys.has(`review:${review.id}`) &&
-                isDuringThisCodexAction(review.submitted_at)
-              );
-            const freshCopilotQuotaSignal = currentReviews.some((review) =>
-              isCopilotQuotaActor(review) &&
-              quotaPattern.test(review.body || "") &&
-              isDuringThisCodexAction(review.submitted_at)
-            );
+            const quotaSignals = detectQuotaSignals({
+              comments: currentComments,
+              reviews: currentReviews,
+              initialCodexQuotaSignalKeys,
+              actionStartedAt: codexActionStartedAt,
+              actionFinishedAt: codexActionFinishedAt,
+            });
+            const {
+              freshCodexQuotaSignal,
+              freshCopilotQuotaSignal,
+            } = quotaSignals;
             core.setOutput("codex_quota_signal", freshCodexQuotaSignal ? "true" : "false");
             core.setOutput("copilot_quota_signal", freshCopilotQuotaSignal ? "true" : "false");
             core.setOutput("fresh_codex_quota_signal", freshCodexQuotaSignal ? "true" : "false");

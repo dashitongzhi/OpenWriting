@@ -11,4 +11,14 @@ By default it resolves an exact GitHub Actions run before downloading:
 
 Pass `--run-id <id>` to override auto-detection when an operator already knows the run to use.
 
-Offline validation idea: set `GH_BIN` to a temporary fake `gh` script that returns two Codex PR comments, one old run and one newer `## Review Fallback` run, then assert the fake `run download` receives the newer run id and writes `review-prompt.md` plus `diff-bundle.md` into a temp output directory. This exercises the run-selection path without touching GitHub.
+The exact run selection lives in `select-codex-review-bundle-run.cjs` so it can be regression-tested without touching GitHub.
+
+## Codex PR review checks
+
+`run-codex-pr-review-checks.sh` runs the offline regression checks for:
+
+1. Codex/Copilot quota signal detection.
+2. Current Codex action window handling.
+3. Exact review bundle run selection.
+
+`run-smoke-checks.sh` calls these checks, so they run locally and in PR merge checks.
