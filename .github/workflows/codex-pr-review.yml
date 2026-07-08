@@ -32,7 +32,25 @@ jobs:
       - name: Install staged review helper fallback
         shell: bash
         run: |
-          if [[ -f scripts/codex-pr-review-utils.cjs ]]; then
+          helper_has_expected_exports() {
+            [[ -f scripts/codex-pr-review-utils.cjs ]] || return 1
+            node <<'NODE'
+          const helper = require("./scripts/codex-pr-review-utils.cjs");
+          const requiredExports = [
+            "buildCodexReviewComment",
+            "codexReviewCommentMarker",
+            "detectCodexReviewQuotaState",
+            "quotaSignalMetadata",
+          ];
+          const missing = requiredExports.filter((name) => helper[name] == null);
+          if (missing.length > 0) {
+            console.error(`Codex PR review helper is missing exports: ${missing.join(", ")}`);
+            process.exit(1);
+          }
+          NODE
+          }
+
+          if helper_has_expected_exports; then
             exit 0
           fi
 

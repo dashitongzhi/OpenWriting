@@ -22,6 +22,16 @@ assert.equal(
   false,
   "publish_review must not consume pre-run Copilot quota state"
 );
+assert.equal(
+  workflow.includes("helper_has_expected_exports"),
+  true,
+  "workflow bootstrap must validate base-checkout helper exports before skipping the fallback"
+);
+assert.equal(
+  workflow.includes("if [[ -f scripts/codex-pr-review-utils.cjs ]]; then"),
+  false,
+  "workflow bootstrap must not trust mere helper file presence on the base checkout"
+);
 
 const actionStartedAt = "2026-07-04T12:00:00.000Z";
 const actionFinishedAt = "2026-07-04T12:05:00.000Z";
