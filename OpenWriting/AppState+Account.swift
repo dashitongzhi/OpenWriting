@@ -31,8 +31,14 @@ extension AppState {
         // Only migrate legacy anonymous data into the first signed-in account.
         // Never copy a previously signed-in account's projects into another
         // Apple account on this device.
+        let targetLoadReport = Self.loadRecentProjectsReport(
+            for: targetScope,
+            from: userDefaults,
+            projectStore: projectStore
+        )
         if currentStorageScope == nil,
-           Self.loadRecentProjects(for: targetScope, from: userDefaults, projectStore: projectStore) == nil {
+           targetLoadReport.isComplete,
+           targetLoadReport.projects == nil {
             Self.copyAccountScopedProjectData(
                 from: currentStorageScope,
                 to: targetScope,

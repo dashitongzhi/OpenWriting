@@ -461,6 +461,13 @@ struct ProjectFileStore {
             return loadShardedProjectsReport(for: scope)
         }
 
+        // A missing index beside existing sharded project directories is not an
+        // empty store. Treat it as incomplete so callers cannot rewrite or
+        // synchronize the scope and prune the recoverable project data.
+        if hasShardedProjectDirectories(for: scope) {
+            return ProjectLoadReport(projects: nil, isComplete: false)
+        }
+
         let fileURL = projectsFileURL(for: scope)
         guard fileManager.fileExists(atPath: fileURL.path) else {
             return .missing
@@ -486,6 +493,23 @@ struct ProjectFileStore {
     func hasProjects(for scope: String?) -> Bool {
         fileManager.fileExists(atPath: projectIndexURL(for: scope).path)
             || fileManager.fileExists(atPath: projectsFileURL(for: scope).path)
+            || hasShardedProjectDirectories(for: scope)
+    }
+
+    private func hasShardedProjectDirectories(for scope: String?) -> Bool {
+        let projectsDirectory = scopeDirectoryURL(for: scope)
+            .appendingPathComponent("projects", isDirectory: true)
+        guard let contents = try? fileManager.contentsOfDirectory(
+            at: projectsDirectory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return false
+        }
+
+        return contents.contains { url in
+            (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+        }
     }
 
     func removeProjects(for scope: String?) throws {

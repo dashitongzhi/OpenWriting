@@ -315,6 +315,20 @@ final class ProjectFileStoreTests: XCTestCase {
         XCTAssertEqual(report.projects?.map(\.id), [healthyProject.id])
     }
 
+    func testLoadProjectsReportMarksMissingIndexWithProjectDirectoriesUnsafe() throws {
+        let project = NovelProject(title: "缺失索引项目", genre: "都市", summary: "摘要")
+        try store.saveProjects([project], for: scope)
+
+        let projectIndexURL = try XCTUnwrap(storedFiles(named: "index.json").first { !$0.path.contains("/chapters/") })
+        try FileManager.default.removeItem(at: projectIndexURL)
+
+        let report = store.loadProjectsReport(for: scope)
+
+        XCTAssertNil(report.projects)
+        XCTAssertFalse(report.isComplete)
+        XCTAssertTrue(store.hasProjects(for: scope))
+    }
+
     func testLoadProjectsReportKeepsMetadataCatalogWhenChapterIndexIsCorrupt() throws {
         let project = NovelProject(title: "章节索引项目", genre: "都市", summary: "摘要")
         let chapter = ChapterDraft(

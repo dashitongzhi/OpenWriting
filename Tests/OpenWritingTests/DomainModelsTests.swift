@@ -658,6 +658,7 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(appState.activeProjectID, remoteProject.id)
     }
 
+    @MainActor
     func testWritingSkillStorageKeysAreAccountScoped() {
         XCTAssertEqual(AppState.writingSkillsStorageKey(for: nil), AppState.StorageKey.writingSkills)
         XCTAssertNotEqual(
