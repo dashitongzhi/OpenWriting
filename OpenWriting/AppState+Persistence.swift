@@ -244,6 +244,14 @@ extension AppState {
 
     @discardableResult
     func persistRecentProjects(_ projects: [NovelProject], for scope: String?) -> Bool {
+        guard isCurrentStoragePersistenceSafe, scope == currentStorageScope else {
+            setCloudSyncStatus(
+                title: "本机存储待恢复",
+                symbolName: "exclamationmark.triangle",
+                message: "检测到本机项目文件不完整，已停止自动保存和同步；请先在项目空间导出诊断或执行恢复。"
+            )
+            return false
+        }
         do {
             try projectStore.saveProjects(projects, for: scope)
             Self.clearLegacyRecentProjectsFromUserDefaults(for: scope, userDefaults: userDefaults)
@@ -264,6 +272,7 @@ extension AppState {
         recentProjectsPersistTasks[storageKey] = Task {
             try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled else { return }
+            guard self.isCurrentStoragePersistenceSafe, scope == self.currentStorageScope else { return }
             self.persistRecentProjects(snapshot, for: scope)
             recentProjectsPersistTasks.removeValue(forKey: storageKey)
         }

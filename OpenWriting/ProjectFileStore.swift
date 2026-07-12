@@ -120,6 +120,21 @@ struct ProjectFileStore {
         }
     }
 
+    /// Captures whether a project list can safely participate in destructive
+    /// persistence reconciliation. A partial load must never be treated as a
+    /// user-initiated deletion.
+    struct ProjectLoadReport {
+        var projects: [NovelProject]?
+        var isComplete: Bool
+
+        static let missing = ProjectLoadReport(projects: nil, isComplete: true)
+    }
+
+    private struct ChapterMetadataLoadReport {
+        var metadata: [ChapterDraftMetadata]
+        var isComplete: Bool
+    }
+
     init(
         fileManager: FileManager = .default,
         baseDirectoryURL: URL? = nil,
@@ -437,16 +452,26 @@ struct ProjectFileStore {
     }
 
     func loadProjects(for scope: String?) -> [NovelProject]? {
-        if let projects = loadShardedProjects(for: scope) {
-            return projects
+        loadProjectsReport(for: scope).projects
+    }
+
+    func loadProjectsReport(for scope: String?) -> ProjectLoadReport {
+        let indexURL = projectIndexURL(for: scope)
+        if fileManager.fileExists(atPath: indexURL.path) {
+            return loadShardedProjectsReport(for: scope)
         }
 
         let fileURL = projectsFileURL(for: scope)
-        guard let data = try? Data(contentsOf: fileURL) else {
-            return nil
+        guard fileManager.fileExists(atPath: fileURL.path) else {
+            return .missing
+        }
+        guard let data = try? Data(contentsOf: fileURL),
+              let projects = try? decoder.decode([NovelProject].self, from: data)
+        else {
+            return ProjectLoadReport(projects: nil, isComplete: false)
         }
 
-        return try? decoder.decode([NovelProject].self, from: data)
+        return ProjectLoadReport(projects: projects, isComplete: true)
     }
 
     func saveProjects(_ projects: [NovelProject], for scope: String?) throws {
@@ -471,25 +496,33 @@ struct ProjectFileStore {
         }
     }
 
-    private func loadShardedProjects(for scope: String?) -> [NovelProject]? {
+    private func loadShardedProjectsReport(for scope: String?) -> ProjectLoadReport {
         let indexURL = projectIndexURL(for: scope)
         guard let indexData = try? Data(contentsOf: indexURL),
               let index = try? decoder.decode(ProjectIndex.self, from: indexData)
-        else { return nil }
+        else { return ProjectLoadReport(projects: nil, isComplete: false) }
 
         var projects: [NovelProject] = []
+        var isComplete = Set(index.projectIDs).count == index.projectIDs.count
         for projectID in index.projectIDs {
             let projectURL = projectMetadataURL(for: projectID, scope: scope)
             guard let projectData = try? Data(contentsOf: projectURL),
                   var project = try? decoder.decode(NovelProject.self, from: projectData)
-            else { continue }
+            else {
+                isComplete = false
+                continue
+            }
 
-            project.chapterCatalog = loadChapterMetadata(for: projectID, scope: scope)
+            let chapterMetadata = loadChapterMetadataReport(for: projectID, scope: scope)
+            if chapterMetadata.isComplete || project.chapterCatalog.isEmpty {
+                project.chapterCatalog = chapterMetadata.metadata
+            }
+            isComplete = isComplete && chapterMetadata.isComplete
             project.chapterDrafts = []
             projects.append(project)
         }
 
-        return projects
+        return ProjectLoadReport(projects: projects, isComplete: isComplete)
     }
 
     func loadChapterDraft(_ chapterID: ChapterDraft.ID, for projectID: NovelProject.ID, scope: String?) -> ChapterDraft? {
@@ -524,19 +557,32 @@ struct ProjectFileStore {
         return ChapterDraftLoadReport(drafts: drafts, missingChapterIDs: missingChapterIDs)
     }
 
-    private func loadChapterMetadata(for projectID: NovelProject.ID, scope: String?) -> [ChapterDraftMetadata] {
+    private func loadChapterMetadataReport(for projectID: NovelProject.ID, scope: String?) -> ChapterMetadataLoadReport {
         let indexURL = chapterIndexURL(for: projectID, scope: scope)
         guard let indexData = try? Data(contentsOf: indexURL),
               let index = try? decoder.decode(ChapterIndex.self, from: indexData)
-        else { return [] }
+        else { return ChapterMetadataLoadReport(metadata: [], isComplete: false) }
 
         if let chapters = index.chapters, !chapters.isEmpty {
-            return chapters
+            let hasUniqueIDs = Set(chapters.map(\.id)).count == chapters.count
+            let expectedIDs = Set(index.chapterIDs)
+            let catalogIDs = Set(chapters.map(\.id))
+            return ChapterMetadataLoadReport(
+                metadata: chapters,
+                isComplete: hasUniqueIDs && expectedIDs == catalogIDs
+            )
         }
 
-        return loadChapterDrafts(for: projectID, scope: scope)
+        let draftReport = loadChapterDraftReport(for: projectID, scope: scope)
+        let metadata = draftReport.drafts
             .map(ChapterDraftMetadata.init)
             .sorted(by: ChapterDraftMetadata.sortDescending)
+        let hasUniqueIDs = Set(index.chapterIDs).count == index.chapterIDs.count
+        let metadataIDs = Set(metadata.map(\.id))
+        return ChapterMetadataLoadReport(
+            metadata: metadata,
+            isComplete: draftReport.isComplete && hasUniqueIDs && metadataIDs == Set(index.chapterIDs)
+        )
     }
 
     private func saveShardedProjects(_ projects: [NovelProject], for scope: String?) throws {
@@ -562,11 +608,15 @@ struct ProjectFileStore {
         let chaptersDirectory = chapterDirectoryURL(for: project.id, scope: scope)
         try fileManager.createDirectory(at: chaptersDirectory, withIntermediateDirectories: true)
 
+        // Keep a complete catalog in project.json as a recovery fallback. The
+        // chapter index is written separately and can be interrupted or
+        // corrupted independently of the project metadata.
+        let chapterCatalog = resolvedChapterCatalog(for: project)
         var metadata = project
+        metadata.chapterCatalog = chapterCatalog
         metadata.chapterDrafts = []
         try writeIfChanged(try encoder.encode(metadata), to: projectMetadataURL(for: project.id, scope: scope))
 
-        let chapterCatalog = resolvedChapterCatalog(for: project)
         let chapterIndex = ChapterIndex(
             version: 3,
             chapterIDs: chapterCatalog.map(\.id),

@@ -299,6 +299,45 @@ final class ProjectFileStoreTests: XCTestCase {
         XCTAssertEqual(loadedProjects.map(\.id), [healthyProject.id])
     }
 
+    func testLoadProjectsReportMarksCorruptMetadataUnsafeForPersistence() throws {
+        let healthyProject = NovelProject(title: "健康项目", genre: "都市", summary: "摘要")
+        let corruptProject = NovelProject(title: "损坏项目", genre: "玄幻", summary: "摘要")
+        try store.saveProjects([healthyProject, corruptProject], for: scope)
+
+        let corruptMetadataURL = try XCTUnwrap(storedFiles(named: "project.json").first {
+            $0.path.contains(corruptProject.id)
+        })
+        try Data("{ invalid json".utf8).write(to: corruptMetadataURL)
+
+        let report = store.loadProjectsReport(for: scope)
+
+        XCTAssertFalse(report.isComplete)
+        XCTAssertEqual(report.projects?.map(\.id), [healthyProject.id])
+    }
+
+    func testLoadProjectsReportKeepsMetadataCatalogWhenChapterIndexIsCorrupt() throws {
+        let project = NovelProject(title: "章节索引项目", genre: "都市", summary: "摘要")
+        let chapter = ChapterDraft(
+            chapterNumber: 1,
+            chapterTitle: "第一章",
+            content: "仍应保留目录信息"
+        )
+        var projectWithChapter = project
+        projectWithChapter.chapterDrafts = [chapter]
+        try store.saveProjects([projectWithChapter], for: scope)
+
+        let chapterIndexURL = try XCTUnwrap(storedFiles(named: "index.json").first {
+            $0.path.contains("/chapters/")
+        })
+        try Data("{ invalid json".utf8).write(to: chapterIndexURL)
+
+        let report = store.loadProjectsReport(for: scope)
+        let loadedProject = try XCTUnwrap(report.projects?.first)
+
+        XCTAssertFalse(report.isComplete)
+        XCTAssertEqual(loadedProject.chapterCatalog.map(\.id), [chapter.id])
+    }
+
     func testRebuildChapterCatalogPreservesOrphanChapterFile() async throws {
         let project = NovelProject(title: "孤儿章节项目", genre: "都市", summary: "摘要")
         let indexedChapter = ChapterDraft(

@@ -373,7 +373,7 @@ enum AIWritingService {
                 throw error
             } catch {
                 lastError = error
-                AppLogger.ai.error("AI completion attempt \(attempt, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                AppLogger.ai.error("AI completion attempt \(attempt, privacy: .public) failed: \(error.localizedDescription, privacy: .private(mask: .hash))")
                 guard attempt < maxAttempts, shouldRetryCompletion(after: error) else {
                     throw error
                 }

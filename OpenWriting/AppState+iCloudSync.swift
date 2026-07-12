@@ -29,7 +29,7 @@ extension AppState {
         cloudSaveGeneration &+= 1
         let saveGeneration = cloudSaveGeneration
 
-        guard let scope = currentStorageScope else {
+        guard isCurrentStoragePersistenceSafe, let scope = currentStorageScope else {
             Task { @MainActor in
                 await refreshCloudAvailability()
             }
@@ -74,7 +74,10 @@ extension AppState {
                     try await cloudStore.saveSnapshot(snapshot, for: scope)
                     try Task.checkCancellation()
                     await MainActor.run {
-                        guard self.cloudSaveGeneration == saveGeneration else { return }
+                        guard self.cloudSaveGeneration == saveGeneration,
+                              self.currentStorageScope == scope,
+                              self.isCurrentStoragePersistenceSafe
+                        else { return }
                         self.setCloudSyncStatus(
                             title: "iCloud 已连接",
                             symbolName: "icloud.fill",
@@ -84,9 +87,11 @@ extension AppState {
                 } catch is CancellationError {
                     return
                 } catch {
-                    AppLogger.sync.error("CloudKit background save failed: \(error.localizedDescription, privacy: .public)")
+                    AppLogger.sync.error("CloudKit background save failed: \(error.localizedDescription, privacy: .private(mask: .hash))")
                     await MainActor.run {
-                        guard self.cloudSaveGeneration == saveGeneration else { return }
+                        guard self.cloudSaveGeneration == saveGeneration,
+                              self.currentStorageScope == scope
+                        else { return }
                         self.setCloudSyncStatus(
                             title: "本机保存",
                             symbolName: "icloud.slash",
@@ -96,7 +101,9 @@ extension AppState {
                 }
             case let .unavailable(message):
                 await MainActor.run {
-                    guard self.cloudSaveGeneration == saveGeneration else { return }
+                    guard self.cloudSaveGeneration == saveGeneration,
+                          self.currentStorageScope == scope
+                    else { return }
                     self.setCloudSyncStatus(
                         title: "本机保存",
                         symbolName: "icloud.slash",
@@ -108,7 +115,7 @@ extension AppState {
     }
 
     func refreshCloudAvailability() async {
-        guard activeAccount != nil else {
+        guard let scope = currentStorageScope else {
             setCloudSyncStatus(
                 title: "本机保存",
                 symbolName: "icloud.slash",
@@ -118,6 +125,7 @@ extension AppState {
         }
 
         let availability = await cloudStore.availability()
+        guard currentStorageScope == scope else { return }
         let isAvailable: Bool
         switch availability {
         case .available:
@@ -137,9 +145,14 @@ extension AppState {
         guard let activeAccount else {
             return false
         }
+        let expectedUserID = activeAccount.userID
+        let expectedEpoch = cloudSyncEpoch
 
         do {
-            let credentialState = try await credentialState(for: activeAccount.userID)
+            let credentialState = try await credentialState(for: expectedUserID)
+            guard self.activeAccount?.userID == expectedUserID, cloudSyncEpoch == expectedEpoch else {
+                return false
+            }
             switch credentialState {
             case .authorized:
                 return true
@@ -157,13 +170,28 @@ extension AppState {
                 return false
             }
         } catch {
-            AppLogger.sync.error("Apple credential state refresh failed: \(error.localizedDescription, privacy: .public)")
+            AppLogger.sync.error("Apple credential state refresh failed: \(error.localizedDescription, privacy: .private(mask: .hash))")
             return true
         }
     }
 
     func synchronizeWithICloud(forcePull: Bool) async {
-        guard !isCloudSynchronizationInProgress else {
+        guard let scope = currentStorageScope else {
+            await refreshCloudAvailability()
+            return
+        }
+        let synchronizationEpoch = cloudSyncEpoch
+
+        guard isCurrentStoragePersistenceSafe else {
+            setCloudSyncStatus(
+                title: "本机存储待恢复",
+                symbolName: "exclamationmark.triangle",
+                message: "检测到本机项目文件不完整，已停止同步；请先导出诊断或执行恢复。"
+            )
+            return
+        }
+
+        guard activeCloudSynchronizationEpoch != synchronizationEpoch else {
             setCloudSyncStatus(
                 title: "正在同步",
                 symbolName: "arrow.triangle.2.circlepath.icloud",
@@ -172,16 +200,15 @@ extension AppState {
             return
         }
 
-        guard let scope = currentStorageScope else {
-            await refreshCloudAvailability()
-            return
-        }
-
         isCloudSynchronizationInProgress = true
+        activeCloudSynchronizationEpoch = synchronizationEpoch
         cloudSaveTask?.cancel()
         cloudSaveGeneration &+= 1
         defer {
-            isCloudSynchronizationInProgress = false
+            if activeCloudSynchronizationEpoch == synchronizationEpoch {
+                activeCloudSynchronizationEpoch = nil
+                isCloudSynchronizationInProgress = false
+            }
         }
 
         setCloudSyncStatus(
@@ -191,6 +218,7 @@ extension AppState {
         )
 
         let availability = await cloudStore.availability()
+        guard isCloudSynchronizationCurrent(scope: scope, epoch: synchronizationEpoch) else { return }
         guard case .available = availability else {
             setCloudSyncStatus(title: "本机保存", symbolName: "icloud.slash", message: availability.message)
             return
@@ -198,10 +226,12 @@ extension AppState {
 
         do {
             if let remoteSnapshot = try await cloudStore.loadSnapshot(for: scope) {
+                guard isCloudSynchronizationCurrent(scope: scope, epoch: synchronizationEpoch) else { return }
                 let remoteTimestamp = remoteSnapshot.updatedAt.timeIntervalSince1970
 
                 if forcePull || remoteTimestamp > currentProjectSnapshotTimestamp {
-                    applyCloudSnapshot(remoteSnapshot)
+                    applyCloudSnapshot(remoteSnapshot, expectedScope: scope, epoch: synchronizationEpoch)
+                    guard isCloudSynchronizationCurrent(scope: scope, epoch: synchronizationEpoch) else { return }
                     setCloudSyncStatus(
                         title: "iCloud 已连接",
                         symbolName: "icloud.fill",
@@ -219,6 +249,7 @@ extension AppState {
                     updatedAt: Date(timeIntervalSince1970: max(currentProjectSnapshotTimestamp, Date().timeIntervalSince1970))
                 )
                 try await cloudStore.saveSnapshot(snapshot, for: scope)
+                guard isCloudSynchronizationCurrent(scope: scope, epoch: synchronizationEpoch) else { return }
                 currentProjectSnapshotTimestamp = snapshot.updatedAt.timeIntervalSince1970
             }
 
@@ -228,7 +259,8 @@ extension AppState {
                 message: "当前设备上的项目已与 iCloud 对齐。"
             )
         } catch {
-            AppLogger.sync.error("Manual iCloud synchronization failed: \(error.localizedDescription, privacy: .public)")
+            guard isCloudSynchronizationCurrent(scope: scope, epoch: synchronizationEpoch) else { return }
+            AppLogger.sync.error("Manual iCloud synchronization failed: \(error.localizedDescription, privacy: .private(mask: .hash))")
             setCloudSyncStatus(
                 title: "本机保存",
                 symbolName: "icloud.slash",
@@ -237,7 +269,18 @@ extension AppState {
         }
     }
 
-    func applyCloudSnapshot(_ snapshot: AccountProjectSnapshot) {
+    func isCloudSynchronizationCurrent(scope: String, epoch: UInt64) -> Bool {
+        currentStorageScope == scope
+            && cloudSyncEpoch == epoch
+            && isCurrentStoragePersistenceSafe
+    }
+
+    func applyCloudSnapshot(
+        _ snapshot: AccountProjectSnapshot,
+        expectedScope: String,
+        epoch: UInt64
+    ) {
+        guard isCloudSynchronizationCurrent(scope: expectedScope, epoch: epoch) else { return }
         let previousActiveProjectID = activeProjectID
         let previousSelectedProjectID = selectedProjectID
         let mergedProjects = Self.mergeCloudProjects(local: recentProjects, remote: snapshot.recentProjects)

@@ -16,8 +16,13 @@ final class AppState {
     @ObservationIgnored var cloudSaveTask: Task<Void, Never>?
     @ObservationIgnored var cloudSaveGeneration: UInt64 = 0
     @ObservationIgnored var isCloudSynchronizationInProgress = false
+    @ObservationIgnored var cloudSyncEpoch: UInt64 = 0
+    @ObservationIgnored var activeCloudSynchronizationEpoch: UInt64?
     @ObservationIgnored var recentProjectsPersistTasks: [String: Task<Void, Never>] = [:]
     @ObservationIgnored var isHydratingAccountScopedData = false
+    /// A partial/corrupt storage load must never be reconciled back to disk or
+    /// uploaded as an intentional deletion.
+    @ObservationIgnored var isCurrentStoragePersistenceSafe = true
     @ObservationIgnored var isApplyingProviderConfiguration = false
     @ObservationIgnored var validationTask: Task<Void, Never>?
     @ObservationIgnored private var cachedManagers: AppStateManagers?
@@ -121,6 +126,7 @@ final class AppState {
 
     var recentProjects: [NovelProject] {
         didSet {
+            guard isCurrentStoragePersistenceSafe else { return }
             scheduleRecentProjectsPersistence(snapshot: recentProjects, for: currentStorageScope)
             guard !isHydratingAccountScopedData else { return }
             noteLocalProjectMutation()
@@ -219,11 +225,13 @@ final class AppState {
             forKey: Self.projectSnapshotTimestampStorageKey(for: resolvedStorageScope),
             userDefaults: userDefaults
         ) ?? 0
-        self.recentProjects = Self.loadRecentProjects(
+        let projectLoadReport = Self.loadRecentProjectsReport(
             for: resolvedStorageScope,
             from: userDefaults,
             projectStore: projectStore
-        ) ?? Self.defaultRecentProjects
+        )
+        self.isCurrentStoragePersistenceSafe = projectLoadReport.isComplete
+        self.recentProjects = projectLoadReport.projects ?? Self.defaultRecentProjects
         self.writingSkills = Self.loadWritingSkills(from: userDefaults) ?? []
         self.connectionStatus = .idle
         self.validationMessage = Self.emptyConfigurationMessage
@@ -1041,11 +1049,13 @@ final class AppState {
             )
 
             if result.didChangeStore {
-                if let reloadedProjects = Self.loadRecentProjects(
+                let loadReport = Self.loadRecentProjectsReport(
                     for: currentStorageScope,
                     from: userDefaults,
                     projectStore: projectStore
-                ) {
+                )
+                isCurrentStoragePersistenceSafe = loadReport.isComplete
+                if let reloadedProjects = loadReport.projects {
                     let preservedActiveProjectID = activeProjectID
                     let preservedSelectedProjectID = selectedProjectID
                     isHydratingAccountScopedData = true
@@ -1061,8 +1071,10 @@ final class AppState {
                     }
                     isHydratingAccountScopedData = false
                 }
-                noteLocalProjectMutation()
-                scheduleCloudSnapshotSave()
+                if isCurrentStoragePersistenceSafe {
+                    noteLocalProjectMutation()
+                    scheduleCloudSnapshotSave()
+                }
             }
 
             setCloudSyncStatus(

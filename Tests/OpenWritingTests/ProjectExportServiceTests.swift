@@ -88,6 +88,20 @@ final class ProjectExportServiceTests: XCTestCase {
         }
     }
 
+    func testValidateExportRejectsManifestPathTraversal() throws {
+        let manifest = """
+        {"title":"恶意备份","exportedAt":"2026-07-12T00:00:00Z","chapterCount":0,"savedWordCount":0,"currentDraftWordCount":0,"manuscriptWordCount":0,"files":["project.json","../outside.md"]}
+        """
+        try Data(manifest.utf8).write(to: testDirectory.appendingPathComponent("manifest.json"))
+
+        XCTAssertThrowsError(try ProjectExportService.validateExport(at: testDirectory)) { error in
+            guard case ProjectExportError.unsafeManifestPath("../outside.md") = error else {
+                XCTFail("Expected unsafeManifestPath, got \(error)")
+                return
+            }
+        }
+    }
+
     func testEPUBMimetypeIsFirstStoredEntry() throws {
         let chapter = ChapterDraft(
             volumeNumber: 1,

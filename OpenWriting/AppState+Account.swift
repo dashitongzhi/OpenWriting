@@ -26,7 +26,13 @@ extension AppState {
         let normalizedProfile = Self.normalizedAppleAccount(profile)
         let targetScope = normalizedProfile.userID
 
-        if Self.loadRecentProjects(for: targetScope, from: userDefaults, projectStore: projectStore) == nil {
+        invalidateCloudOperations()
+
+        // Only migrate legacy anonymous data into the first signed-in account.
+        // Never copy a previously signed-in account's projects into another
+        // Apple account on this device.
+        if currentStorageScope == nil,
+           Self.loadRecentProjects(for: targetScope, from: userDefaults, projectStore: projectStore) == nil {
             Self.copyAccountScopedProjectData(
                 from: currentStorageScope,
                 to: targetScope,
@@ -52,9 +58,7 @@ extension AppState {
     @discardableResult
     func logoutAccount(removingLocalData: Bool = false) -> Bool {
         guard let account = activeAccount else { return true }
-        cloudSaveTask?.cancel()
-        cloudSaveTask = nil
-        cloudSaveGeneration &+= 1
+        invalidateCloudOperations()
         var didRemoveLocalData = true
         if removingLocalData {
             let accountProjectStorageKey = Self.recentProjectsStorageKey(for: account.userID)
@@ -68,7 +72,7 @@ extension AppState {
                 userDefaults.removeObject(forKey: Self.projectSnapshotTimestampStorageKey(for: account.userID))
             } catch {
                 didRemoveLocalData = false
-                AppLogger.persistence.error("Account local data cleanup failed: \(error.localizedDescription, privacy: .public)")
+                AppLogger.persistence.error("Account local data cleanup failed: \(error.localizedDescription, privacy: .private(mask: .hash))")
             }
         }
         activeAccount = nil
@@ -85,17 +89,26 @@ extension AppState {
         return didRemoveLocalData
     }
 
+    func invalidateCloudOperations() {
+        cloudSaveTask?.cancel()
+        cloudSaveTask = nil
+        cloudSaveGeneration &+= 1
+        cloudSyncEpoch &+= 1
+    }
+
     func refreshICloudProjects() async {
         await synchronizeWithICloud(forcePull: true)
     }
 
     func reloadAccountScopedProjects() {
         isHydratingAccountScopedData = true
-        recentProjects = Self.loadRecentProjects(
+        let loadReport = Self.loadRecentProjectsReport(
             for: currentStorageScope,
             from: userDefaults,
             projectStore: projectStore
-        ) ?? Self.defaultRecentProjects
+        )
+        isCurrentStoragePersistenceSafe = loadReport.isComplete
+        recentProjects = loadReport.projects ?? Self.defaultRecentProjects
         activeProjectID = Self.stringValue(
             forKey: Self.activeProjectIDStorageKey(for: currentStorageScope),
             userDefaults: userDefaults
@@ -103,6 +116,13 @@ extension AppState {
         selectedProjectID = activeProjectID
         normalizeProjectSelection()
         isHydratingAccountScopedData = false
+        if !loadReport.isComplete {
+            setCloudSyncStatus(
+                title: "本机存储待恢复",
+                symbolName: "exclamationmark.triangle",
+                message: "检测到本机项目文件不完整，已停止自动保存和同步；请先在项目空间导出诊断或执行恢复。"
+            )
+        }
     }
 
     static func loadRecentProjects(
@@ -110,19 +130,28 @@ extension AppState {
         from userDefaults: UserDefaults,
         projectStore: ProjectFileStore
     ) -> [NovelProject]? {
-        if let storedProjects = projectStore.loadProjects(for: scope) {
-            return storedProjects
+        loadRecentProjectsReport(for: scope, from: userDefaults, projectStore: projectStore).projects
+    }
+
+    static func loadRecentProjectsReport(
+        for scope: String?,
+        from userDefaults: UserDefaults,
+        projectStore: ProjectFileStore
+    ) -> ProjectFileStore.ProjectLoadReport {
+        let storedReport = projectStore.loadProjectsReport(for: scope)
+        if storedReport.projects != nil || !storedReport.isComplete {
+            return storedReport
         }
 
         guard let decodedProjects = loadLegacyRecentProjectsFromUserDefaults(for: scope, userDefaults: userDefaults) else {
-            return nil
+            return .missing
         }
 
         if (try? projectStore.saveProjects(decodedProjects, for: scope)) != nil {
             clearLegacyRecentProjectsFromUserDefaults(for: scope, userDefaults: userDefaults)
         }
 
-        return decodedProjects
+        return ProjectFileStore.ProjectLoadReport(projects: decodedProjects, isComplete: true)
     }
 
     static func loadLegacyRecentProjectsFromUserDefaults(

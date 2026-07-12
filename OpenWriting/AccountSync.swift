@@ -279,7 +279,7 @@ actor ICloudProjectStore {
                 return indexSnapshot
             }
         } catch {
-            AppLogger.sync.error("CloudKit indexed snapshot failed, falling back to asset: \(error.localizedDescription, privacy: .public)")
+            AppLogger.sync.error("CloudKit indexed snapshot failed, falling back to asset: \(error.localizedDescription, privacy: .private(mask: .hash))")
         }
 
         guard let asset = record[CloudKitKey.payloadAsset] as? CKAsset,
@@ -449,7 +449,7 @@ actor ICloudProjectStore {
                         atomically: false
                     )
                 } catch {
-                    AppLogger.sync.error("CloudKit stale payload cleanup failed: \(error.localizedDescription, privacy: .public)")
+                    AppLogger.sync.error("CloudKit stale payload cleanup failed: \(error.localizedDescription, privacy: .private(mask: .hash))")
                 }
             }
         } catch let error as StoreError {

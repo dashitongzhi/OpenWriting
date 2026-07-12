@@ -22,6 +22,8 @@ enum ProjectExportError: LocalizedError {
     case missingManifest(URL)
     case unreadableProjectJSON(URL)
     case invalidManifest(URL)
+    case unsafeManifestPath(String)
+    case invalidProjectData(String)
     case invalidExport(URL, missingFiles: [String], invalidFiles: [String])
 
     var errorDescription: String? {
@@ -32,6 +34,10 @@ enum ProjectExportError: LocalizedError {
             return "无法读取项目备份文件：\(url.path)"
         case let .invalidManifest(url):
             return "导出清单不可解析：\(url.path)"
+        case let .unsafeManifestPath(path):
+            return "导出清单包含不安全的文件路径：\(path)"
+        case let .invalidProjectData(reason):
+            return "导入项目数据无效：\(reason)"
         case let .invalidExport(_, missingFiles, invalidFiles):
             let missing = missingFiles.isEmpty ? "" : "缺少文件：\(missingFiles.prefix(3).joined(separator: "、"))。"
             let invalid = invalidFiles.isEmpty ? "" : "文件格式异常：\(invalidFiles.prefix(3).joined(separator: "、"))。"
@@ -41,6 +47,8 @@ enum ProjectExportError: LocalizedError {
 }
 
 enum ProjectExportService {
+    private static let maximumManifestFileCount = 10_000
+    private static let maximumJSONFileSize = 32 * 1024 * 1024
     private struct Manifest: Codable {
         var title: String
         var exportedAt: String
@@ -129,25 +137,38 @@ enum ProjectExportService {
 
         let decoder = JSONDecoder()
         guard let manifestData = try? Data(contentsOf: manifestURL) else {
-            AppLogger.export.error("Export manifest could not be read: \(manifestURL.path, privacy: .public)")
+            AppLogger.export.error("Export manifest could not be read: \(manifestURL.path, privacy: .private(mask: .hash))")
             throw ProjectExportError.invalidManifest(manifestURL)
         }
 
         guard let manifest = try? decoder.decode(Manifest.self, from: manifestData) else {
-            AppLogger.export.error("Export manifest could not be decoded: \(manifestURL.path, privacy: .public)")
+            AppLogger.export.error("Export manifest could not be decoded: \(manifestURL.path, privacy: .private(mask: .hash))")
             throw ProjectExportError.invalidManifest(manifestURL)
         }
 
+        guard manifest.files.count <= maximumManifestFileCount,
+              Set(manifest.files).count == manifest.files.count,
+              manifest.files.contains("project.json")
+        else {
+            throw ProjectExportError.invalidManifest(manifestURL)
+        }
+        for relativePath in manifest.files {
+            guard isSafeManifestRelativePath(relativePath) else {
+                throw ProjectExportError.unsafeManifestPath(relativePath)
+            }
+        }
+
         let projectURL = directoryURL.appendingPathComponent("project.json", isDirectory: false)
-        guard let projectData = try? Data(contentsOf: projectURL) else {
-            AppLogger.export.error("Export project JSON could not be read: \(projectURL.path, privacy: .public)")
+        guard let projectData = try? Data(contentsOf: projectURL), projectData.count <= maximumJSONFileSize else {
+            AppLogger.export.error("Export project JSON could not be read: \(projectURL.path, privacy: .private(mask: .hash))")
             throw ProjectExportError.unreadableProjectJSON(projectURL)
         }
 
         guard let project = try? decoder.decode(NovelProject.self, from: projectData) else {
-            AppLogger.export.error("Export project JSON could not be decoded: \(projectURL.path, privacy: .public)")
+            AppLogger.export.error("Export project JSON could not be decoded: \(projectURL.path, privacy: .private(mask: .hash))")
             throw ProjectExportError.unreadableProjectJSON(projectURL)
         }
+        try validateProjectData(project)
 
         let listedFiles = Set(manifest.files + ["manifest.json"])
         let missingFiles = listedFiles
@@ -242,7 +263,7 @@ enum ProjectExportService {
     private static func isValidExportFile(relativePath: String, url: URL) -> Bool {
         switch url.pathExtension.lowercased() {
         case "json":
-            guard let data = try? Data(contentsOf: url) else { return false }
+            guard let data = try? Data(contentsOf: url), data.count <= maximumJSONFileSize else { return false }
             return (try? JSONSerialization.jsonObject(with: data)) != nil
         case "md":
             return (try? String(contentsOf: url, encoding: .utf8)) != nil
@@ -250,6 +271,27 @@ enum ProjectExportService {
             return hasZipHeader(url)
         default:
             return true
+        }
+    }
+
+    private static func isSafeManifestRelativePath(_ path: String) -> Bool {
+        guard !path.isEmpty,
+              !path.hasPrefix("/"),
+              !path.hasPrefix("~")
+        else { return false }
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        return !components.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." })
+    }
+
+    private static func validateProjectData(_ project: NovelProject) throws {
+        guard !project.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProjectExportError.invalidProjectData("项目 ID 为空")
+        }
+        guard Set(project.chapterDrafts.map(\.id)).count == project.chapterDrafts.count else {
+            throw ProjectExportError.invalidProjectData("章节 ID 重复")
+        }
+        guard Set(project.referenceDocuments.map(\.id)).count == project.referenceDocuments.count else {
+            throw ProjectExportError.invalidProjectData("素材 ID 重复")
         }
     }
 
