@@ -527,7 +527,9 @@ struct ProjectFileStore {
         else { return ProjectLoadReport(projects: nil, isComplete: false) }
 
         var projects: [NovelProject] = []
+        let indexedProjectDirectories = Set(index.projectIDs.map(sanitizedStorageComponent))
         var isComplete = Set(index.projectIDs).count == index.projectIDs.count
+            && storedProjectDirectoryNames(for: scope) == indexedProjectDirectories
         for projectID in index.projectIDs {
             let projectURL = projectMetadataURL(for: projectID, scope: scope)
             guard let projectData = try? Data(contentsOf: projectURL),
@@ -538,10 +540,12 @@ struct ProjectFileStore {
             }
 
             let chapterMetadata = loadChapterMetadataReport(for: projectID, scope: scope)
+            let metadataMatchesProjectCatalog = project.chapterCatalog.isEmpty
+                || Set(project.chapterCatalog.map(\.id)) == Set(chapterMetadata.metadata.map(\.id))
             if chapterMetadata.isComplete || project.chapterCatalog.isEmpty {
                 project.chapterCatalog = chapterMetadata.metadata
             }
-            isComplete = isComplete && chapterMetadata.isComplete
+            isComplete = isComplete && chapterMetadata.isComplete && metadataMatchesProjectCatalog
             project.chapterDrafts = []
             projects.append(project)
         }
@@ -591,9 +595,12 @@ struct ProjectFileStore {
             let hasUniqueIDs = Set(chapters.map(\.id)).count == chapters.count
             let expectedIDs = Set(index.chapterIDs)
             let catalogIDs = Set(chapters.map(\.id))
+            let expectedFileNames = Set(chapters.map { "\(sanitizedStorageComponent($0.id)).json" })
             return ChapterMetadataLoadReport(
                 metadata: chapters,
-                isComplete: hasUniqueIDs && expectedIDs == catalogIDs
+                isComplete: hasUniqueIDs
+                    && expectedIDs == catalogIDs
+                    && storedChapterFileNames(for: projectID, scope: scope) == expectedFileNames
             )
         }
 
@@ -715,6 +722,32 @@ struct ProjectFileStore {
             try fileManager.removeItem(at: url)
             writeCache.removeItems(under: url)
         }
+    }
+
+    private func storedProjectDirectoryNames(for scope: String?) -> Set<String> {
+        let projectsDirectory = scopeDirectoryURL(for: scope).appendingPathComponent("projects", isDirectory: true)
+        guard let directoryContents = try? fileManager.contentsOfDirectory(
+            at: projectsDirectory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        return Set(directoryContents.compactMap { url in
+            (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+                ? url.lastPathComponent
+                : nil
+        })
+    }
+
+    private func storedChapterFileNames(for projectID: NovelProject.ID, scope: String?) -> Set<String> {
+        let chaptersDirectory = chapterDirectoryURL(for: projectID, scope: scope)
+        guard let directoryContents = try? fileManager.contentsOfDirectory(
+            at: chaptersDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        return Set(directoryContents.map(\.lastPathComponent).filter { $0 != "index.json" && $0.hasSuffix(".json") })
     }
 
     private func removeDeletedChapterFiles(in chaptersDirectory: URL, keeping chapterIDs: Set<ChapterDraft.ID>) throws {

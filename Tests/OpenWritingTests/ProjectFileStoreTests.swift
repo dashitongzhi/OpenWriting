@@ -329,6 +329,21 @@ final class ProjectFileStoreTests: XCTestCase {
         XCTAssertTrue(store.hasProjects(for: scope))
     }
 
+    func testLoadProjectsReportMarksStaleIndexWithExtraProjectDirectoryUnsafe() throws {
+        let project = NovelProject(title: "过期项目索引", genre: "都市", summary: "摘要")
+        try store.saveProjects([project], for: scope)
+
+        let metadataURL = try XCTUnwrap(storedFiles(named: "project.json").first)
+        let extraDirectory = metadataURL.deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("interrupted-project", isDirectory: true)
+        try FileManager.default.createDirectory(at: extraDirectory, withIntermediateDirectories: true)
+
+        let report = store.loadProjectsReport(for: scope)
+
+        XCTAssertFalse(report.isComplete)
+    }
+
     func testLoadProjectsReportKeepsMetadataCatalogWhenChapterIndexIsCorrupt() throws {
         let project = NovelProject(title: "章节索引项目", genre: "都市", summary: "摘要")
         let chapter = ChapterDraft(
@@ -350,6 +365,21 @@ final class ProjectFileStoreTests: XCTestCase {
 
         XCTAssertFalse(report.isComplete)
         XCTAssertEqual(loadedProject.chapterCatalog.map(\.id), [chapter.id])
+    }
+
+    func testLoadProjectsReportMarksStaleChapterIndexWithExtraChapterFileUnsafe() throws {
+        let project = NovelProject(title: "过期章节索引", genre: "都市", summary: "摘要")
+        let chapter = ChapterDraft(chapterNumber: 1, chapterTitle: "第一章", content: "正文")
+        var projectWithChapter = project
+        projectWithChapter.chapterDrafts = [chapter]
+        try store.saveProjects([projectWithChapter], for: scope)
+
+        let chapterIndexURL = try XCTUnwrap(storedFiles(named: "index.json").first { $0.path.contains("/chapters/") })
+        try Data("{}".utf8).write(to: chapterIndexURL.deletingLastPathComponent().appendingPathComponent("interrupted-chapter.json"))
+
+        let report = store.loadProjectsReport(for: scope)
+
+        XCTAssertFalse(report.isComplete)
     }
 
     func testRebuildChapterCatalogPreservesOrphanChapterFile() async throws {
