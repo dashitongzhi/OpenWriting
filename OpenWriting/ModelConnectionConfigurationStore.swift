@@ -169,6 +169,21 @@ enum ModelConnectionConfigurationStore {
         return components.url?.absoluteString
     }
 
+    /// API keys must not leave the device over cleartext. Local loopback URLs
+    /// remain available for development proxies.
+    static func isPermittedAPIBaseURL(_ rawValue: String) -> Bool {
+        guard let normalized = normalizedBaseURLString(from: rawValue),
+              let components = URLComponents(string: normalized),
+              let scheme = components.scheme?.lowercased(),
+              let host = components.host?.lowercased(),
+              !host.isEmpty
+        else { return false }
+
+        if scheme == "https" { return true }
+        guard scheme == "http" else { return false }
+        return host == "localhost" || host == "127.0.0.1" || host == "::1"
+    }
+
     private nonisolated static func appVersionHeaderValue() -> String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
@@ -300,7 +315,8 @@ enum ModelConnectionConfigurationStore {
         guard !modelName.isEmpty else {
             throw ModelConnectionConfigurationError.missingModelName(provider: provider)
         }
-        guard let normalizedBaseURL = normalizedBaseURLString(from: rawBaseURL),
+        guard isPermittedAPIBaseURL(rawBaseURL),
+              let normalizedBaseURL = normalizedBaseURLString(from: rawBaseURL),
               let baseURL = URL(string: normalizedBaseURL)
         else {
             throw ModelConnectionConfigurationError.invalidBaseURL(provider: provider, value: rawBaseURL)
@@ -331,7 +347,7 @@ enum ModelConnectionConfigurationError: LocalizedError {
         case let .missingModelName(provider):
             return "\(provider.title) 模型 ID 为空，请先在 OpenWriting 设置里配置模型。"
         case let .invalidBaseURL(provider, value):
-            return "\(provider.title) Base URL 无效：\(value)"
+            return "\(provider.title) Base URL 无效或不安全：\(value)。请使用 HTTPS；仅 localhost 开发代理允许 HTTP。"
         case let .missingAPIKey(provider):
             return "\(provider.title) API Key 为空，请先在 OpenWriting 设置里保存密钥。"
         }

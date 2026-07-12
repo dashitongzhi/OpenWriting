@@ -273,6 +273,13 @@ Common scripts:
 | `./scripts/run-longform-evals.sh` | Long-form pipeline evaluations |
 | `./scripts/run-all-checks.sh` | Aggregated checks |
 
+### Backup and Sync Safety
+
+- Project backups are exported as a directory containing `manifest.json`, `project.json`, Markdown, DOCX, and EPUB. Import validates the manifest and rejects unsafe paths, duplicate identifiers, and malformed payloads before adding a project.
+- iCloud is an account-scoped CloudKit snapshot. A newer remote snapshot, including an empty snapshot after deletions, is authoritative for that account; switching or signing out cancels the previous account's pending sync work.
+- When local project indexes are incomplete or corrupted, automatic persistence and iCloud sync stop instead of treating missing records as user deletions. Use the in-app storage recovery/diagnostic export flow before continuing.
+- Custom model endpoints require HTTPS. `http://localhost` / `127.0.0.1` / `::1` is retained only for local development proxies, so API keys are not sent to remote cleartext endpoints.
+
 ---
 
 ## Repository Map

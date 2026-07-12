@@ -40,6 +40,7 @@ extension AppState {
                 projectStore: projectStore
             )
         }
+        migrateAnonymousWritingSkillsIfNeeded(to: targetScope)
 
         activeAccount = normalizedProfile
         currentProjectSnapshotTimestamp = Self.doubleValue(
@@ -109,6 +110,7 @@ extension AppState {
         )
         isCurrentStoragePersistenceSafe = loadReport.isComplete
         recentProjects = loadReport.projects ?? Self.defaultRecentProjects
+        writingSkills = Self.loadWritingSkills(for: currentStorageScope, from: userDefaults) ?? []
         activeProjectID = Self.stringValue(
             forKey: Self.activeProjectIDStorageKey(for: currentStorageScope),
             userDefaults: userDefaults
@@ -123,6 +125,17 @@ extension AppState {
                 message: "检测到本机项目文件不完整，已停止自动保存和同步；请先在项目空间导出诊断或执行恢复。"
             )
         }
+    }
+
+    private func migrateAnonymousWritingSkillsIfNeeded(to targetScope: String) {
+        guard currentStorageScope == nil,
+              userDefaults.data(forKey: Self.writingSkillsStorageKey(for: targetScope)) == nil,
+              let anonymousSkills = Self.loadWritingSkills(for: nil, from: userDefaults)
+        else { return }
+
+        guard let data = try? JSONEncoder().encode(anonymousSkills) else { return }
+        userDefaults.set(data, forKey: Self.writingSkillsStorageKey(for: targetScope))
+        userDefaults.removeObject(forKey: Self.writingSkillsStorageKey(for: nil))
     }
 
     static func loadRecentProjects(

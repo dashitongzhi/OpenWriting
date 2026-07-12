@@ -163,6 +163,7 @@ final class AppState {
 
     var writingSkills: [WritingSkill] {
         didSet {
+            guard !isHydratingAccountScopedData else { return }
             persistWritingSkills(writingSkills)
         }
     }
@@ -232,7 +233,7 @@ final class AppState {
         )
         self.isCurrentStoragePersistenceSafe = projectLoadReport.isComplete
         self.recentProjects = projectLoadReport.projects ?? Self.defaultRecentProjects
-        self.writingSkills = Self.loadWritingSkills(from: userDefaults) ?? []
+        self.writingSkills = Self.loadWritingSkills(for: resolvedStorageScope, from: userDefaults) ?? []
         self.connectionStatus = .idle
         self.validationMessage = Self.emptyConfigurationMessage
         self.commerceEntitlement = .localDefault()
@@ -2092,12 +2093,7 @@ final class AppState {
     }
 
     private var hasValidBaseURL: Bool {
-        guard let components = URLComponents(string: normalizedBaseURLString ?? baseURL.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-            return false
-        }
-
-        let scheme = components.scheme?.lowercased()
-        return (scheme == "http" || scheme == "https") && components.host != nil
+        Self.isPermittedAPIBaseURL(normalizedBaseURLString ?? baseURL)
     }
 
     private var hasEnteredConnectionInfo: Bool {
@@ -2166,7 +2162,7 @@ final class AppState {
 
         guard hasValidBaseURL else {
             connectionStatus = .needsAttention
-            validationMessage = "Base URL 需要是完整的 http 或 https 地址。"
+            validationMessage = "Base URL 需要使用 HTTPS；仅 localhost 开发代理允许 HTTP。"
             return nil
         }
 
@@ -2187,7 +2183,7 @@ final class AppState {
             let resolvedBaseURL = URL(string: normalizedBaseURLString)
         else {
             connectionStatus = .needsAttention
-            validationMessage = "Base URL 需要是完整的 http 或 https 地址。"
+            validationMessage = "Base URL 需要使用 HTTPS；仅 localhost 开发代理允许 HTTP。"
             return nil
         }
 

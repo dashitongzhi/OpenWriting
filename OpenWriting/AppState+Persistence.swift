@@ -131,6 +131,10 @@ extension AppState {
         ModelConnectionConfigurationStore.normalizedBaseURLString(from: rawValue)
     }
 
+    static func isPermittedAPIBaseURL(_ rawValue: String) -> Bool {
+        ModelConnectionConfigurationStore.isPermittedAPIBaseURL(rawValue)
+    }
+
     static func baseURLReplacingRetiredDefault(_ rawValue: String, for provider: ModelProvider) -> String {
         ModelConnectionConfigurationStore.baseURLReplacingRetiredDefault(rawValue, for: provider)
     }
@@ -319,6 +323,11 @@ extension AppState {
         } else {
             userDefaults.removeObject(forKey: key)
         }
+    }
+
+    static func writingSkillsStorageKey(for scope: String?) -> String {
+        guard let scope, !scope.isEmpty else { return StorageKey.writingSkills }
+        return "\(StorageKey.writingSkills).\(sanitizedStorageComponent(scope))"
     }
 }
 

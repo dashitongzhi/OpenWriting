@@ -1993,7 +1993,7 @@ struct WritingDeskView: View {
                     clearOutlineGenerationRequest(token: requestToken)
                     isGenerating = false
                     timingSnapshot = .idle
-                    AppLogger.ai.error("Outline generation failed: \(error.localizedDescription, privacy: .public)")
+                    AppLogger.ai.error("Outline generation failed: \(error.localizedDescription, privacy: .private(mask: .hash))")
                     presentAIError(error, title: "大纲生成失败", fallbackAction: "请检查模型配置后重试。")
                     revealWritingDeskWindow(for: project.id)
                 }
@@ -2129,7 +2129,7 @@ struct WritingDeskView: View {
                     isGenerating = false
                     writingRunState = .idle
                     stopWritingProgressMonitor(resetSnapshot: true)
-                    AppLogger.ai.error("Chapter generation failed: \(error.localizedDescription, privacy: .public)")
+                    AppLogger.ai.error("Chapter generation failed: \(error.localizedDescription, privacy: .private(mask: .hash))")
                     presentAIError(error, title: "候选稿生成失败", fallbackAction: "请检查模型配置后重试。")
                     revealWritingDeskWindow(for: project.id)
                 }
@@ -2401,6 +2401,7 @@ struct WritingDeskView: View {
 
         let instruction = draftPolishInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
         let promptProject = appState.projectWithActiveWritingSkills(latestProject)
+        let sourceDraft = latestProject.draftText
         isGenerating = true
         activeDraftPolishMode = .full
         pendingDraftPolishReview = nil
@@ -2417,6 +2418,12 @@ struct WritingDeskView: View {
                 )
 
                 await MainActor.run {
+                    guard appState.project(for: project.id)?.draftText == sourceDraft else {
+                        isGenerating = false
+                        activeDraftPolishMode = nil
+                        aiStatusMessage = "润色期间正文已被修改，旧结果已丢弃，当前内容保持不变。"
+                        return
+                    }
                     let normalizedDraft = polishedDraft.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !normalizedDraft.isEmpty else {
                         isGenerating = false
@@ -2460,7 +2467,7 @@ struct WritingDeskView: View {
                 await MainActor.run {
                     isGenerating = false
                     activeDraftPolishMode = nil
-                    AppLogger.ai.error("Full draft polish failed: \(error.localizedDescription, privacy: .public)")
+                    AppLogger.ai.error("Full draft polish failed: \(error.localizedDescription, privacy: .private(mask: .hash))")
                     presentAIError(error, title: "草稿润色失败", fallbackAction: "请检查模型配置后重试。")
                 }
             }
@@ -2484,6 +2491,7 @@ struct WritingDeskView: View {
         let instruction = selectionPolishInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
         let selectionContext = selectionPolishContext(in: latestProject.draftText, selection: currentSelection.range)
         let reviewAnchorPoint = selectionPolishAnchorPoint ?? draftSelectionActionPoint
+        let sourceDraft = latestProject.draftText
         isGenerating = true
         activeDraftPolishMode = .selection
         pendingDraftPolishReview = nil
@@ -2503,6 +2511,12 @@ struct WritingDeskView: View {
                 )
 
                 await MainActor.run {
+                    guard appState.project(for: project.id)?.draftText == sourceDraft else {
+                        isGenerating = false
+                        activeDraftPolishMode = nil
+                        aiStatusMessage = "润色期间正文已被修改，旧结果已丢弃，当前内容保持不变。"
+                        return
+                    }
                     let normalizedSelection = normalizedSelectionPolishResult(polishedSelection)
                     if let updatedDraft = draftReplacingSelection(
                         normalizedSelection,
@@ -2546,7 +2560,7 @@ struct WritingDeskView: View {
                 await MainActor.run {
                     isGenerating = false
                     activeDraftPolishMode = nil
-                    AppLogger.ai.error("Selection polish failed: \(error.localizedDescription, privacy: .public)")
+                    AppLogger.ai.error("Selection polish failed: \(error.localizedDescription, privacy: .private(mask: .hash))")
                     presentAIError(error, title: "选区润色失败", fallbackAction: "请检查模型配置后重试。")
                 }
             }

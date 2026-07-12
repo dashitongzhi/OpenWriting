@@ -637,6 +637,41 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(merged.first?.updatedAtDate, remoteChapter.savedAtDate)
     }
 
+    @MainActor
+    func testNewerCloudSnapshotRemovesProjectsDeletedOnAnotherDevice() {
+        let userDefaults = makeIsolatedUserDefaults()
+        let store = makeIsolatedProjectStore()
+        let account = AppleAccountProfile(userID: "cloud-scope", email: "", fullName: "")
+        let localOnly = makeProject(id: "deleted-remotely", title: "本机旧项目", updatedAt: .distantPast)
+        let remoteProject = makeProject(id: "remote-project", title: "远端项目", updatedAt: Date())
+        let appState = AppState(userDefaults: userDefaults, projectStore: store)
+        appState.activeAccount = account
+        appState.recentProjects = [localOnly]
+
+        appState.applyCloudSnapshot(
+            AccountProjectSnapshot(activeProjectID: remoteProject.id, recentProjects: [remoteProject], updatedAt: Date()),
+            expectedScope: account.userID,
+            epoch: appState.cloudSyncEpoch
+        )
+
+        XCTAssertEqual(appState.recentProjects.map(\.id), [remoteProject.id])
+        XCTAssertEqual(appState.activeProjectID, remoteProject.id)
+    }
+
+    func testWritingSkillStorageKeysAreAccountScoped() {
+        XCTAssertEqual(AppState.writingSkillsStorageKey(for: nil), AppState.StorageKey.writingSkills)
+        XCTAssertNotEqual(
+            AppState.writingSkillsStorageKey(for: "apple-user-a"),
+            AppState.writingSkillsStorageKey(for: "apple-user-b")
+        )
+    }
+
+    func testCustomModelBaseURLRequiresHTTPSExceptLoopback() {
+        XCTAssertTrue(ModelConnectionConfigurationStore.isPermittedAPIBaseURL("https://api.example.com/v1"))
+        XCTAssertTrue(ModelConnectionConfigurationStore.isPermittedAPIBaseURL("http://localhost:8080/v1"))
+        XCTAssertFalse(ModelConnectionConfigurationStore.isPermittedAPIBaseURL("http://api.example.com/v1"))
+    }
+
     private func makeIsolatedUserDefaults() -> UserDefaults {
         let suiteName = "OpenWritingTests.\(UUID().uuidString)"
         let userDefaults = UserDefaults(suiteName: suiteName)!

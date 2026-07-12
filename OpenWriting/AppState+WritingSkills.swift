@@ -9,8 +9,8 @@ extension AppState {
         Set(writingSkills.map(\.id))
     }
 
-    static func loadWritingSkills(from userDefaults: UserDefaults) -> [WritingSkill]? {
-        guard let data = userDefaults.data(forKey: StorageKey.writingSkills) else {
+    static func loadWritingSkills(for scope: String?, from userDefaults: UserDefaults) -> [WritingSkill]? {
+        guard let data = userDefaults.data(forKey: writingSkillsStorageKey(for: scope)) else {
             return nil
         }
 
@@ -19,7 +19,7 @@ extension AppState {
 
     func persistWritingSkills(_ skills: [WritingSkill]) {
         guard let data = try? JSONEncoder().encode(skills) else { return }
-        userDefaults.set(data, forKey: StorageKey.writingSkills)
+        userDefaults.set(data, forKey: Self.writingSkillsStorageKey(for: currentStorageScope))
     }
 
     func importWritingSkills(_ skills: [WritingSkill]) {

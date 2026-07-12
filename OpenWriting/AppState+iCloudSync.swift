@@ -241,17 +241,15 @@ extension AppState {
                 }
             }
 
-            if !recentProjects.isEmpty {
-                let snapshotProjects = hydratedProjectsForPersistenceSnapshot(recentProjects)
-                let snapshot = AccountProjectSnapshot(
-                    activeProjectID: activeProjectID,
-                    recentProjects: snapshotProjects,
-                    updatedAt: Date(timeIntervalSince1970: max(currentProjectSnapshotTimestamp, Date().timeIntervalSince1970))
-                )
-                try await cloudStore.saveSnapshot(snapshot, for: scope)
-                guard isCloudSynchronizationCurrent(scope: scope, epoch: synchronizationEpoch) else { return }
-                currentProjectSnapshotTimestamp = snapshot.updatedAt.timeIntervalSince1970
-            }
+            let snapshotProjects = hydratedProjectsForPersistenceSnapshot(recentProjects)
+            let snapshot = AccountProjectSnapshot(
+                activeProjectID: activeProjectID,
+                recentProjects: snapshotProjects,
+                updatedAt: Date(timeIntervalSince1970: max(currentProjectSnapshotTimestamp, Date().timeIntervalSince1970))
+            )
+            try await cloudStore.saveSnapshot(snapshot, for: scope)
+            guard isCloudSynchronizationCurrent(scope: scope, epoch: synchronizationEpoch) else { return }
+            currentProjectSnapshotTimestamp = snapshot.updatedAt.timeIntervalSince1970
 
             setCloudSyncStatus(
                 title: "iCloud 已连接",
@@ -283,7 +281,10 @@ extension AppState {
         guard isCloudSynchronizationCurrent(scope: expectedScope, epoch: epoch) else { return }
         let previousActiveProjectID = activeProjectID
         let previousSelectedProjectID = selectedProjectID
-        let mergedProjects = Self.mergeCloudProjects(local: recentProjects, remote: snapshot.recentProjects)
+        // A newer CloudKit snapshot is authoritative, including an empty list.
+        // Keeping local-only projects here would resurrect records deleted on
+        // another device during the next automatic save.
+        let mergedProjects = snapshot.recentProjects
         let mergedProjectIDs = Set(mergedProjects.map(\.id))
         let preservedSelection = Self.preservedCloudSelection(
             selectedProjectID: previousSelectedProjectID,
