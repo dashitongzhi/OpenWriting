@@ -77,6 +77,7 @@ extension AppState {
                 userDefaults.removeObject(forKey: Self.activeProjectIDStorageKey(for: account.userID))
                 userDefaults.removeObject(forKey: Self.recentProjectsStorageKey(for: account.userID))
                 userDefaults.removeObject(forKey: Self.projectSnapshotTimestampStorageKey(for: account.userID))
+                userDefaults.removeObject(forKey: Self.writingSkillsStorageKey(for: account.userID))
             } catch {
                 didRemoveLocalData = false
                 AppLogger.persistence.error("Account local data cleanup failed: \(error.localizedDescription, privacy: .private(mask: .hash))")

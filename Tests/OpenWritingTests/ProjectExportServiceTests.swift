@@ -102,6 +102,66 @@ final class ProjectExportServiceTests: XCTestCase {
         }
     }
 
+    func testValidateExportRejectsUnsafeProjectStorageID() throws {
+        let project = NovelProject(
+            id: "..",
+            title: "恶意项目 ID",
+            genre: "都市",
+            summary: "摘要",
+            updatedAt: "2026-07-12",
+            currentChapterTitle: "第一章",
+            currentChapterNumber: 1,
+            writtenChapters: 0,
+            chapterFocus: "开篇",
+            draftText: "",
+            outlineText: "",
+            referenceContextText: "",
+            specialRequirements: "",
+            wordTargetText: "",
+            continuityNotes: "",
+            referenceDocuments: []
+        )
+        _ = try ProjectExportService.exportProject(project, to: testDirectory)
+
+        XCTAssertThrowsError(try ProjectExportService.validateExport(at: testDirectory)) { error in
+            guard case ProjectExportError.invalidProjectData("项目 ID 不安全") = error else {
+                XCTFail("Expected unsafe project ID error, got \(error)")
+                return
+            }
+        }
+    }
+
+    func testValidateExportRejectsUnsafeChapterStorageID() throws {
+        let chapter = ChapterDraft(id: "..", chapterNumber: 1, chapterTitle: "第一章", content: "正文")
+        let project = NovelProject(
+            id: "safe-project",
+            title: "恶意章节 ID",
+            genre: "都市",
+            summary: "摘要",
+            updatedAt: "2026-07-12",
+            currentChapterTitle: "第一章",
+            currentChapterNumber: 1,
+            writtenChapters: 1,
+            chapterFocus: "开篇",
+            draftText: "",
+            outlineText: "",
+            referenceContextText: "",
+            specialRequirements: "",
+            wordTargetText: "",
+            continuityNotes: "",
+            referenceDocuments: [],
+            chapterDrafts: [chapter]
+        )
+        _ = try ProjectExportService.exportProject(project, to: testDirectory)
+
+        XCTAssertThrowsError(try ProjectExportService.validateExport(at: testDirectory)) { error in
+            guard case ProjectExportError.invalidProjectData("章节 ID 不安全") = error else {
+                XCTFail("Expected unsafe chapter ID error, got \(error)")
+                return
+            }
+        }
+    }
+
     func testEPUBMimetypeIsFirstStoredEntry() throws {
         let chapter = ChapterDraft(
             volumeNumber: 1,

@@ -445,6 +445,7 @@ final class DomainModelsTests: XCTestCase {
         userDefaults.set(project.id, forKey: AppState.activeProjectIDStorageKey(for: account.userID))
         userDefaults.set(encodedProjects, forKey: AppState.recentProjectsStorageKey(for: account.userID))
         userDefaults.set(1_772_000_000.0, forKey: AppState.projectSnapshotTimestampStorageKey(for: account.userID))
+        userDefaults.set(Data("[]".utf8), forKey: AppState.writingSkillsStorageKey(for: account.userID))
 
         let appState = AppState(userDefaults: userDefaults, projectStore: store)
         appState.activeAccount = account
@@ -457,6 +458,7 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertNil(userDefaults.object(forKey: AppState.activeProjectIDStorageKey(for: account.userID)))
         XCTAssertNil(userDefaults.object(forKey: AppState.recentProjectsStorageKey(for: account.userID)))
         XCTAssertNil(userDefaults.object(forKey: AppState.projectSnapshotTimestampStorageKey(for: account.userID)))
+        XCTAssertNil(userDefaults.object(forKey: AppState.writingSkillsStorageKey(for: account.userID)))
         XCTAssertNil(appState.activeAccount)
     }
 

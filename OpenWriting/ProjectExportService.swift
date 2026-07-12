@@ -284,8 +284,11 @@ enum ProjectExportService {
     }
 
     private static func validateProjectData(_ project: NovelProject) throws {
-        guard !project.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw ProjectExportError.invalidProjectData("项目 ID 为空")
+        guard isSafeStorageIdentifier(project.id) else {
+            throw ProjectExportError.invalidProjectData("项目 ID 不安全")
+        }
+        guard project.chapterDrafts.allSatisfy({ isSafeStorageIdentifier($0.id) }) else {
+            throw ProjectExportError.invalidProjectData("章节 ID 不安全")
         }
         guard Set(project.chapterDrafts.map(\.id)).count == project.chapterDrafts.count else {
             throw ProjectExportError.invalidProjectData("章节 ID 重复")
@@ -293,6 +296,20 @@ enum ProjectExportService {
         guard Set(project.referenceDocuments.map(\.id)).count == project.referenceDocuments.count else {
             throw ProjectExportError.invalidProjectData("素材 ID 重复")
         }
+    }
+
+    private static func isSafeStorageIdentifier(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed != ".",
+              trimmed != "..",
+              !value.contains("/"),
+              !value.contains("\\\\"),
+              !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+        else {
+            return false
+        }
+        return true
     }
 
     private static func hasZipHeader(_ url: URL) -> Bool {
