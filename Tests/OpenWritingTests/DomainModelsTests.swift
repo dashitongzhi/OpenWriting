@@ -939,6 +939,124 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(items.first?.subject, "北境来信")
     }
 
+    func testMemoryBucketsWorkingContextCanRecallArchivedState() {
+        var buckets = MemoryBuckets.empty
+        buckets.upsert(MemoryItem(
+            category: .characterState,
+            subject: "林照",
+            field: "身份",
+            value: "外门弟子",
+            sourceChapter: 10
+        ))
+        buckets.upsert(MemoryItem(
+            category: .characterState,
+            subject: "林照",
+            field: "身份",
+            value: "巡夜使",
+            sourceChapter: 20
+        ))
+
+        let context = buckets.formattedForWorkingContext(
+            buckets.workingContextItems(for: "林照为何不再是外门弟子")
+        )
+
+        XCTAssertTrue(context.contains("外门弟子"))
+        XCTAssertTrue(context.contains("已过期"))
+        XCTAssertTrue(context.contains("巡夜使"))
+    }
+
+    func testMemoryBucketsMarksLaterWorldRuleChangeAsContradicted() {
+        var buckets = MemoryBuckets.empty
+        buckets.upsert(MemoryItem(
+            category: .worldRule,
+            subject: "月潮法则",
+            field: "显现条件",
+            value: "只能在满月显现",
+            sourceChapter: 5
+        ))
+        buckets.upsert(MemoryItem(
+            category: .worldRule,
+            subject: "月潮法则",
+            field: "显现条件",
+            value: "任何夜晚都能显现",
+            sourceChapter: 30
+        ))
+
+        XCTAssertEqual(buckets.worldRules.filter { $0.status == .active }.count, 1)
+        XCTAssertEqual(buckets.worldRules.filter { $0.status == .contradicted }.count, 1)
+        XCTAssertEqual(buckets.conflicts.count, 1)
+    }
+
+    func testMemoryBucketsMarksBackfilledWorldRuleChangeAsContradicted() {
+        var buckets = MemoryBuckets.empty
+        buckets.upsert(MemoryItem(
+            category: .worldRule,
+            subject: "月潮法则",
+            field: "显现条件",
+            value: "任何夜晚都能显现",
+            sourceChapter: 30
+        ))
+        buckets.upsert(MemoryItem(
+            category: .worldRule,
+            subject: "月潮法则",
+            field: "显现条件",
+            value: "只能在满月显现",
+            sourceChapter: 5
+        ))
+
+        XCTAssertEqual(buckets.worldRules.first(where: { $0.status == .active })?.value, "任何夜晚都能显现")
+        XCTAssertEqual(buckets.worldRules.first(where: { $0.status == .contradicted })?.value, "只能在满月显现")
+        XCTAssertEqual(buckets.conflicts.count, 1)
+    }
+
+    func testMemoryBucketsWorkingContextReservesAlwaysOnCoreUnderRelevantPressure() {
+        var buckets = MemoryBuckets.empty
+        for index in 1...16 {
+            buckets.upsert(MemoryItem(
+                category: .storyFact,
+                subject: "共同线索\(index)",
+                field: "调查记录",
+                value: "共同线索已进入第\(index)轮核验",
+                sourceChapter: index
+            ))
+        }
+        for index in 1...4 {
+            buckets.upsert(MemoryItem(
+                category: .characterState,
+                subject: "共同线索旧档\(index)",
+                field: "状态",
+                value: "共同线索历史状态\(index)",
+                status: .outdated,
+                sourceChapter: index
+            ))
+        }
+        let coreCategories: [MemoryCategory] = [
+            .worldRule,
+            .characterState,
+            .relationship,
+            .openLoop,
+            .readerPromise
+        ]
+        for (categoryIndex, category) in coreCategories.enumerated() {
+            for itemIndex in 1...2 {
+                buckets.upsert(MemoryItem(
+                    category: category,
+                    subject: "核心\(categoryIndex)-\(itemIndex)",
+                    field: "必须保留",
+                    value: "长期核心记忆",
+                    sourceChapter: 100 + categoryIndex * 2 + itemIndex
+                ))
+            }
+        }
+
+        let items = buckets.workingContextItems(for: "共同线索", relevantLimit: 16, totalLimit: 26)
+
+        XCTAssertTrue(items.contains { $0.category == .openLoop })
+        XCTAssertTrue(items.contains { $0.category == .readerPromise })
+        XCTAssertTrue(items.contains { $0.status == .outdated })
+        XCTAssertLessThanOrEqual(items.count, 26)
+    }
+
     func testMemoryExtractionSamplesChapterBeginningMiddleAndEndWithinLimit() {
         let chapter = "章首身份变化"
             + String(repeating: "甲", count: 11_980)

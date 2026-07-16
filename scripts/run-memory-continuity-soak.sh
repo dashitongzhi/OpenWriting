@@ -42,6 +42,7 @@ source_files=(
     "$REPO_ROOT/OpenWriting/GenreTemplateEngine.swift"
     "$REPO_ROOT/OpenWriting/GenreTemplates.swift"
     "$REPO_ROOT/OpenWriting/LongformStorySystem.swift"
+    "$REPO_ROOT/OpenWriting/MemoryExtractionService.swift"
     "$REPO_ROOT/OpenWriting/ModelConnectionConfigurationStore.swift"
     "$REPO_ROOT/OpenWriting/NovelProject+WebnovelIntegration.swift"
     "$REPO_ROOT/OpenWriting/PrewriteValidator.swift"

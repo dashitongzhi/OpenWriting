@@ -356,9 +356,16 @@ require_text "$MEMORY_SOAK_RUNNER" "retrievalMisses == 0" \
     "memory soak must reject lost long-term context"
 require_text "$MEMORY_SOAK_RUNNER" "chapter.isMultiple(of: 100)" \
     "memory soak must verify periodic persistence roundtrips"
+require_text "$MEMORY_SOAK_RUNNER" "MemoryExtractionService.sampledChapterText" \
+    "memory soak must process generated chapter text through production extraction sampling"
+require_text "$MEMORY_SOAK_RUNNER" "MemoryExtractionService.ExtractionResult" \
+    "memory soak must convert extraction results through the production memory schema"
 require_text "$RUN_MEMORY_SOAK" "RunMemoryContinuitySoak.swift" \
     "memory soak script must compile the deterministic Swift runner"
 require_text "$EVAL_SEEDS" "long_foreshadowing" \
     "longform eval fixtures must include long foreshadowing seeds"
+
+echo "Running two-million-character memory continuity soak"
+zsh -f "$RUN_MEMORY_SOAK"
 
 echo "Longform quality gates passed"

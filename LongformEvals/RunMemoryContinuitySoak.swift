@@ -42,8 +42,8 @@ private struct SoakOptions {
                 chapters = value
                 index += 2
             case "--characters-per-chapter":
-                guard index + 1 < arguments.count, let value = Int(arguments[index + 1]), value > 0 else {
-                    throw SoakError.message("--characters-per-chapter requires a positive integer")
+                guard index + 1 < arguments.count, let value = Int(arguments[index + 1]), value >= 200 else {
+                    throw SoakError.message("--characters-per-chapter requires an integer of at least 200")
                 }
                 charactersPerChapter = value
                 index += 2
@@ -64,62 +64,78 @@ private enum MemoryContinuitySoak {
     static func run(options: SoakOptions) throws -> SoakScorecard {
         var buckets = MemoryBuckets.empty
         var totalDraftCharacters = 0
+        var chapterSamplingFailures = 0
         var retrievalChecks = 0
         var retrievalMisses = 0
         var serializationFailures = 0
         var backfillFailures = 0
+        var archiveRetrievalFailures = 0
 
         for chapter in 1...options.chapters {
             let volume = max(1, (chapter - 1) / 100 + 1)
-            totalDraftCharacters += options.charactersPerChapter
+            let chapterText = SyntheticChapter.text(
+                chapter: chapter,
+                characterCount: options.charactersPerChapter
+            )
+            totalDraftCharacters += chapterText.count
+            let sampledText = MemoryExtractionService.sampledChapterText(
+                chapterText,
+                limit: min(800, options.charactersPerChapter)
+            )
+            if !sampledText.contains("章首状态")
+                || !sampledText.contains("章中规则")
+                || !sampledText.contains("章末伏笔") {
+                chapterSamplingFailures += 1
+            }
 
-            buckets.upsert(MemoryItem(
-                id: "character-\(chapter)",
-                category: .characterState,
-                subject: "林照",
-                field: "调查阶段",
-                value: "第\(chapter)章已取得新证据并承担代价",
+            let extraction = MemoryExtractionService.ExtractionResult(
+                characterStates: [
+                    .init(
+                        subject: "林照",
+                        field: "调查阶段",
+                        value: "第\(chapter)章已取得新证据并承担代价",
+                        evidence: "章首状态"
+                    )
+                ],
+                worldRules: chapter == 1 ? [
+                    .init(
+                        subject: "月潮法则",
+                        field: "限制",
+                        value: "银色纹路只能在月潮下显现",
+                        evidence: "章中规则"
+                    )
+                ] : [],
+                storyFacts: [
+                    .init(
+                        subject: "第\(chapter)章证据",
+                        field: "调查记录",
+                        value: "本章新增可复查证据编号 \(chapter)",
+                        evidence: "章中规则"
+                    )
+                ],
+                timeline: [
+                    .init(
+                        subject: "第\(chapter)日",
+                        field: "时间推进",
+                        value: "调查进入第\(chapter)个连续节点",
+                        evidence: "章中规则"
+                    )
+                ],
+                openLoops: [
+                    .init(
+                        subject: "银色纹路",
+                        field: "血脉真相",
+                        value: "银色纹路推进至第\(chapter)章，真正来源仍待回收",
+                        evidence: "章末伏笔"
+                    )
+                ],
+                chapterNumber: chapter
+            )
+            for item in extraction.allItems(
                 sourceVolumeNumber: volume,
-                sourceChapter: chapter
-            ))
-            buckets.upsert(MemoryItem(
-                id: "foreshadow-\(chapter)",
-                category: .openLoop,
-                subject: "银色纹路",
-                field: "血脉真相",
-                value: "银色纹路推进至第\(chapter)章，真正来源仍待回收",
-                sourceVolumeNumber: volume,
-                sourceChapter: chapter
-            ))
-            buckets.upsert(MemoryItem(
-                id: "fact-\(chapter)",
-                category: .storyFact,
-                subject: "第\(chapter)章证据",
-                field: "调查记录",
-                value: "本章新增可复查证据编号 \(chapter)",
-                sourceVolumeNumber: volume,
-                sourceChapter: chapter
-            ))
-            buckets.upsert(MemoryItem(
-                id: "timeline-\(chapter)",
-                category: .timeline,
-                subject: "第\(chapter)日",
-                field: "时间推进",
-                value: "调查进入第\(chapter)个连续节点",
-                sourceVolumeNumber: volume,
-                sourceChapter: chapter
-            ))
-
-            if chapter == 1 {
-                buckets.upsert(MemoryItem(
-                    id: "world-rule",
-                    category: .worldRule,
-                    subject: "月潮法则",
-                    field: "限制",
-                    value: "银色纹路只能在月潮下显现",
-                    sourceVolumeNumber: volume,
-                    sourceChapter: chapter
-                ))
+                sourceChapterNumber: chapter
+            ) {
+                buckets.upsert(item)
             }
 
             if chapter > 250, chapter.isMultiple(of: 250) {
@@ -135,6 +151,12 @@ private enum MemoryContinuitySoak {
                 ))
                 if buckets.characterState.first(where: { $0.status == .active })?.id != activeBeforeBackfill?.id {
                     backfillFailures += 1
+                }
+                let archiveContext = buckets.formattedForWorkingContext(
+                    buckets.workingContextItems(for: "林照旧章回填最初线索")
+                )
+                if !archiveContext.contains("旧章回填") || !archiveContext.contains("已过期") {
+                    archiveRetrievalFailures += 1
                 }
             }
 
@@ -171,9 +193,11 @@ private enum MemoryContinuitySoak {
         let finalForeshadowingStateIsCurrent = activeForeshadow?.sourceChapter == options.chapters
         let passed = totalDraftCharacters >= 2_000_000
             && memoryContradictions == 0
+            && chapterSamplingFailures == 0
             && retrievalMisses == 0
             && serializationFailures == 0
             && backfillFailures == 0
+            && archiveRetrievalFailures == 0
             && finalCharacterStateIsCurrent
             && finalForeshadowingStateIsCurrent
         return SoakScorecard(
@@ -183,14 +207,33 @@ private enum MemoryContinuitySoak {
             finalVolumeNumber: max(1, (options.chapters - 1) / 100 + 1),
             activeMemoryCount: buckets.totalActiveCount,
             memoryContradictions: memoryContradictions,
+            chapterSamplingFailures: chapterSamplingFailures,
             workingMemoryRetrievalChecks: retrievalChecks,
             workingMemoryRetrievalMisses: retrievalMisses,
             serializationFailures: serializationFailures,
             backfillFailures: backfillFailures,
+            archiveRetrievalFailures: archiveRetrievalFailures,
             finalCharacterStateIsCurrent: finalCharacterStateIsCurrent,
             finalForeshadowingStateIsCurrent: finalForeshadowingStateIsCurrent,
             passed: passed
         )
+    }
+}
+
+private enum SyntheticChapter {
+    static func text(chapter: Int, characterCount: Int) -> String {
+        let opening = "章首状态：林照承接第\(chapter)章调查压力。"
+        let middle = "章中规则：月潮法则继续限制银色纹路。"
+        let ending = "章末伏笔：血脉真正来源仍待回收。"
+        let fixedCount = opening.count + middle.count + ending.count
+        let padding = max(characterCount - fixedCount, 0)
+        let openingPadding = padding / 2
+        let endingPadding = padding - openingPadding
+        return opening
+            + String(repeating: "甲", count: openingPadding)
+            + middle
+            + String(repeating: "乙", count: endingPadding)
+            + ending
     }
 }
 
@@ -201,10 +244,12 @@ private struct SoakScorecard: Encodable {
     let finalVolumeNumber: Int
     let activeMemoryCount: Int
     let memoryContradictions: Int
+    let chapterSamplingFailures: Int
     let workingMemoryRetrievalChecks: Int
     let workingMemoryRetrievalMisses: Int
     let serializationFailures: Int
     let backfillFailures: Int
+    let archiveRetrievalFailures: Int
     let finalCharacterStateIsCurrent: Bool
     let finalForeshadowingStateIsCurrent: Bool
     let passed: Bool

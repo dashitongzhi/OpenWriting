@@ -473,7 +473,7 @@ private enum LocalModel {
             MemoryItem(
                 id: "\(seed.id)-story-\(chapter)",
                 category: .storyFact,
-                subject: seed.id,
+                subject: "\(seed.id)-chapter-\(chapter)",
                 field: "chapter_progress",
                 value: "第 \(chapter) 章完成：\(seed.chapterGoal)",
                 sourceChapter: chapter

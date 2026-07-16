@@ -134,6 +134,15 @@ enum MemoryCategory: String, CaseIterable, Codable, Identifiable {
         case .timeline: return 6
         }
     }
+
+    var supportsTemporalSupersession: Bool {
+        switch self {
+        case .characterState, .relationship, .openLoop, .readerPromise:
+            return true
+        case .worldRule, .storyFact, .timeline:
+            return false
+        }
+    }
 }
 
 // MARK: - Memory Item Status (4-state lifecycle)
@@ -286,11 +295,17 @@ struct MemoryBuckets: Codable, Hashable {
                 && items[$0].value.trimmingCharacters(in: .whitespacesAndNewlines)
                     != item.value.trimmingCharacters(in: .whitespacesAndNewlines)
         }
+        let hasDifferentActiveValue = activeMatchIndices.contains {
+            items[$0].value.trimmingCharacters(in: .whitespacesAndNewlines)
+                != item.value.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
 
-        if item.status == .active && hasLaterActiveValue {
-            itemToInsert.status = .outdated
-        } else if item.status == .active && hasSamePositionConflict {
+        if item.status == .active
+            && (hasSamePositionConflict
+                || (!item.category.supportsTemporalSupersession && hasDifferentActiveValue)) {
             itemToInsert.status = .contradicted
+        } else if item.status == .active && hasLaterActiveValue {
+            itemToInsert.status = .outdated
         } else {
             for i in activeMatchIndices {
                 items[i].status = .outdated
@@ -357,10 +372,42 @@ struct MemoryBuckets: Codable, Hashable {
             .map { $0.0 }
     }
 
-    /// Builds a bounded working-memory set: query-relevant archival facts first,
-    /// followed by a small always-on core of the latest durable state per category.
+    /// Returns query-relevant historical states without treating them as current facts.
+    func relevantArchivedItems(for query: String, limit: Int = 4) -> [MemoryItem] {
+        let archivedItems = MemoryCategory.allCases
+            .flatMap { bucket(for: $0) }
+            .filter { $0.status == .outdated }
+            .sorted {
+                if $0.sourceVolumeNumber != $1.sourceVolumeNumber {
+                    return $0.sourceVolumeNumber > $1.sourceVolumeNumber
+                }
+                return $0.sourceChapter > $1.sourceChapter
+            }
+        let queryTokens = Self.relevanceTokens(from: query)
+
+        guard !queryTokens.isEmpty else {
+            return Array(archivedItems.prefix(limit))
+        }
+
+        return archivedItems
+            .map { item -> (MemoryItem, Int) in
+                let haystack = "\(item.subject) \(item.field) \(item.value)".lowercased()
+                let score = queryTokens.reduce(0) { sum, token in
+                    haystack.contains(token) ? sum + token.count : sum
+                }
+                return (item, score)
+            }
+            .filter { $0.1 > 0 }
+            .sorted { $0.1 > $1.1 }
+            .prefix(limit)
+            .map { $0.0 }
+    }
+
+    /// Builds a bounded working-memory set with reserved room for a small always-on
+    /// core, while spending the remaining budget on query-relevant active/history facts.
     func workingContextItems(for query: String, relevantLimit: Int = 16, totalLimit: Int = 26) -> [MemoryItem] {
         let relevant = relevantActiveItems(for: query, limit: relevantLimit)
+        let archived = relevantArchivedItems(for: query, limit: max(2, relevantLimit / 4))
         let coreCategories: [MemoryCategory] = [
             .worldRule,
             .characterState,
@@ -389,8 +436,18 @@ struct MemoryBuckets: Codable, Hashable {
             return $0.category.priority < $1.category.priority
         }
 
+        var coreSeen = Set<String>()
+        let uniqueCore = core.filter { coreSeen.insert($0.id).inserted }
+        let reservedCoreCount = min(uniqueCore.count, totalLimit)
+        let queryBudget = max(0, totalLimit - reservedCoreCount)
+        let archivedBudget = min(archived.count, queryBudget)
+        let relevantBudget = max(0, queryBudget - archivedBudget)
+
         var seen = Set<String>()
-        return (relevant + core + recentFallback)
+        return (Array(relevant.prefix(relevantBudget))
+            + Array(archived.prefix(archivedBudget))
+            + uniqueCore
+            + recentFallback)
             .filter { seen.insert($0.id).inserted }
             .prefix(totalLimit)
             .map { $0 }
@@ -609,7 +666,8 @@ struct MemoryBuckets: Codable, Hashable {
         guard !items.isEmpty else { return "暂无结构化记忆。" }
         return items.map { item in
             let value = item.value.count > 280 ? String(item.value.prefix(280)) + "…" : item.value
-            return "- [\(item.category.displayName) · \(item.sourceLabel) · \(item.subject)] \(item.field): \(value)"
+            let lifecycle = item.status == .active ? "" : " · \(item.status.displayName)"
+            return "- [\(item.category.displayName)\(lifecycle) · \(item.sourceLabel) · \(item.subject)] \(item.field): \(value)"
         }.joined(separator: "\n")
     }
 
