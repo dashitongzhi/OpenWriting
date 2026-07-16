@@ -253,8 +253,9 @@ struct MemoryBuckets: Codable, Hashable {
 
     // MARK: - Upsert (Dedup + Status Transition)
 
-    /// Insert or update a memory item. Matching active values are superseded;
-    /// conflicting active values are kept and the new item is marked contradicted.
+    /// Insert or update a memory item using the source chapter as its validity order.
+    /// Later chapters supersede earlier facts, earlier backfills stay historical, and
+    /// only incompatible facts from the same narrative position are contradictions.
     @discardableResult
     mutating func upsert(_ item: MemoryItem) -> Bool {
         var items = bucket(for: item.category)
@@ -267,16 +268,28 @@ struct MemoryBuckets: Codable, Hashable {
             return false
         }
 
+        guard item.status == .active else {
+            items.append(item)
+            setBucket(items, for: item.category)
+            return false
+        }
+
         let activeMatchIndices = items.indices.filter {
             items[$0].dedupKey == targetKey && items[$0].status == .active
         }
-        let hasConflictingActiveValue = activeMatchIndices.contains {
-            items[$0].value.trimmingCharacters(in: .whitespacesAndNewlines)
-                != item.value.trimmingCharacters(in: .whitespacesAndNewlines)
+        var itemToInsert = item
+        let hasLaterActiveValue = activeMatchIndices.contains {
+            Self.isLaterPosition(items[$0], than: item)
+        }
+        let hasSamePositionConflict = activeMatchIndices.contains {
+            Self.isSamePosition(items[$0], as: item)
+                && items[$0].value.trimmingCharacters(in: .whitespacesAndNewlines)
+                    != item.value.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
-        var itemToInsert = item
-        if hasConflictingActiveValue && item.status == .active {
+        if item.status == .active && hasLaterActiveValue {
+            itemToInsert.status = .outdated
+        } else if item.status == .active && hasSamePositionConflict {
             itemToInsert.status = .contradicted
         } else {
             for i in activeMatchIndices {
@@ -289,6 +302,18 @@ struct MemoryBuckets: Codable, Hashable {
         items.append(itemToInsert)
         setBucket(items, for: item.category)
         return replaced
+    }
+
+    private static func isLaterPosition(_ lhs: MemoryItem, than rhs: MemoryItem) -> Bool {
+        if lhs.sourceVolumeNumber != rhs.sourceVolumeNumber {
+            return lhs.sourceVolumeNumber > rhs.sourceVolumeNumber
+        }
+        return lhs.sourceChapter > rhs.sourceChapter
+    }
+
+    private static func isSamePosition(_ lhs: MemoryItem, as rhs: MemoryItem) -> Bool {
+        lhs.sourceVolumeNumber == rhs.sourceVolumeNumber
+            && lhs.sourceChapter == rhs.sourceChapter
     }
 
     // MARK: - Query Active Items
@@ -330,6 +355,45 @@ struct MemoryBuckets: Codable, Hashable {
             .sorted { $0.1 > $1.1 }
             .prefix(limit)
             .map { $0.0 }
+    }
+
+    /// Builds a bounded working-memory set: query-relevant archival facts first,
+    /// followed by a small always-on core of the latest durable state per category.
+    func workingContextItems(for query: String, relevantLimit: Int = 16, totalLimit: Int = 26) -> [MemoryItem] {
+        let relevant = relevantActiveItems(for: query, limit: relevantLimit)
+        let coreCategories: [MemoryCategory] = [
+            .worldRule,
+            .characterState,
+            .relationship,
+            .openLoop,
+            .readerPromise
+        ]
+        let core = coreCategories.flatMap { category in
+            bucket(for: category)
+                .filter { $0.status == .active }
+                .sorted {
+                    if $0.sourceVolumeNumber != $1.sourceVolumeNumber {
+                        return $0.sourceVolumeNumber > $1.sourceVolumeNumber
+                    }
+                    return $0.sourceChapter > $1.sourceChapter
+                }
+                .prefix(2)
+        }
+        let recentFallback = allActiveItems.sorted {
+            if $0.sourceVolumeNumber != $1.sourceVolumeNumber {
+                return $0.sourceVolumeNumber > $1.sourceVolumeNumber
+            }
+            if $0.sourceChapter != $1.sourceChapter {
+                return $0.sourceChapter > $1.sourceChapter
+            }
+            return $0.category.priority < $1.category.priority
+        }
+
+        var seen = Set<String>()
+        return (relevant + core + recentFallback)
+            .filter { seen.insert($0.id).inserted }
+            .prefix(totalLimit)
+            .map { $0 }
     }
 
     private static func relevanceTokens(from text: String) -> [String] {
@@ -539,6 +603,14 @@ struct MemoryBuckets: Codable, Hashable {
         }
 
         return sections.isEmpty ? "暂无结构化记忆。" : sections.joined(separator: "\n\n")
+    }
+
+    func formattedForWorkingContext(_ items: [MemoryItem]) -> String {
+        guard !items.isEmpty else { return "暂无结构化记忆。" }
+        return items.map { item in
+            let value = item.value.count > 280 ? String(item.value.prefix(280)) + "…" : item.value
+            return "- [\(item.category.displayName) · \(item.sourceLabel) · \(item.subject)] \(item.field): \(value)"
+        }.joined(separator: "\n")
     }
 
     var totalActiveCount: Int {

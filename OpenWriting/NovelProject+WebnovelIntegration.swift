@@ -160,11 +160,20 @@ extension NovelProject {
         // Structured memory (high priority)
         let buckets = memoryBuckets
         if buckets.totalActiveCount > 0 {
-            sections.append("【结构化记忆】\n\(buckets.formattedForContext)")
-        }
-
-        // Global memory snapshot (parsed from continuityNotes) — preferred over raw notes
-        if globalMemorySnapshot.hasStructuredContent {
+            let query = [
+                currentChapterSummary,
+                chapterFocus,
+                draftText,
+                outlineSummary,
+                sceneProgressNotes,
+                characterArcNotes,
+                foreshadowNotes,
+                activeThreadsNotes
+            ].joined(separator: "\n")
+            let workingItems = buckets.workingContextItems(for: query)
+            sections.append("【结构化记忆】\n\(buckets.formattedForWorkingContext(workingItems))")
+        } else if globalMemorySnapshot.hasStructuredContent {
+            // Legacy fallback when the project has not migrated into structured buckets.
             sections.append("【记忆快照】\n\(globalMemorySnapshot.formattedText)")
         } else if hasContinuityNotes {
             // Fallback to raw continuity notes only when snapshot lacks structured content

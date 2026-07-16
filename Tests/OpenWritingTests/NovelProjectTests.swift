@@ -316,4 +316,38 @@ final class NovelProjectTests: XCTestCase {
         XCTAssertTrue(planPrompt.contains("结构化长期记忆"))
         XCTAssertTrue(planPrompt.contains("仍在沈青袖手中"))
     }
+
+    func testEnhancedMemoryContextKeepsRelevantOpenLoopBeyondCoreBudget() {
+        var buckets = MemoryBuckets.empty
+        for index in 1...120 {
+            buckets.upsert(MemoryItem(
+                category: .worldRule,
+                subject: "世界规则\(index)",
+                field: "限制",
+                value: String(repeating: "该规则必须持续生效", count: 6),
+                sourceChapter: index
+            ))
+        }
+        buckets.upsert(MemoryItem(
+            category: .openLoop,
+            subject: "银色纹路",
+            field: "血脉真相",
+            value: "月下伤口浮现银色纹路，仍需追查其真正来源",
+            sourceChapter: 121
+        ))
+
+        var project = NovelProject(
+            title: "超长篇记忆测试",
+            genre: "玄幻",
+            summary: "主角追查血脉真相",
+            storyLength: .long
+        )
+        project.currentChapterNumber = 122
+        project.chapterFocus = "调查银色纹路与血脉真相"
+        project.draftText = "他再次看见伤口上的银色纹路。"
+        project.persistedMemoryBuckets = buckets
+
+        XCTAssertTrue(project.enhancedMemoryContext.contains("仍需追查其真正来源"))
+        XCTAssertLessThanOrEqual(project.enhancedMemoryContext.count, NovelProject.enhancedMemoryContextCharacterLimit + 40)
+    }
 }

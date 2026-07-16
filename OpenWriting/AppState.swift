@@ -1537,7 +1537,7 @@ final class AppState {
 
             let systemPrompt = MemoryExtractionService.extractionSystemPrompt
             let userPrompt = MemoryExtractionService.extractionUserPrompt(
-                chapterText: String(chapterContent.prefix(8000)),
+                chapterText: MemoryExtractionService.sampledChapterText(chapterContent),
                 chapterNumber: chapterNumber,
                 volumeNumber: sourceVolumeNumber,
                 projectContext: """

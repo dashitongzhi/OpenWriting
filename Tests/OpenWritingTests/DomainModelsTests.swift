@@ -821,7 +821,7 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertTrue(issues.contains { $0.dimension == .readerPull })
     }
 
-    func testMemoryBucketsMarksConflictingCharacterStateAsContradicted() {
+    func testMemoryBucketsSupersedesCharacterStateFromLaterChapter() {
         var buckets = MemoryBuckets.empty
         let first = MemoryItem(
             category: .characterState,
@@ -839,11 +839,121 @@ final class DomainModelsTests: XCTestCase {
         )
 
         XCTAssertFalse(buckets.upsert(first))
-        XCTAssertFalse(buckets.upsert(second))
+        XCTAssertTrue(buckets.upsert(second))
 
-        XCTAssertEqual(buckets.characterState.filter { $0.status == .active }.count, 1)
-        XCTAssertEqual(buckets.characterState.filter { $0.status == .contradicted }.count, 1)
-        XCTAssertEqual(buckets.conflicts.count, 1)
+        XCTAssertEqual(buckets.characterState.filter { $0.status == .active }.map(\.value), ["金丹后期"])
+        XCTAssertEqual(buckets.characterState.filter { $0.status == .outdated }.map(\.value), ["筑基初期"])
+        XCTAssertTrue(buckets.characterState.filter { $0.status == .contradicted }.isEmpty)
+        XCTAssertTrue(buckets.conflicts.isEmpty)
+    }
+
+    func testMemoryBucketsSupersedesCharacterStateAcrossVolumes() {
+        var buckets = MemoryBuckets.empty
+        buckets.upsert(MemoryItem(
+            category: .characterState,
+            subject: "林照",
+            field: "身份",
+            value: "外门弟子",
+            sourceVolumeNumber: 1,
+            sourceChapter: 120
+        ))
+
+        XCTAssertTrue(buckets.upsert(MemoryItem(
+            category: .characterState,
+            subject: "林照",
+            field: "身份",
+            value: "巡夜使",
+            sourceVolumeNumber: 2,
+            sourceChapter: 3
+        )))
+
+        XCTAssertEqual(buckets.characterState.first(where: { $0.status == .active })?.value, "巡夜使")
+        XCTAssertEqual(buckets.characterState.first(where: { $0.status == .outdated })?.value, "外门弟子")
+        XCTAssertTrue(buckets.conflicts.isEmpty)
+    }
+
+    func testMemoryBucketsBackfillDoesNotReplaceLaterActiveState() {
+        var buckets = MemoryBuckets.empty
+        buckets.upsert(MemoryItem(
+            category: .relationship,
+            subject: "林照-沈青袖",
+            field: "立场",
+            value: "正式结盟",
+            sourceVolumeNumber: 3,
+            sourceChapter: 18
+        ))
+
+        XCTAssertFalse(buckets.upsert(MemoryItem(
+            category: .relationship,
+            subject: "林照-沈青袖",
+            field: "立场",
+            value: "互相试探",
+            sourceVolumeNumber: 2,
+            sourceChapter: 40
+        )))
+
+        XCTAssertEqual(buckets.relationships.first(where: { $0.status == .active })?.value, "正式结盟")
+        XCTAssertEqual(buckets.relationships.first(where: { $0.value == "互相试探" })?.status, .outdated)
+        XCTAssertTrue(buckets.conflicts.isEmpty)
+    }
+
+    func testMemoryBucketsImportingHistoricalItemKeepsActiveState() {
+        var buckets = MemoryBuckets.empty
+        buckets.upsert(MemoryItem(
+            category: .characterState,
+            subject: "林照",
+            field: "身份",
+            value: "巡夜使",
+            sourceVolumeNumber: 2,
+            sourceChapter: 10
+        ))
+
+        buckets.upsert(MemoryItem(
+            category: .characterState,
+            subject: "林照",
+            field: "身份",
+            value: "外门弟子",
+            status: .outdated,
+            sourceVolumeNumber: 1,
+            sourceChapter: 20
+        ))
+
+        XCTAssertEqual(buckets.characterState.first(where: { $0.status == .active })?.value, "巡夜使")
+        XCTAssertEqual(buckets.characterState.first(where: { $0.status == .outdated })?.value, "外门弟子")
+    }
+
+    func testMemoryBucketsWorkingContextFallsBackToRecentUnmatchedFacts() {
+        var buckets = MemoryBuckets.empty
+        buckets.storyFacts = [
+            MemoryItem(
+                category: .storyFact,
+                subject: "北境来信",
+                field: "情报",
+                value: "旧盟友将在三日后抵达",
+                sourceChapter: 40
+            )
+        ]
+
+        let items = buckets.workingContextItems(for: "南海商路", relevantLimit: 4, totalLimit: 6)
+
+        XCTAssertEqual(items.first?.subject, "北境来信")
+    }
+
+    func testMemoryExtractionSamplesChapterBeginningMiddleAndEndWithinLimit() {
+        let chapter = "章首身份变化"
+            + String(repeating: "甲", count: 11_980)
+            + "章中世界规则"
+            + String(repeating: "乙", count: 11_980)
+            + "章末关键伏笔"
+
+        let sampled = MemoryExtractionService.sampledChapterText(chapter, limit: 8_000)
+
+        XCTAssertLessThanOrEqual(sampled.count, 8_000)
+        XCTAssertTrue(sampled.contains("章首身份变化"))
+        XCTAssertTrue(sampled.contains("章中世界规则"))
+        XCTAssertTrue(sampled.contains("章末关键伏笔"))
+        XCTAssertTrue(sampled.contains("【章节中段抽样】"))
+        XCTAssertTrue(sampled.contains("【章节末段抽样】"))
     }
 
     func testMemoryBucketsKeepsDistinctOpenLoopsForSameSubject() {
@@ -944,7 +1054,7 @@ final class DomainModelsTests: XCTestCase {
             subject: "林照",
             field: "境界",
             value: "金丹后期",
-            sourceChapter: 11
+            sourceChapter: 10
         )
 
         buckets.upsert(first)

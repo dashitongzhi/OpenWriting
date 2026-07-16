@@ -6,6 +6,35 @@ import Foundation
 /// supplementing the keyword-based extraction in AppState.
 struct MemoryExtractionService {
 
+    /// Keeps extraction prompts bounded while covering the chapter opening,
+    /// midpoint, and ending where long-form state changes and hooks often land.
+    static func sampledChapterText(_ chapterText: String, limit: Int = 8_000) -> String {
+        guard limit > 0 else { return "" }
+        guard chapterText.count > limit else { return chapterText }
+
+        let middleMarker = "\n\n【章节中段抽样】\n\n"
+        let endingMarker = "\n\n【章节末段抽样】\n\n"
+        let markerCount = middleMarker.count + endingMarker.count
+        guard limit > markerCount else { return String(chapterText.prefix(limit)) }
+
+        let contentBudget = limit - markerCount
+        let openingBudget = contentBudget * 3 / 8
+        let middleBudget = contentBudget / 4
+        let endingBudget = contentBudget - openingBudget - middleBudget
+        let middleStartOffset = max((chapterText.count - middleBudget) / 2, openingBudget)
+        let endingStartOffset = chapterText.count - endingBudget
+
+        let middleStart = chapterText.index(chapterText.startIndex, offsetBy: middleStartOffset)
+        let middleEnd = chapterText.index(middleStart, offsetBy: middleBudget)
+        let endingStart = chapterText.index(chapterText.startIndex, offsetBy: endingStartOffset)
+
+        return String(chapterText.prefix(openingBudget))
+            + middleMarker
+            + String(chapterText[middleStart..<middleEnd])
+            + endingMarker
+            + String(chapterText[endingStart...])
+    }
+
     // MARK: - Extraction Result
 
     struct ExtractionResult: Codable {

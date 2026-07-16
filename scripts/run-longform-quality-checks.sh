@@ -26,6 +26,8 @@ RUN_ALL="$REPO_ROOT/scripts/run-all-checks.sh"
 RUN_EVALS="$REPO_ROOT/scripts/run-longform-evals.sh"
 EVAL_RUNNER="$REPO_ROOT/LongformEvals/run_mock_eval.py"
 PIPELINE_EVAL_RUNNER="$REPO_ROOT/LongformEvals/RunLongformPipelineEval.swift"
+MEMORY_SOAK_RUNNER="$REPO_ROOT/LongformEvals/RunMemoryContinuitySoak.swift"
+RUN_MEMORY_SOAK="$REPO_ROOT/scripts/run-memory-continuity-soak.sh"
 EVAL_SEEDS="$REPO_ROOT/LongformEvals/seeds.json"
 TEST_PACKAGE="$REPO_ROOT/Tests/Package.swift"
 TEST_README="$REPO_ROOT/Tests/README.md"
@@ -346,6 +348,16 @@ require_text "$PIPELINE_EVAL_RUNNER" "LongformStorySystem.buildCommit" \
     "local longform eval must exercise longform commit gating"
 require_text "$PIPELINE_EVAL_RUNNER" "LongformStorySystem.apply" \
     "local longform eval must exercise longform runtime projection"
+require_text "$MEMORY_SOAK_RUNNER" "totalDraftCharacters >= 2_000_000" \
+    "memory soak must simulate at least two million draft characters"
+require_text "$MEMORY_SOAK_RUNNER" "memoryContradictions == 0" \
+    "memory soak must reject structured-memory contradictions"
+require_text "$MEMORY_SOAK_RUNNER" "retrievalMisses == 0" \
+    "memory soak must reject lost long-term context"
+require_text "$MEMORY_SOAK_RUNNER" "chapter.isMultiple(of: 100)" \
+    "memory soak must verify periodic persistence roundtrips"
+require_text "$RUN_MEMORY_SOAK" "RunMemoryContinuitySoak.swift" \
+    "memory soak script must compile the deterministic Swift runner"
 require_text "$EVAL_SEEDS" "long_foreshadowing" \
     "longform eval fixtures must include long foreshadowing seeds"
 
