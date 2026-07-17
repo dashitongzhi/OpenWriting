@@ -2195,18 +2195,10 @@ extension NovelProject {
                 return persistedLongformRuntimeState
             }
 
-            if let data = UserDefaults.standard.data(forKey: "longformRuntime_\(id)"),
-               let state = try? JSONDecoder().decode(LongformStoryRuntimeState.self, from: data) {
-                return state
-            }
-
             return .empty
         }
         set {
             persistedLongformRuntimeState = newValue
-            if let data = try? JSONEncoder().encode(newValue) {
-                UserDefaults.standard.set(data, forKey: "longformRuntime_\(id)")
-            }
         }
     }
 

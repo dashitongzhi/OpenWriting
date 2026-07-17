@@ -25,6 +25,7 @@ extension AppState {
     func bindAppleAccount(_ profile: AppleAccountProfile) {
         let normalizedProfile = Self.normalizedAppleAccount(profile)
         let targetScope = normalizedProfile.userID
+        cancelPendingProjectPersistence(for: currentStorageScope)
 
         if Self.loadRecentProjects(for: targetScope, from: userDefaults, projectStore: projectStore) == nil {
             Self.copyAccountScopedProjectData(
@@ -57,12 +58,12 @@ extension AppState {
         cloudSaveGeneration &+= 1
         var didRemoveLocalData = true
         if removingLocalData {
-            let accountProjectStorageKey = Self.recentProjectsStorageKey(for: account.userID)
-            recentProjectsPersistTasks[accountProjectStorageKey]?.cancel()
-            recentProjectsPersistTasks.removeValue(forKey: accountProjectStorageKey)
+            cancelPendingProjectPersistence(for: account.userID)
 
             do {
-                try projectStore.removeProjects(for: account.userID)
+                try Self.waitForProjectPersistence {
+                    try await self.projectPersistence.cancelAndRemove(for: account.userID)
+                }
                 userDefaults.removeObject(forKey: Self.activeProjectIDStorageKey(for: account.userID))
                 userDefaults.removeObject(forKey: Self.recentProjectsStorageKey(for: account.userID))
                 userDefaults.removeObject(forKey: Self.projectSnapshotTimestampStorageKey(for: account.userID))
@@ -90,6 +91,7 @@ extension AppState {
     }
 
     func reloadAccountScopedProjects() {
+        cancelPendingProjectPersistence(for: currentStorageScope)
         isHydratingAccountScopedData = true
         recentProjects = Self.loadRecentProjects(
             for: currentStorageScope,
@@ -111,18 +113,24 @@ extension AppState {
         projectStore: ProjectFileStore
     ) -> [NovelProject]? {
         if let storedProjects = projectStore.loadProjects(for: scope) {
-            return storedProjects
+            return LegacyProjectSidecarMigrator(userDefaults: userDefaults).migrate(storedProjects) {
+                (try? projectStore.saveProjects($0, for: scope)) != nil
+            }
         }
 
         guard let decodedProjects = loadLegacyRecentProjectsFromUserDefaults(for: scope, userDefaults: userDefaults) else {
             return nil
         }
 
-        if (try? projectStore.saveProjects(decodedProjects, for: scope)) != nil {
+        let migratedProjects = LegacyProjectSidecarMigrator(userDefaults: userDefaults).migrate(decodedProjects) {
+            (try? projectStore.saveProjects($0, for: scope)) != nil
+        }
+
+        if projectStore.hasProjects(for: scope) {
             clearLegacyRecentProjectsFromUserDefaults(for: scope, userDefaults: userDefaults)
         }
 
-        return decodedProjects
+        return migratedProjects
     }
 
     static func loadLegacyRecentProjectsFromUserDefaults(

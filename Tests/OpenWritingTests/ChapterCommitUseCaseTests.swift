@@ -59,8 +59,6 @@ final class KeywordMemoryExtractorTests: XCTestCase {
 final class ChapterCommitUseCaseTests: XCTestCase {
     func testAcceptedCommitProjectsMemoryAndAntiPatternsWithoutMutatingInput() {
         let project = makeProject(id: "accepted-\(UUID().uuidString)")
-        let projectID = project.id
-        addTeardownBlock { NovelProject.clearIntegrationCache(for: projectID) }
         let originalUpdatedAt = project.updatedAt
         let draft = ChapterDraft(
             volumeNumber: 2,
@@ -95,8 +93,6 @@ final class ChapterCommitUseCaseTests: XCTestCase {
 
     func testRejectedCommitInvalidatesOnlyTheMatchingChapterProjection() {
         var project = makeProject(id: "rejected-\(UUID().uuidString)")
-        let projectID = project.id
-        addTeardownBlock { NovelProject.clearIntegrationCache(for: projectID) }
         var buckets = MemoryBuckets.empty
         buckets.upsert(MemoryItem(
             category: .timeline,

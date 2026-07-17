@@ -97,6 +97,11 @@
 | File | Role |
 | --- | --- |
 | `OpenWriting/ProjectFileStore.swift` | 本地项目分片存储、原子写、健康检查和恢复动作。 |
+| `OpenWriting/ProjectDocumentCodec.swift` | 项目文档 schema 检查、顺序迁移和未来版本拒绝策略。 |
+| `OpenWriting/LegacyProjectSidecarMigrator.swift` | 将旧 UserDefaults 长篇状态一次性导入项目文件，并在保存成功后清理旧键。 |
+| `OpenWriting/ProjectPersistenceActor.swift` | 串行化项目写入、按 scope 合并自动保存，并防止取消后的旧快照复活。 |
+| `OpenWriting/ProjectStorageHealth.swift` | 存储健康状态、问题分类、恢复动作和诊断结果模型。 |
+| `OpenWriting/AccountProjectSnapshot.swift` | Apple 账号项目快照的显式 schema 契约与版本拒绝策略。 |
 | `OpenWriting/ProjectExportService.swift` | JSON/Markdown/DOCX/EPUB 导出、ZIP 构建和导出校验。 |
 | `OpenWriting/TextFileDecoding.swift` | 文本文件编码识别和解码兜底。 |
 | `OpenWriting/DateFormatting.swift` | 时间标签格式化视图。 |

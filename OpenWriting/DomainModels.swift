@@ -692,7 +692,7 @@ nonisolated struct ChapterDraftMetadata: Identifiable, Codable, Hashable {
     }
 }
 
-struct OutlineGenerationProfile: Codable, Hashable {
+nonisolated struct OutlineGenerationProfile: Codable, Hashable {
     var storyFlow: String
     var worldDescription: String
     var protagonistTraits: String
@@ -826,7 +826,7 @@ struct LongformSearchResult: Identifiable, Hashable {
     let referenceDocumentID: ReferenceDocument.ID?
 }
 
-struct GlobalMemorySnapshot: Codable, Hashable {
+nonisolated struct GlobalMemorySnapshot: Codable, Hashable {
     enum Section: String, CaseIterable {
         case recentDevelopments = "前情推进"
         case characterRelations = "人物关系"
@@ -1014,7 +1014,7 @@ struct GlobalMemorySnapshot: Codable, Hashable {
 // MARK: - ForeshadowEntry (结构化伏笔追踪)
 
 /// 结构化伏笔条目，追踪每条伏笔的状态和生命周期
-struct ForeshadowEntry: Codable, Identifiable, Hashable {
+nonisolated struct ForeshadowEntry: Codable, Identifiable, Hashable {
     let id: String
     var title: String                      // 伏笔标题/描述
     var description: String                // 详细描述
@@ -1171,7 +1171,7 @@ enum ForeshadowImportance: String, Codable, CaseIterable {
 }
 
 /// 伏笔列表（用于NovelProject中）
-struct ForeshadowList: Codable, Hashable {
+nonisolated struct ForeshadowList: Codable, Hashable {
     var entries: [ForeshadowEntry]
 
     init(entries: [ForeshadowEntry] = []) {
@@ -1284,7 +1284,7 @@ struct ForeshadowList: Codable, Hashable {
 // MARK: - PlotThread (结构化叙事线追踪)
 
 /// 结构化叙事线/情节线追踪，替代 raw activeThreadsNotes 字符串
-struct PlotThread: Codable, Identifiable, Hashable {
+nonisolated struct PlotThread: Codable, Identifiable, Hashable {
     let id: String
     var title: String                    // 叙事线标题，如"主角修炼线"、"感情线"
     var description: String             // 叙事线描述
@@ -1437,7 +1437,7 @@ enum ThreadStatus: String, Codable, CaseIterable {
 }
 
 /// 叙事线关键事件
-struct ThreadEvent: Codable, Identifiable, Hashable {
+nonisolated struct ThreadEvent: Codable, Identifiable, Hashable {
     let id: String
     var volumeNumber: Int?
     var chapter: Int            // 发生章节
@@ -1484,7 +1484,7 @@ enum ThreadEventType: String, Codable, CaseIterable {
 }
 
 /// 叙事线列表（用于NovelProject中）
-struct PlotThreadList: Codable, Hashable {
+nonisolated struct PlotThreadList: Codable, Hashable {
     var threads: [PlotThread]
 
     init(threads: [PlotThread] = []) {
@@ -1606,7 +1606,7 @@ struct PlotThreadList: Codable, Hashable {
 }
 
 struct NovelProject: Identifiable, Codable, @unchecked Sendable {
-    static let currentSchemaVersion = 2
+    nonisolated static let currentSchemaVersion = 2
 
     let id: String
     var schemaVersion: Int
@@ -1643,7 +1643,7 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
     /// 题材模板 ID（可选，关联 GenreTemplate）
     var genreTemplateId: String?
     /// Strand Weave 节奏追踪器
-    var strandWeaveTracker: StrandWeaveTracker
+    nonisolated(unsafe) var strandWeaveTracker: StrandWeaveTracker
     /// 质量审查报告历史
     var qualityReviewReports: [QualityReviewReport]
     /// 结构化伏笔列表
@@ -1798,11 +1798,25 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
         self.persistedLongformRuntimeState = persistedLongformRuntimeState
     }
 
-    init(from decoder: Decoder) throws {
+    nonisolated init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         let decodedSchemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
-        schemaVersion = max(decodedSchemaVersion, Self.currentSchemaVersion)
+        guard decodedSchemaVersion >= 1 else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .schemaVersion,
+                in: container,
+                debugDescription: "NovelProject schema version must be positive."
+            )
+        }
+        guard decodedSchemaVersion <= Self.currentSchemaVersion else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .schemaVersion,
+                in: container,
+                debugDescription: "NovelProject schema version \(decodedSchemaVersion) is newer than supported version \(Self.currentSchemaVersion)."
+            )
+        }
+        schemaVersion = Self.currentSchemaVersion
         title = try container.decode(String.self, forKey: .title)
         genre = try container.decode(String.self, forKey: .genre)
         summary = try container.decode(String.self, forKey: .summary)
@@ -1850,7 +1864,7 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
         persistedLongformRuntimeState = try container.decodeIfPresent(LongformStoryRuntimeState.self, forKey: .persistedLongformRuntimeState)
     }
 
-    func encode(to encoder: Encoder) throws {
+    nonisolated func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
         try container.encode(Self.currentSchemaVersion, forKey: .schemaVersion)

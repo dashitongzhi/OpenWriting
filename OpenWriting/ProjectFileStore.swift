@@ -1,114 +1,77 @@
 import Foundation
 import CryptoKit
 
-enum StorageHealthStatus: String, Codable, Hashable {
-    case passed
-    case warning
-    case blocked
-
-    var displayName: String {
-        switch self {
-        case .passed: return "健康"
-        case .warning: return "需关注"
-        case .blocked: return "需恢复"
-        }
-    }
-}
-
-enum ProjectStorageIssueKind: String, Codable, Hashable {
-    case projectIndexMissing
-    case projectIndexCorrupt
-    case projectMetadataMissing
-    case projectMetadataCorrupt
-    case chapterIndexMissing
-    case chapterIndexCorrupt
-    case chapterFileMissing
-    case chapterFileCorrupt
-    case orphanChapterFile
-    case catalogFileMismatch
-    case legacyProjectFile
-    case cloudSelectionConflict
-}
-
-enum StorageRecoveryAction: String, Codable, Hashable, CaseIterable, Identifiable {
-    case exportDiagnostics
-    case rebuildChapterCatalog
-    case preserveMissingChapterPlaceholder
-    case recoverMetadataShell
-    case markCloudConflict
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .exportDiagnostics: return "导出诊断"
-        case .rebuildChapterCatalog: return "重建目录"
-        case .preserveMissingChapterPlaceholder: return "保留占位"
-        case .recoverMetadataShell: return "恢复项目壳"
-        case .markCloudConflict: return "标记冲突"
-        }
-    }
-}
-
-struct ProjectStorageIssue: Identifiable, Codable, Hashable {
-    var id: String
-    var kind: ProjectStorageIssueKind
-    var status: StorageHealthStatus
-    var projectID: NovelProject.ID
-    var chapterID: ChapterDraft.ID?
-    var title: String
-    var detail: String
-    var recoveryActions: [StorageRecoveryAction]
-}
-
-struct StorageHealthReport: Identifiable, Codable, Hashable {
-    var id: String
-    var projectID: NovelProject.ID
-    var scopeName: String
-    var checkedAt: Date
-    var status: StorageHealthStatus
-    var summary: String
-    var nextAction: String
-    var issues: [ProjectStorageIssue]
-    var metrics: [String: String]
-
-    var blockingIssues: [ProjectStorageIssue] {
-        issues.filter { $0.status == .blocked }
-    }
-
-    var warningIssues: [ProjectStorageIssue] {
-        issues.filter { $0.status == .warning }
-    }
-
-    var hasIssues: Bool {
-        !issues.isEmpty
-    }
-}
-
-struct StorageRecoveryResult: Codable, Hashable {
-    var action: StorageRecoveryAction
-    var issueID: ProjectStorageIssue.ID
-    var didChangeStore: Bool
-    var message: String
-    var outputURL: URL?
-}
-
-struct ProjectFileStore {
+nonisolated struct ProjectFileStore: @unchecked Sendable {
     private let fileManager: FileManager
     private let baseDirectoryURL: URL
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    private let projectCodec = ProjectDocumentCodec()
     private let writeCache = ProjectFileWriteCache()
+    private let accessLock: NSRecursiveLock
 
     private struct ProjectIndex: Codable {
+        static let currentVersion = 2
+
         var version: Int
         var projectIDs: [NovelProject.ID]
+
+        init(version: Int = currentVersion, projectIDs: [NovelProject.ID]) {
+            self.version = version
+            self.projectIDs = projectIDs
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let sourceVersion = try container.decodeIfPresent(Int.self, forKey: .version) ?? 1
+            guard (1...Self.currentVersion).contains(sourceVersion) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .version,
+                    in: container,
+                    debugDescription: "Unsupported project index version \(sourceVersion)."
+                )
+            }
+            version = Self.currentVersion
+            projectIDs = try container.decode([NovelProject.ID].self, forKey: .projectIDs)
+        }
     }
 
     private struct ChapterIndex: Codable {
+        static let currentVersion = 3
+
         var version: Int
         var chapterIDs: [ChapterDraft.ID]
         var chapters: [ChapterDraftMetadata]?
+
+        init(
+            version: Int = currentVersion,
+            chapterIDs: [ChapterDraft.ID],
+            chapters: [ChapterDraftMetadata]?
+        ) {
+            self.version = version
+            self.chapterIDs = chapterIDs
+            self.chapters = chapters
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let sourceVersion = try container.decodeIfPresent(Int.self, forKey: .version) ?? 1
+            guard (1...Self.currentVersion).contains(sourceVersion) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .version,
+                    in: container,
+                    debugDescription: "Unsupported chapter index version \(sourceVersion)."
+                )
+            }
+            version = Self.currentVersion
+            chapterIDs = try container.decode([ChapterDraft.ID].self, forKey: .chapterIDs)
+            chapters = try container.decodeIfPresent([ChapterDraftMetadata].self, forKey: .chapters)
+        }
+    }
+
+    private struct ExistingProjectProtection {
+        var indexedProjectIDs: [NovelProject.ID]
+        var directoryNames: Set<String>
     }
 
     struct ChapterDraftLoadReport {
@@ -139,6 +102,7 @@ struct ProjectFileStore {
         self.baseDirectoryURL = baseURL
             .appendingPathComponent(baseDirectoryName, isDirectory: true)
             .appendingPathComponent("ProjectStore", isDirectory: true)
+        self.accessLock = NSRecursiveLock()
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -146,7 +110,31 @@ struct ProjectFileStore {
         self.decoder = JSONDecoder()
     }
 
+    private init(
+        fileManager: FileManager,
+        resolvedBaseDirectoryURL: URL,
+        accessLock: NSRecursiveLock
+    ) {
+        self.fileManager = fileManager
+        self.baseDirectoryURL = resolvedBaseDirectoryURL
+        self.accessLock = accessLock
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        self.encoder = encoder
+        self.decoder = JSONDecoder()
+    }
+
+    func independentCopy() -> ProjectFileStore {
+        ProjectFileStore(
+            fileManager: fileManager,
+            resolvedBaseDirectoryURL: baseDirectoryURL,
+            accessLock: accessLock
+        )
+    }
+
     func storageHealthReport(for projectID: NovelProject.ID, scope: String?) -> StorageHealthReport {
+        accessLock.lock()
+        defer { accessLock.unlock() }
         var issues: [ProjectStorageIssue] = []
         let resolvedScopeName = scopeDirectoryName(for: scope)
         let legacyURL = projectsFileURL(for: scope)
@@ -207,8 +195,8 @@ struct ProjectFileStore {
                 actions: [.exportDiagnostics, .recoverMetadataShell]
             ))
         } else if let metadataData = try? Data(contentsOf: metadataURL),
-                  let decodedProject = try? decoder.decode(NovelProject.self, from: metadataData) {
-            projectFromMetadata = decodedProject
+                  let decodedProject = try? projectCodec.decode(metadataData) {
+            projectFromMetadata = decodedProject.project
         } else {
             issues.append(storageIssue(
                 kind: .projectMetadataCorrupt,
@@ -366,6 +354,8 @@ struct ProjectFileStore {
         project: NovelProject?,
         scope: String?
     ) throws -> StorageRecoveryResult {
+        accessLock.lock()
+        defer { accessLock.unlock() }
         guard issue.recoveryActions.contains(action) else {
             throw recoveryError("恢复动作“\(action.title)”不适用于“\(issue.title)”。")
         }
@@ -437,6 +427,8 @@ struct ProjectFileStore {
     }
 
     func loadProjects(for scope: String?) -> [NovelProject]? {
+        accessLock.lock()
+        defer { accessLock.unlock() }
         if let projects = loadShardedProjects(for: scope) {
             return projects
         }
@@ -450,6 +442,8 @@ struct ProjectFileStore {
     }
 
     func saveProjects(_ projects: [NovelProject], for scope: String?) throws {
+        accessLock.lock()
+        defer { accessLock.unlock() }
         if projects.isEmpty {
             try removeProjects(for: scope)
             return
@@ -459,11 +453,15 @@ struct ProjectFileStore {
     }
 
     func hasProjects(for scope: String?) -> Bool {
-        fileManager.fileExists(atPath: projectIndexURL(for: scope).path)
+        accessLock.lock()
+        defer { accessLock.unlock() }
+        return fileManager.fileExists(atPath: projectIndexURL(for: scope).path)
             || fileManager.fileExists(atPath: projectsFileURL(for: scope).path)
     }
 
     func removeProjects(for scope: String?) throws {
+        accessLock.lock()
+        defer { accessLock.unlock() }
         let scopeURL = scopeDirectoryURL(for: scope)
         if fileManager.fileExists(atPath: scopeURL.path) {
             try fileManager.removeItem(at: scopeURL)
@@ -481,7 +479,7 @@ struct ProjectFileStore {
         for projectID in index.projectIDs {
             let projectURL = projectMetadataURL(for: projectID, scope: scope)
             guard let projectData = try? Data(contentsOf: projectURL),
-                  var project = try? decoder.decode(NovelProject.self, from: projectData)
+                  var project = try? projectCodec.decode(projectData).project
             else { continue }
 
             project.chapterCatalog = loadChapterMetadata(for: projectID, scope: scope)
@@ -493,16 +491,22 @@ struct ProjectFileStore {
     }
 
     func loadChapterDraft(_ chapterID: ChapterDraft.ID, for projectID: NovelProject.ID, scope: String?) -> ChapterDraft? {
+        accessLock.lock()
+        defer { accessLock.unlock() }
         let chapterURL = chapterURL(for: chapterID, projectID: projectID, scope: scope)
         guard let data = try? Data(contentsOf: chapterURL) else { return nil }
         return try? decoder.decode(ChapterDraft.self, from: data)
     }
 
     func loadChapterDrafts(for projectID: NovelProject.ID, scope: String?) -> [ChapterDraft] {
-        loadChapterDraftReport(for: projectID, scope: scope).drafts
+        accessLock.lock()
+        defer { accessLock.unlock() }
+        return loadChapterDraftReport(for: projectID, scope: scope).drafts
     }
 
     func loadChapterDraftReport(for projectID: NovelProject.ID, scope: String?) -> ChapterDraftLoadReport {
+        accessLock.lock()
+        defer { accessLock.unlock() }
         let indexURL = chapterIndexURL(for: projectID, scope: scope)
         guard let indexData = try? Data(contentsOf: indexURL),
               let index = try? decoder.decode(ChapterIndex.self, from: indexData)
@@ -544,18 +548,76 @@ struct ProjectFileStore {
         let projectsDirectory = scopeURL.appendingPathComponent("projects", isDirectory: true)
         try fileManager.createDirectory(at: projectsDirectory, withIntermediateDirectories: true)
 
+        let incomingProjectIDs = Set(projects.map(\.id))
+        let protection = existingProjectProtection(
+            for: scope,
+            excluding: incomingProjectIDs
+        )
+
         for project in projects {
             try saveProject(project, scope: scope)
         }
 
-        let index = ProjectIndex(version: 2, projectIDs: projects.map(\.id))
+        let index = ProjectIndex(
+            version: 2,
+            projectIDs: projects.map(\.id) + protection.indexedProjectIDs
+        )
         try writeIfChanged(try encoder.encode(index), to: projectIndexURL(for: scope))
 
-        try removeDeletedProjectDirectories(keeping: Set(projects.map(\.id)), scope: scope)
+        try removeDeletedProjectDirectories(
+            keeping: incomingProjectIDs,
+            protectedDirectoryNames: protection.directoryNames,
+            scope: scope
+        )
         let legacyURL = projectsFileURL(for: scope)
         if fileManager.fileExists(atPath: legacyURL.path) {
             try? fileManager.removeItem(at: legacyURL)
         }
+    }
+
+    private func existingProjectProtection(
+        for scope: String?,
+        excluding incomingProjectIDs: Set<NovelProject.ID>
+    ) -> ExistingProjectProtection {
+        let projectsDirectory = scopeDirectoryURL(for: scope)
+            .appendingPathComponent("projects", isDirectory: true)
+        let directoryNames = Set(
+            (try? fileManager.contentsOfDirectory(
+                at: projectsDirectory,
+                includingPropertiesForKeys: [.isDirectoryKey]
+            ))?.map(\.lastPathComponent) ?? []
+        )
+        let incomingDirectoryNames = Set(incomingProjectIDs.map(sanitizedStorageComponent))
+
+        guard let indexData = try? Data(contentsOf: projectIndexURL(for: scope)),
+              let index = try? decoder.decode(ProjectIndex.self, from: indexData)
+        else {
+            return ExistingProjectProtection(
+                indexedProjectIDs: [],
+                directoryNames: directoryNames.subtracting(incomingDirectoryNames)
+            )
+        }
+
+        var protectedProjectIDs: [NovelProject.ID] = []
+        var protectedDirectoryNames = directoryNames.subtracting(
+            Set(index.projectIDs.map(sanitizedStorageComponent))
+        )
+
+        for projectID in index.projectIDs where !incomingProjectIDs.contains(projectID) {
+            let metadataURL = projectMetadataURL(for: projectID, scope: scope)
+            guard let data = try? Data(contentsOf: metadataURL),
+                  (try? projectCodec.decode(data)) != nil
+            else {
+                protectedProjectIDs.append(projectID)
+                protectedDirectoryNames.insert(sanitizedStorageComponent(projectID))
+                continue
+            }
+        }
+
+        return ExistingProjectProtection(
+            indexedProjectIDs: protectedProjectIDs,
+            directoryNames: protectedDirectoryNames
+        )
     }
 
     private func saveProject(_ project: NovelProject, scope: String?) throws {
@@ -564,7 +626,7 @@ struct ProjectFileStore {
 
         var metadata = project
         metadata.chapterDrafts = []
-        try writeIfChanged(try encoder.encode(metadata), to: projectMetadataURL(for: project.id, scope: scope))
+        try writeIfChanged(try projectCodec.encode(metadata), to: projectMetadataURL(for: project.id, scope: scope))
 
         let chapterCatalog = resolvedChapterCatalog(for: project)
         let chapterIndex = ChapterIndex(
@@ -629,7 +691,11 @@ struct ProjectFileStore {
         }
     }
 
-    private func removeDeletedProjectDirectories(keeping projectIDs: Set<NovelProject.ID>, scope: String?) throws {
+    private func removeDeletedProjectDirectories(
+        keeping projectIDs: Set<NovelProject.ID>,
+        protectedDirectoryNames: Set<String>,
+        scope: String?
+    ) throws {
         let projectsDirectory = scopeDirectoryURL(for: scope).appendingPathComponent("projects", isDirectory: true)
         guard let directoryContents = try? fileManager.contentsOfDirectory(
             at: projectsDirectory,
@@ -637,6 +703,7 @@ struct ProjectFileStore {
         ) else { return }
 
         let expectedDirectoryNames = Set(projectIDs.map(sanitizedStorageComponent))
+            .union(protectedDirectoryNames)
         for url in directoryContents where !expectedDirectoryNames.contains(url.lastPathComponent) {
             try fileManager.removeItem(at: url)
             writeCache.removeItems(under: url)
@@ -763,7 +830,7 @@ struct ProjectFileStore {
 
         metadata.chapterCatalog = catalog
         metadata.chapterDrafts = []
-        try writeIfChanged(try encoder.encode(metadata), to: projectMetadataURL(for: projectID, scope: scope))
+        try writeIfChanged(try projectCodec.encode(metadata), to: projectMetadataURL(for: projectID, scope: scope))
     }
 
     private func preserveMissingChapterPlaceholder(
@@ -813,7 +880,7 @@ struct ProjectFileStore {
 
         var metadata = project
         metadata.chapterDrafts = []
-        try writeIfChanged(try encoder.encode(metadata), to: projectMetadataURL(for: project.id, scope: scope))
+        try writeIfChanged(try projectCodec.encode(metadata), to: projectMetadataURL(for: project.id, scope: scope))
 
         let existingProjectIDs = (try? Data(contentsOf: projectIndexURL(for: scope)))
             .flatMap { try? decoder.decode(ProjectIndex.self, from: $0) }?
@@ -859,7 +926,7 @@ struct ProjectFileStore {
     private func loadProjectMetadata(for projectID: NovelProject.ID, scope: String?) -> NovelProject? {
         let metadataURL = projectMetadataURL(for: projectID, scope: scope)
         guard let data = try? Data(contentsOf: metadataURL) else { return nil }
-        return try? decoder.decode(NovelProject.self, from: data)
+        return try? projectCodec.decode(data).project
     }
 
     private func backupExistingChapterFileIfNeeded(
@@ -998,12 +1065,12 @@ struct ProjectFileStore {
     }
 }
 
-private struct ProjectFileFingerprint: Equatable {
+nonisolated private struct ProjectFileFingerprint: Equatable {
     let size: Int
     let hash: Int
 }
 
-private final class ProjectFileWriteCache {
+nonisolated private final class ProjectFileWriteCache: @unchecked Sendable {
     private var fingerprints: [String: ProjectFileFingerprint] = [:]
 
     func fingerprint(for url: URL) -> ProjectFileFingerprint? {

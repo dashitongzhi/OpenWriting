@@ -5,7 +5,7 @@ import Foundation
 // Inspired by webnovel-writer's narrative rhythm control
 
 /// Strand 类型（叙事线索类型）
-enum StrandType: String, Codable, CaseIterable {
+nonisolated enum StrandType: String, Codable, CaseIterable {
     case quest = "Quest"           // 主线剧情
     case fire = "Fire"             // 感情线
     case constellation = "Constellation" // 世界观扩展
@@ -68,7 +68,7 @@ enum StrandKeywordClassifier {
 }
 
 /// 章节 Strand 记录
-struct ChapterStrandRecord: Codable, Identifiable {
+nonisolated struct ChapterStrandRecord: Codable, Identifiable {
     let id: UUID
     let chapterNumber: Int
     let primaryStrand: StrandType
@@ -90,7 +90,7 @@ struct ChapterStrandRecord: Codable, Identifiable {
 }
 
 /// 节奏红线告警
-struct RhythmAlert: Identifiable {
+nonisolated struct RhythmAlert: Identifiable {
     let id = UUID()
     let type: AlertType
     let strand: StrandType
@@ -110,7 +110,7 @@ struct RhythmAlert: Identifiable {
 }
 
 /// Strand Weave 追踪器
-class StrandWeaveTracker: ObservableObject, Codable {
+nonisolated final class StrandWeaveTracker: ObservableObject, Codable {
     /// 章节记录
     @Published var records: [ChapterStrandRecord]
 
@@ -394,7 +394,7 @@ class StrandWeaveTracker: ObservableObject, Codable {
 }
 
 /// 节奏红线配置
-struct RhythmRedLineConfig: Codable {
+nonisolated struct RhythmRedLineConfig: Codable {
     /// Quest 连续章节数上限
     var maxConsecutiveQuest: Int
     /// Fire 断档章节数上限

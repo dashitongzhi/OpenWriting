@@ -10,6 +10,7 @@ final class AppState {
 
     let userDefaults: UserDefaults
     let projectStore: ProjectFileStore
+    @ObservationIgnored let projectPersistence: ProjectPersistenceActor
     @ObservationIgnored let aiService: any AIWritingServicing
     @ObservationIgnored let credentialStore: any CredentialStoring
     @ObservationIgnored private let commerceProvider: any CommerceEntitlementProviding
@@ -176,6 +177,7 @@ final class AppState {
         Self.migrateAPIKeysToKeychainIfNeeded(userDefaults, credentialStore: credentialStore)
         self.userDefaults = userDefaults
         self.projectStore = projectStore
+        self.projectPersistence = ProjectPersistenceActor(store: projectStore.independentCopy())
         self.aiService = aiService
         self.credentialStore = credentialStore
         self.commerceProvider = commerceProvider
@@ -492,9 +494,6 @@ final class AppState {
 
     func deleteProject(_ projectID: NovelProject.ID) {
         guard recentProjects.contains(where: { $0.id == projectID }) else { return }
-
-        // Remove legacy sidecar data that predates project-file persistence.
-        NovelProject.clearIntegrationCache(for: projectID, userDefaults: userDefaults)
 
         recentProjects.removeAll { $0.id == projectID }
 

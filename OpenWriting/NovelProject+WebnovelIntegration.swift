@@ -7,20 +7,6 @@ import Foundation
 
 extension NovelProject {
 
-    /// Clear legacy integration data for a given project ID (called on project deletion).
-    static func clearIntegrationCache(
-        for projectID: String,
-        userDefaults: UserDefaults = .standard
-    ) {
-        [
-            "memoryBuckets_\(projectID)",
-            "strandWeave_\(projectID)",
-            "lastReview_\(projectID)",
-            "antiPatterns_\(projectID)",
-            "longformRuntime_\(projectID)"
-        ].forEach { userDefaults.removeObject(forKey: $0) }
-    }
-
     // MARK: - Memory Buckets
 
     /// Structured memory buckets, replacing/supplementing the flat continuityNotes.
@@ -30,18 +16,10 @@ extension NovelProject {
                 return persistedMemoryBuckets
             }
 
-            if let data = UserDefaults.standard.data(forKey: "memoryBuckets_\(id)"),
-               let buckets = try? JSONDecoder().decode(MemoryBuckets.self, from: data) {
-                return buckets
-            }
-
             return MemoryBuckets.migrate(from: globalMemorySnapshot, currentChapter: writtenChapters)
         }
         set {
             persistedMemoryBuckets = newValue
-            if let data = try? JSONEncoder().encode(newValue) {
-                UserDefaults.standard.set(data, forKey: "memoryBuckets_\(id)")
-            }
         }
     }
 
@@ -53,18 +31,10 @@ extension NovelProject {
                 return persistedStrandWeaveState
             }
 
-            if let data = UserDefaults.standard.data(forKey: "strandWeave_\(id)"),
-               let state = try? JSONDecoder().decode(StrandWeaveState.self, from: data) {
-                return state
-            }
-
             return .empty
         }
         set {
             persistedStrandWeaveState = newValue
-            if let data = try? JSONEncoder().encode(newValue) {
-                UserDefaults.standard.set(data, forKey: "strandWeave_\(id)")
-            }
         }
     }
 
@@ -76,20 +46,10 @@ extension NovelProject {
                 return persistedLastReviewResult
             }
 
-            if let data = UserDefaults.standard.data(forKey: "lastReview_\(id)"),
-               let result = try? JSONDecoder().decode(ChapterReviewResult.self, from: data) {
-                return result
-            }
-
             return nil
         }
         set {
             persistedLastReviewResult = newValue
-            if let value = newValue, let data = try? JSONEncoder().encode(value) {
-                UserDefaults.standard.set(data, forKey: "lastReview_\(id)")
-            } else {
-                UserDefaults.standard.removeObject(forKey: "lastReview_\(id)")
-            }
         }
     }
 
@@ -100,12 +60,10 @@ extension NovelProject {
             if let persistedAntiPatterns {
                 return persistedAntiPatterns
             }
-
-            return UserDefaults.standard.stringArray(forKey: "antiPatterns_\(id)") ?? []
+            return []
         }
         set {
             persistedAntiPatterns = newValue
-            UserDefaults.standard.set(newValue, forKey: "antiPatterns_\(id)")
         }
     }
 

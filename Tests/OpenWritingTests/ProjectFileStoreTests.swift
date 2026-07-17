@@ -284,6 +284,52 @@ final class ProjectFileStoreTests: XCTestCase {
         XCTAssertTrue(report.issues.contains { $0.kind == .projectMetadataCorrupt })
     }
 
+    func testFutureProjectIndexVersionIsRejected() async throws {
+        let project = NovelProject(title: "未来索引项目", genre: "科幻", summary: "摘要")
+        try store.saveProjects([project], for: scope)
+
+        let indexURL = try XCTUnwrap(storedFiles(named: "index.json").first {
+            !$0.path.contains("/chapters/")
+        })
+        var indexObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: indexURL)) as? [String: Any]
+        )
+        indexObject["version"] = 999
+        try JSONSerialization.data(withJSONObject: indexObject).write(to: indexURL)
+
+        XCTAssertNil(store.loadProjects(for: scope))
+        XCTAssertTrue(
+            store.storageHealthReport(for: project.id, scope: scope).issues.contains {
+                $0.kind == .projectIndexCorrupt
+            }
+        )
+    }
+
+    func testFutureChapterIndexVersionIsRejected() async throws {
+        let chapter = ChapterDraft(
+            volumeNumber: 1,
+            chapterNumber: 1,
+            chapterTitle: "第一章",
+            content: "正文"
+        )
+        var project = NovelProject(title: "未来章节索引项目", genre: "科幻", summary: "摘要")
+        project.chapterDrafts = [chapter]
+        try store.saveProjects([project], for: scope)
+
+        let indexURL = try XCTUnwrap(storedFiles(named: "index.json").first {
+            $0.path.contains("/chapters/")
+        })
+        var indexObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: indexURL)) as? [String: Any]
+        )
+        indexObject["version"] = 999
+        try JSONSerialization.data(withJSONObject: indexObject).write(to: indexURL)
+
+        let report = store.storageHealthReport(for: project.id, scope: scope)
+        XCTAssertTrue(report.issues.contains { $0.kind == .chapterIndexCorrupt })
+        XCTAssertTrue(store.loadProjects(for: scope)?.first?.chapterCatalog.isEmpty ?? false)
+    }
+
     func testLoadProjectsSkipsCorruptProjectMetadata() async throws {
         let healthyProject = NovelProject(title: "健康项目", genre: "都市", summary: "摘要")
         let corruptProject = NovelProject(title: "损坏项目", genre: "玄幻", summary: "摘要")
@@ -297,6 +343,84 @@ final class ProjectFileStoreTests: XCTestCase {
         let loadedProjects = try XCTUnwrap(store.loadProjects(for: scope))
 
         XCTAssertEqual(loadedProjects.map(\.id), [healthyProject.id])
+    }
+
+    func testSavingLoadedProjectsPreservesDirectoryForCorruptMetadata() async throws {
+        let healthyProject = NovelProject(title: "健康项目", genre: "都市", summary: "摘要")
+        let corruptProject = NovelProject(title: "损坏项目", genre: "玄幻", summary: "摘要")
+        try store.saveProjects([healthyProject, corruptProject], for: scope)
+
+        let corruptMetadataURL = try XCTUnwrap(storedFiles(named: "project.json").first {
+            $0.path.contains(corruptProject.id)
+        })
+        let corruptProjectDirectory = corruptMetadataURL.deletingLastPathComponent()
+        try Data("{ invalid json".utf8).write(to: corruptMetadataURL)
+
+        let loadedProjects = try XCTUnwrap(store.loadProjects(for: scope))
+        try store.saveProjects(loadedProjects, for: scope)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: corruptProjectDirectory.path))
+        XCTAssertEqual(try Data(contentsOf: corruptMetadataURL), Data("{ invalid json".utf8))
+    }
+
+    func testPersistenceActorDropsStaleSaveForSameScope() async throws {
+        let actor = ProjectPersistenceActor(store: store.independentCopy())
+        let staleProject = NovelProject(title: "旧快照", genre: "都市", summary: "摘要")
+        let currentProject = NovelProject(title: "当前快照", genre: "都市", summary: "摘要")
+
+        let staleSave = Task {
+            try await actor.saveAfterDelay(
+                [staleProject],
+                for: scope,
+                delay: .milliseconds(120)
+            )
+        }
+        try await Task.sleep(for: .milliseconds(20))
+        try await actor.saveNow([currentProject], for: scope)
+
+        let staleSaveDidWrite = try await staleSave.value
+        XCTAssertFalse(staleSaveDidWrite)
+        XCTAssertEqual(store.loadProjects(for: scope)?.map(\.title), ["当前快照"])
+    }
+
+    func testPersistenceActorCancelAndRemovePreventsDelayedSaveResurrection() async throws {
+        let actor = ProjectPersistenceActor(store: store.independentCopy())
+        let project = NovelProject(title: "待删除项目", genre: "都市", summary: "摘要")
+        try await actor.saveNow([project], for: scope)
+
+        let delayedSave = Task {
+            try await actor.saveAfterDelay(
+                [project],
+                for: scope,
+                delay: .milliseconds(120)
+            )
+        }
+        try await Task.sleep(for: .milliseconds(20))
+        try await actor.cancelAndRemove(for: scope)
+
+        let delayedSaveDidWrite = try await delayedSave.value
+        XCTAssertFalse(delayedSaveDidWrite)
+        XCTAssertNil(store.loadProjects(for: scope))
+    }
+
+    func testPersistenceActorKeepsScopeGenerationsIndependent() async throws {
+        let actor = ProjectPersistenceActor(store: store.independentCopy())
+        let firstProject = NovelProject(title: "账号一", genre: "都市", summary: "摘要")
+        let secondProject = NovelProject(title: "账号二", genre: "玄幻", summary: "摘要")
+
+        let firstScopeSave = Task {
+            try await actor.saveAfterDelay(
+                [firstProject],
+                for: "scope-one",
+                delay: .milliseconds(80)
+            )
+        }
+        try await actor.saveNow([secondProject], for: "scope-two")
+
+        let firstScopeDidWrite = try await firstScopeSave.value
+        XCTAssertTrue(firstScopeDidWrite)
+        XCTAssertEqual(store.loadProjects(for: "scope-one")?.map(\.title), ["账号一"])
+        XCTAssertEqual(store.loadProjects(for: "scope-two")?.map(\.title), ["账号二"])
     }
 
     func testRebuildChapterCatalogPreservesOrphanChapterFile() async throws {

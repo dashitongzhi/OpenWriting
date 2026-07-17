@@ -433,6 +433,54 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertFalse(project.referenceDocuments.first?.importedAt.isEmpty ?? true)
     }
 
+    func testProjectDocumentCodecMigratesLegacyPayloadAndRejectsFutureSchema() throws {
+        let legacyJSON = """
+        {
+          "id": "legacy-project",
+          "title": "旧项目",
+          "genre": "玄幻",
+          "summary": "旧版本保存的项目"
+        }
+        """
+
+        let decoded = try ProjectDocumentCodec().decode(Data(legacyJSON.utf8))
+        XCTAssertEqual(decoded.sourceVersion, 1)
+        XCTAssertTrue(decoded.didMigrate)
+        XCTAssertEqual(decoded.project.schemaVersion, NovelProject.currentSchemaVersion)
+
+        let futureJSON = """
+        {
+          "schemaVersion": \(NovelProject.currentSchemaVersion + 1),
+          "id": "future-project",
+          "title": "未来项目",
+          "genre": "科幻",
+          "summary": "未来版本保存的项目"
+        }
+        """
+
+        XCTAssertThrowsError(try ProjectDocumentCodec().decode(Data(futureJSON.utf8))) { error in
+            XCTAssertEqual(
+                error as? ProjectDocumentCodecError,
+                .unsupportedFutureVersion(NovelProject.currentSchemaVersion + 1)
+            )
+        }
+    }
+
+    func testAccountProjectSnapshotRejectsFutureSchema() throws {
+        let futureJSON = """
+        {
+          "schemaVersion": \(AccountProjectSnapshot.currentSchemaVersion + 1),
+          "activeProjectID": null,
+          "recentProjects": [],
+          "updatedAt": "2026-07-17T12:00:00Z"
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        XCTAssertThrowsError(try decoder.decode(AccountProjectSnapshot.self, from: Data(futureJSON.utf8)))
+    }
+
     @MainActor
     func testAppStateAcceptsInjectedAIService() {
         let userDefaults = makeIsolatedUserDefaults()
@@ -484,6 +532,57 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertNil(userDefaults.object(forKey: AppState.recentProjectsStorageKey(for: account.userID)))
         XCTAssertNil(userDefaults.object(forKey: AppState.projectSnapshotTimestampStorageKey(for: account.userID)))
         XCTAssertNil(appState.activeAccount)
+    }
+
+    @MainActor
+    func testRecentProjectsAutosavePersistsThroughActor() async throws {
+        let userDefaults = makeIsolatedUserDefaults()
+        let store = makeIsolatedProjectStore()
+        let appState = AppState(
+            userDefaults: userDefaults,
+            projectStore: store,
+            credentialStore: makeCredentialStore()
+        )
+        let project = makeProject(
+            id: "actor-autosave-project",
+            title: "后台保存项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+
+        appState.recentProjects = [project]
+        try await Task.sleep(for: .milliseconds(350))
+
+        XCTAssertEqual(store.loadProjects(for: nil)?.map(\.title), ["后台保存项目"])
+    }
+
+    @MainActor
+    func testRecentProjectsAutosaveFreezesReferenceBackedStateAtActorBoundary() async throws {
+        let userDefaults = makeIsolatedUserDefaults()
+        let store = makeIsolatedProjectStore()
+        let appState = AppState(
+            userDefaults: userDefaults,
+            projectStore: store,
+            credentialStore: makeCredentialStore()
+        )
+        let project = makeProject(
+            id: "actor-reference-snapshot-project",
+            title: "引用隔离项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        project.strandWeaveTracker.recordChapter(ChapterStrandRecord(
+            chapterNumber: 1,
+            primaryStrand: .quest
+        ))
+
+        appState.recentProjects = [project]
+        project.strandWeaveTracker.recordChapter(ChapterStrandRecord(
+            chapterNumber: 2,
+            primaryStrand: .fire
+        ))
+        try await Task.sleep(for: .milliseconds(350))
+
+        let persistedProject = try XCTUnwrap(store.loadProjects(for: nil)?.first)
+        XCTAssertEqual(persistedProject.strandWeaveTracker.records.map(\.chapterNumber), [1])
     }
 
     @MainActor
@@ -1353,21 +1452,91 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertFalse(aiMemoryMessage.summaryText.contains("failed"))
     }
 
-    func testClearIntegrationCacheRemovesLegacyDefaults() {
+    @MainActor
+    func testLoadRecentProjectsMigratesLegacySidecarsAfterSuccessfulSave() throws {
         let projectID = "integration-cache-test-\(UUID().uuidString)"
         let defaults = makeIsolatedUserDefaults()
-        let keys = [
-            "memoryBuckets_\(projectID)",
-            "strandWeave_\(projectID)",
-            "lastReview_\(projectID)",
-            "antiPatterns_\(projectID)",
-            "longformRuntime_\(projectID)"
+        let store = makeIsolatedProjectStore()
+        let project = makeProject(
+            id: projectID,
+            title: "旧边车项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        try store.saveProjects([project], for: nil)
+
+        let review = ChapterReviewResult(
+            overallScore: 88,
+            dimensionScores: [:],
+            issues: [],
+            hasBlockingIssues: false,
+            antiPatterns: ["重复句式"],
+            overallSummary: "可继续"
+        )
+        let encodedValues: [(String, Data)] = [
+            ("memoryBuckets_\(projectID)", try JSONEncoder().encode(MemoryBuckets.empty)),
+            ("strandWeave_\(projectID)", try JSONEncoder().encode(StrandWeaveState.empty)),
+            ("lastReview_\(projectID)", try JSONEncoder().encode(review)),
+            ("longformRuntime_\(projectID)", try JSONEncoder().encode(LongformStoryRuntimeState.empty))
         ]
-        keys.forEach { defaults.set(Data("legacy".utf8), forKey: $0) }
+        encodedValues.forEach { defaults.set($0.1, forKey: $0.0) }
+        defaults.set(["重复句式"], forKey: "antiPatterns_\(projectID)")
 
-        NovelProject.clearIntegrationCache(for: projectID, userDefaults: defaults)
+        let loaded = try XCTUnwrap(AppState.loadRecentProjects(
+            for: nil,
+            from: defaults,
+            projectStore: store
+        )?.first)
 
-        keys.forEach { XCTAssertNil(defaults.object(forKey: $0)) }
+        XCTAssertEqual(loaded.persistedMemoryBuckets, .empty)
+        XCTAssertEqual(loaded.persistedStrandWeaveState, .empty)
+        XCTAssertEqual(loaded.persistedLastReviewResult, review)
+        XCTAssertEqual(loaded.persistedAntiPatterns, ["重复句式"])
+        XCTAssertEqual(loaded.persistedLongformRuntimeState, .empty)
+
+        let reloaded = try XCTUnwrap(store.loadProjects(for: nil)?.first)
+        XCTAssertEqual(reloaded.persistedLastReviewResult, review)
+        encodedValues.forEach { XCTAssertNil(defaults.object(forKey: $0.0)) }
+        XCTAssertNil(defaults.object(forKey: "antiPatterns_\(projectID)"))
+    }
+
+    func testLegacySidecarMigrationRetainsKeysWhenPersistenceFails() throws {
+        let projectID = "failed-migration-\(UUID().uuidString)"
+        let defaults = makeIsolatedUserDefaults()
+        let key = "memoryBuckets_\(projectID)"
+        defaults.set(try JSONEncoder().encode(MemoryBuckets.empty), forKey: key)
+
+        let migrated = LegacyProjectSidecarMigrator(userDefaults: defaults).migrate([
+            makeProject(
+                id: projectID,
+                title: "保存失败项目",
+                updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+            )
+        ]) { _ in false }
+
+        XCTAssertEqual(migrated.first?.persistedMemoryBuckets, .empty)
+        XCTAssertNotNil(defaults.object(forKey: key))
+    }
+
+    func testLegacySidecarMigrationPreservesUndecodableData() {
+        let projectID = "corrupt-migration-\(UUID().uuidString)"
+        let defaults = makeIsolatedUserDefaults()
+        let key = "memoryBuckets_\(projectID)"
+        defaults.set(Data("{ invalid json".utf8), forKey: key)
+        var didPersist = false
+
+        _ = LegacyProjectSidecarMigrator(userDefaults: defaults).migrate([
+            makeProject(
+                id: projectID,
+                title: "损坏边车项目",
+                updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+            )
+        ]) { _ in
+            didPersist = true
+            return true
+        }
+
+        XCTAssertFalse(didPersist)
+        XCTAssertNotNil(defaults.object(forKey: key))
     }
 
     private func completeReviewDimensionScores() -> [String: Int] {

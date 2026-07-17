@@ -47,12 +47,6 @@ struct AppleAccountProfile: Codable, Hashable {
     }
 }
 
-struct AccountProjectSnapshot: Codable {
-    var activeProjectID: NovelProject.ID?
-    var recentProjects: [NovelProject]
-    var updatedAt: Date
-}
-
 struct ICloudSnapshotRecordPlan: Equatable {
     var snapshotRecordName: String
     var projectRecordNames: [String]
