@@ -282,6 +282,38 @@ struct AIWriterTimingSnapshot {
 }
 
 enum ChapterWritingSessionPolicy {
+    static func isCurrent(_ context: OutlineGenerationRequestContext, for project: NovelProject) -> Bool {
+        context == outlineGenerationContext(for: project, profile: context.profile)
+    }
+
+    static func isCurrent(_ context: DraftGenerationRequestContext, for project: NovelProject) -> Bool {
+        context == draftGenerationContext(
+            for: project,
+            rewriteDirection: context.rewriteDirection,
+            rejectedSuggestion: context.rejectedSuggestion
+        )
+    }
+
+    static func isCurrent(_ context: AISuggestionAcceptanceContext, for project: NovelProject) -> Bool {
+        context == acceptanceContext(for: project)
+    }
+
+    static func isCurrent(_ context: ChapterSaveValidationContext, for project: NovelProject) -> Bool {
+        context == chapterSaveValidationContext(for: project)
+    }
+
+    static func shouldConfirmChapterLoad(in project: NovelProject) -> Bool {
+        let currentDraft = project.draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !currentDraft.isEmpty else { return false }
+
+        let currentSavedDraft = project.chapterDrafts.first {
+            $0.volumeNumber == max(project.currentVolumeNumber, 1)
+                && $0.chapterNumber == max(project.currentChapterNumber, 1)
+        }
+        let savedText = currentSavedDraft?.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        return savedText != currentDraft
+    }
+
     static func preferredLength(for project: NovelProject) -> AIWritingLength {
         let number = inferredTargetWordCount(from: project.wordTargetText)
 

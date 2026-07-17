@@ -25,6 +25,7 @@
 | --- | --- |
 | `OpenWriting/AppState.swift` | 应用主状态协调器，承接项目、模型配置、导航、搜索和写作台状态。 |
 | `OpenWriting/AppState+Account.swift` | Apple 账户绑定、登出、账号 scope 项目加载和本机账号资料清理。 |
+| `OpenWriting/AppState+ChapterCommit.swift` | 章节收录后的本地提交、AI 记忆抽取和投影状态编排。 |
 | `OpenWriting/AppState+Persistence.swift` | UserDefaults/Keychain 存储键、迁移和持久化 helper。 |
 | `OpenWriting/AppState+WritingSkills.swift` | 写作技能启用、禁用、导入和项目注入。 |
 | `OpenWriting/AppState+iCloudSync.swift` | iCloud 可用性、快照推拉、云端状态和云端/本地合并。 |
@@ -38,6 +39,8 @@
 | --- | --- |
 | `OpenWriting/DomainModels.swift` | 小说、章节、参考文档、章节版本、全局记忆、时间戳和核心 Codable 模型。 |
 | `OpenWriting/LongformStorySystem.swift` | 长篇合同、章节提交验证、阻断规则和运行时状态。 |
+| `OpenWriting/ChapterCommitUseCase.swift` | 章节收录的领域用例，统一关键词抽取、门禁提交、后台投影和反模式沉淀。 |
+| `OpenWriting/KeywordMemoryExtractor.swift` | 从章节正文确定性提取角色、关系、地点、伏笔、时间线和剧情事实。 |
 | `OpenWriting/ChapterTreeRefresh.swift` | 章节树刷新结构、解析结果和安全回写结果。 |
 | `OpenWriting/StrandWeaveTracker.swift` | Quest/Fire/Constellation 节奏追踪和 AI 分析入口。 |
 | `OpenWriting/WritingMemoryBuckets.swift` | 七类长篇记忆桶、记忆项和合并/裁剪逻辑。 |

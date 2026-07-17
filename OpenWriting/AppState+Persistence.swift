@@ -170,17 +170,37 @@ extension AppState {
 // MARK: - Keychain
 
 extension AppState {
-    static func loadAPIKeyFromKeychain(for provider: ModelProvider) -> String? {
-        ModelConnectionConfigurationStore.loadAPIKeyFromKeychain(for: provider)
+    static func loadAPIKeyFromKeychain(
+        for provider: ModelProvider,
+        credentialStore: any CredentialStoring = SecurityKeychainCredentialStore()
+    ) -> String? {
+        ModelConnectionConfigurationStore.loadAPIKeyFromKeychain(
+            for: provider,
+            credentialStore: credentialStore
+        )
     }
 
     @discardableResult
-    static func saveAPIKeyToKeychain(_ apiKey: String, for provider: ModelProvider) -> Bool {
-        ModelConnectionConfigurationStore.saveAPIKeyToKeychain(apiKey, for: provider)
+    static func saveAPIKeyToKeychain(
+        _ apiKey: String,
+        for provider: ModelProvider,
+        credentialStore: any CredentialStoring = SecurityKeychainCredentialStore()
+    ) -> Bool {
+        ModelConnectionConfigurationStore.saveAPIKeyToKeychain(
+            apiKey,
+            for: provider,
+            credentialStore: credentialStore
+        )
     }
 
-    static func deleteAPIKeyFromKeychain(for provider: ModelProvider) {
-        ModelConnectionConfigurationStore.deleteAPIKeyFromKeychain(for: provider)
+    static func deleteAPIKeyFromKeychain(
+        for provider: ModelProvider,
+        credentialStore: any CredentialStoring = SecurityKeychainCredentialStore()
+    ) {
+        ModelConnectionConfigurationStore.deleteAPIKeyFromKeychain(
+            for: provider,
+            credentialStore: credentialStore
+        )
     }
 }
 
@@ -204,15 +224,15 @@ extension AppState {
         userDefaults.set(baseURL, forKey: Self.baseURLStorageKey(for: provider))
 
         guard provider.requiresAPIKey else {
-            Self.deleteAPIKeyFromKeychain(for: provider)
+            Self.deleteAPIKeyFromKeychain(for: provider, credentialStore: credentialStore)
             return
         }
 
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedKey.isEmpty {
-            Self.deleteAPIKeyFromKeychain(for: provider)
+            Self.deleteAPIKeyFromKeychain(for: provider, credentialStore: credentialStore)
         } else {
-            Self.saveAPIKeyToKeychain(trimmedKey, for: provider)
+            Self.saveAPIKeyToKeychain(trimmedKey, for: provider, credentialStore: credentialStore)
         }
     }
 
@@ -220,7 +240,9 @@ extension AppState {
         isApplyingProviderConfiguration = true
         modelName = Self.loadModelName(for: provider, userDefaults: userDefaults)
         baseURL = Self.loadBaseURL(for: provider, userDefaults: userDefaults)
-        apiKey = provider.requiresAPIKey ? Self.loadAPIKeyFromKeychain(for: provider) ?? "" : ""
+        apiKey = provider.requiresAPIKey
+            ? Self.loadAPIKeyFromKeychain(for: provider, credentialStore: credentialStore) ?? ""
+            : ""
         isApplyingProviderConfiguration = false
         refreshIdleValidationMessage()
     }
@@ -275,16 +297,16 @@ extension AppState {
 
     func persistAPIKey() {
         guard selectedProvider.requiresAPIKey else {
-            Self.deleteAPIKeyFromKeychain(for: selectedProvider)
+            Self.deleteAPIKeyFromKeychain(for: selectedProvider, credentialStore: credentialStore)
             return
         }
 
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedKey.isEmpty else {
-            Self.deleteAPIKeyFromKeychain(for: selectedProvider)
+            Self.deleteAPIKeyFromKeychain(for: selectedProvider, credentialStore: credentialStore)
             return
         }
-        Self.saveAPIKeyToKeychain(trimmedKey, for: selectedProvider)
+        Self.saveAPIKeyToKeychain(trimmedKey, for: selectedProvider, credentialStore: credentialStore)
     }
 
     func persistActiveAccountProfile() {
@@ -365,8 +387,11 @@ extension AppState {
         userDefaults.set(defaultOpenWBaseURL, forKey: key)
     }
 
-    static func migrateAPIKeysToKeychainIfNeeded(_ userDefaults: UserDefaults) {
-        deleteAPIKeyFromKeychain(for: .openAICompatible)
+    static func migrateAPIKeysToKeychainIfNeeded(
+        _ userDefaults: UserDefaults,
+        credentialStore: any CredentialStoring = SecurityKeychainCredentialStore()
+    ) {
+        deleteAPIKeyFromKeychain(for: .openAICompatible, credentialStore: credentialStore)
         userDefaults.removeObject(forKey: StorageKey.apiKey)
         userDefaults.removeObject(forKey: LegacyStorageKey.apiKey)
     }

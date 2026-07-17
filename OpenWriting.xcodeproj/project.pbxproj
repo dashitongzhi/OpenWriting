@@ -15,6 +15,7 @@
 		B00100000000000000000016 /* TestFactories.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00100000000000000000017 /* TestFactories.swift */; };
 		B00100000000000000000019 /* HostedXCTestLaunchGuardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00100000000000000000018 /* HostedXCTestLaunchGuardTests.swift */; };
 		B0010000000000000000001B /* WritingDeskSessionPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0010000000000000000001A /* WritingDeskSessionPolicyTests.swift */; };
+		B0010000000000000000001D /* ChapterCommitUseCaseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0010000000000000000001C /* ChapterCommitUseCaseTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -38,6 +39,7 @@
 		B00100000000000000000017 /* TestFactories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/TestFactories.swift; sourceTree = "<group>"; };
 		B00100000000000000000018 /* HostedXCTestLaunchGuardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/HostedXCTestLaunchGuardTests.swift; sourceTree = "<group>"; };
 		B0010000000000000000001A /* WritingDeskSessionPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/WritingDeskSessionPolicyTests.swift; sourceTree = "<group>"; };
+		B0010000000000000000001C /* ChapterCommitUseCaseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/ChapterCommitUseCaseTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -87,6 +89,7 @@
 		B00100000000000000000002 /* Tests */ = {
 			isa = PBXGroup;
 			children = (
+				B0010000000000000000001C /* ChapterCommitUseCaseTests.swift */,
 				B00100000000000000000005 /* DomainModelsTests.swift */,
 				B00100000000000000000018 /* HostedXCTestLaunchGuardTests.swift */,
 				B00100000000000000000003 /* NovelProjectTests.swift */,
@@ -212,6 +215,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B0010000000000000000001D /* ChapterCommitUseCaseTests.swift in Sources */,
 				B0010000000000000000000A /* DomainModelsTests.swift in Sources */,
 				B00100000000000000000019 /* HostedXCTestLaunchGuardTests.swift in Sources */,
 				B00100000000000000000008 /* NovelProjectTests.swift in Sources */,

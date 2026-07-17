@@ -11,16 +11,6 @@ DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 if [[ -z "${DERIVED_DATA_PATH:-}" ]]; then
   DERIVED_DATA_PATH="/tmp/OpenWritingChecksDerivedData-${USER:-user}-$$"
 fi
-XCODEBUILD="$DEVELOPER_DIR/usr/bin/xcodebuild"
-HOST_ARCH="$(uname -m)"
-MACOS_DESTINATION="platform=macOS,arch=$HOST_ARCH"
-XCTEST_CLASS_PATTERN='^[[:space:]]*(final[[:space:]]+)?class[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:[^{]*XCTestCase'
-
-discover_hosted_test_classes() {
-  rg --no-filename "$XCTEST_CLASS_PATTERN" "$REPO_ROOT/Tests/OpenWritingTests" -g '*Tests.swift' \
-    | sed -E 's/^[[:space:]]*(final[[:space:]]+)?class[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\2/' \
-    | sort -u
-}
 
 export DEVELOPER_DIR
 export DERIVED_DATA_PATH
@@ -29,16 +19,13 @@ echo "Running git preflight"
 bash "$SCRIPT_DIR/git-preflight.sh"
 export OPENWRITING_GIT_PREFLIGHT_ALREADY_RAN=1
 
-TEST_CLASSES=("${(@f)$(discover_hosted_test_classes)}")
-
-if (( ${#TEST_CLASSES[@]} == 0 )); then
-  echo "error: no hosted OpenWritingTests classes discovered" >&2
-  exit 1
-fi
-
 echo "Checking diff whitespace"
 git -C "$REPO_ROOT" diff --check
 git -C "$REPO_ROOT" diff --cached --check
+
+echo "Checking architecture indexes and test target membership"
+zsh -f "$SCRIPT_DIR/check-index-coverage.sh"
+zsh -f "$SCRIPT_DIR/verify-xctest-membership.sh"
 
 echo "Running Codex PR review checks"
 zsh -f "$SCRIPT_DIR/run-codex-pr-review-checks.sh"
@@ -52,6 +39,8 @@ swift_files=(
   "$REPO_ROOT/OpenWriting/SidebarItem.swift"
   "$REPO_ROOT/OpenWriting/DomainModels.swift"
   "$REPO_ROOT/OpenWriting/LongformStorySystem.swift"
+  "$REPO_ROOT/OpenWriting/KeywordMemoryExtractor.swift"
+  "$REPO_ROOT/OpenWriting/ChapterCommitUseCase.swift"
   "$REPO_ROOT/OpenWriting/ChapterTreeRefresh.swift"
   "$REPO_ROOT/OpenWriting/StrandWeaveTracker.swift"
   "$REPO_ROOT/OpenWriting/WritingMemoryBuckets.swift"
@@ -83,22 +72,12 @@ xcrun swiftc -typecheck -parse-as-library -sdk "$SDK_PATH" "$swift_files[@]"
 echo "Running Debug build"
 zsh -f "$SCRIPT_DIR/build-debug.sh"
 
-echo "Running hosted Xcode tests"
-for test_class in "${TEST_CLASSES[@]}"; do
-  echo "Running OpenWritingTests/$test_class"
-  "$XCODEBUILD" \
-    test \
-    -project "$REPO_ROOT/OpenWriting.xcodeproj" \
-    -scheme OpenWriting \
-    -destination "$MACOS_DESTINATION" \
-    -derivedDataPath "$DERIVED_DATA_PATH" \
-    -parallel-testing-enabled NO \
-    "-only-testing:OpenWritingTests/$test_class" \
-    CODE_SIGNING_ALLOWED=YES \
-    CODE_SIGN_STYLE=Manual \
-    CODE_SIGN_IDENTITY="-" \
-    DEVELOPMENT_TEAM= \
-    ENABLE_DEBUG_DYLIB=NO
-done
+echo "Running hosted XCTest launch guard"
+DERIVED_DATA_PATH="${DERIVED_DATA_PATH}-hosted-xctest" \
+  zsh -f "$SCRIPT_DIR/run-hosted-xctest-guard.sh"
+
+echo "Running OpenWriting XCTest suite"
+DERIVED_DATA_PATH="${DERIVED_DATA_PATH}-tests" \
+  zsh -f "$SCRIPT_DIR/run-tests.sh"
 
 echo "All checks passed"

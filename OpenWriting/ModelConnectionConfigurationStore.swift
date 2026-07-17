@@ -1,6 +1,64 @@
 import Foundation
 import Security
 
+nonisolated protocol CredentialStoring {
+    func value(service: String, account: String) -> String?
+
+    @discardableResult
+    func store(_ value: String, service: String, account: String) -> Bool
+
+    func remove(service: String, account: String)
+}
+
+nonisolated struct SecurityKeychainCredentialStore: CredentialStoring {
+    func value(service: String, account: String) -> String? {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account,
+            kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne
+        ]
+
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data,
+              let value = String(data: data, encoding: .utf8)
+        else { return nil }
+
+        return value
+    }
+
+    @discardableResult
+    func store(_ value: String, service: String, account: String) -> Bool {
+        let encodedValue = Data(value.utf8)
+        let baseQuery: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account
+        ]
+        let attributes: [CFString: Any] = [kSecValueData: encodedValue]
+
+        if SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary) == errSecSuccess {
+            return true
+        }
+
+        var addQuery = baseQuery
+        addQuery[kSecValueData] = encodedValue
+        addQuery[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlock
+        return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
+    }
+
+    func remove(service: String, account: String) {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+}
+
 enum ModelConnectionConfigurationStore {
     enum StorageKey {
         static let selectedProvider = "OpenWriting.selectedProvider"
@@ -242,66 +300,54 @@ enum ModelConnectionConfigurationStore {
         userDefaults.set(ModelProvider.openAICompatible.rawValue, forKey: StorageKey.selectedProvider)
     }
 
-    static func loadAPIKeyFromKeychain(for provider: ModelProvider) -> String? {
+    static func loadAPIKeyFromKeychain(
+        for provider: ModelProvider,
+        credentialStore: any CredentialStoring = SecurityKeychainCredentialStore()
+    ) -> String? {
         guard provider.requiresAPIKey else { return nil }
-
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: KeychainKey.service,
-            kSecAttrAccount: keychainAccount(for: provider),
-            kSecReturnData: true,
-            kSecMatchLimit: kSecMatchLimitOne
-        ]
-
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess,
-              let data = item as? Data,
-              let value = String(data: data, encoding: .utf8)
-        else { return nil }
-
-        return value
+        return credentialStore.value(
+            service: KeychainKey.service,
+            account: keychainAccount(for: provider)
+        )
     }
 
     @discardableResult
-    static func saveAPIKeyToKeychain(_ apiKey: String, for provider: ModelProvider) -> Bool {
+    static func saveAPIKeyToKeychain(
+        _ apiKey: String,
+        for provider: ModelProvider,
+        credentialStore: any CredentialStoring = SecurityKeychainCredentialStore()
+    ) -> Bool {
         guard provider.requiresAPIKey else {
-            deleteAPIKeyFromKeychain(for: provider)
+            deleteAPIKeyFromKeychain(for: provider, credentialStore: credentialStore)
             return true
         }
-
-        let encodedValue = Data(apiKey.utf8)
-        let account = keychainAccount(for: provider)
-        let baseQuery: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: KeychainKey.service,
-            kSecAttrAccount: account
-        ]
-
-        let attributes: [CFString: Any] = [kSecValueData: encodedValue]
-        let updateStatus = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
-        if updateStatus == errSecSuccess { return true }
-
-        var addQuery = baseQuery
-        addQuery[kSecValueData] = encodedValue
-        addQuery[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlock
-        return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
+        return credentialStore.store(
+            apiKey,
+            service: KeychainKey.service,
+            account: keychainAccount(for: provider)
+        )
     }
 
-    static func deleteAPIKeyFromKeychain(for provider: ModelProvider) {
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: KeychainKey.service,
-            kSecAttrAccount: keychainAccount(for: provider)
-        ]
-        SecItemDelete(query as CFDictionary)
+    static func deleteAPIKeyFromKeychain(
+        for provider: ModelProvider,
+        credentialStore: any CredentialStoring = SecurityKeychainCredentialStore()
+    ) {
+        credentialStore.remove(
+            service: KeychainKey.service,
+            account: keychainAccount(for: provider)
+        )
     }
 
-    static func loadConnectionConfiguration(userDefaults: UserDefaults = .standard) throws -> AIConnectionConfiguration {
+    static func loadConnectionConfiguration(
+        userDefaults: UserDefaults = .standard,
+        credentialStore: any CredentialStoring = SecurityKeychainCredentialStore()
+    ) throws -> AIConnectionConfiguration {
         let provider = loadSelectedProvider(userDefaults: userDefaults)
         let rawModelName = loadModelName(for: provider, userDefaults: userDefaults)
         let rawBaseURL = loadBaseURL(for: provider, userDefaults: userDefaults)
-        let rawAPIKey = provider.requiresAPIKey ? loadAPIKeyFromKeychain(for: provider) ?? "" : ""
+        let rawAPIKey = provider.requiresAPIKey
+            ? loadAPIKeyFromKeychain(for: provider, credentialStore: credentialStore) ?? ""
+            : ""
 
         let modelName = rawModelName.trimmingCharacters(in: .whitespacesAndNewlines)
         let apiKey = rawAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)

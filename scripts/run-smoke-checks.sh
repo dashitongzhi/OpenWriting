@@ -20,6 +20,10 @@ echo "Checking diff whitespace"
 git -C "$REPO_ROOT" diff --check
 git -C "$REPO_ROOT" diff --cached --check
 
+echo "Checking architecture indexes and test target membership"
+zsh -f "$SCRIPT_DIR/check-index-coverage.sh"
+zsh -f "$SCRIPT_DIR/verify-xctest-membership.sh"
+
 echo "Checking longform quality gates"
 zsh -f "$SCRIPT_DIR/run-longform-quality-checks.sh"
 

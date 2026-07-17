@@ -1068,7 +1068,8 @@ struct WritingDeskView: View {
                 )
             }
 
-            if latestChapterReviewDraftContext == ChapterWritingSessionPolicy.chapterSaveValidationContext(for: project) {
+            if let latestChapterReviewDraftContext,
+               ChapterWritingSessionPolicy.isCurrent(latestChapterReviewDraftContext, for: project) {
                 return QualityReviewDashboardPresentation(
                     review: latestChapterReview,
                     chapterTitle: project.currentChapterSummary,
@@ -1955,10 +1956,9 @@ struct WritingDeskView: View {
                         return
                     }
 
-                    let currentContext = appState.project(for: project.id).map {
-                        ChapterWritingSessionPolicy.outlineGenerationContext(for: $0, profile: $0.outlineGenerationProfile)
-                    }
-                    guard currentContext == requestContext else {
+                    guard let currentProject = appState.project(for: project.id),
+                          ChapterWritingSessionPolicy.isCurrent(requestContext, for: currentProject)
+                    else {
                         clearOutlineGenerationRequest(token: requestToken)
                         isGenerating = false
                         timingSnapshot = .idle
@@ -2072,14 +2072,9 @@ struct WritingDeskView: View {
                         return
                     }
 
-                    let currentContext = appState.project(for: project.id).map {
-                        ChapterWritingSessionPolicy.draftGenerationContext(
-                            for: $0,
-                            rewriteDirection: rewriteDirection,
-                            rejectedSuggestion: rejectedSuggestion
-                        )
-                    }
-                    guard currentContext == requestContext else {
+                    guard let currentProject = appState.project(for: project.id),
+                          ChapterWritingSessionPolicy.isCurrent(requestContext, for: currentProject)
+                    else {
                         clearWritingGenerationRequest(token: requestToken)
                         isGenerating = false
                         timingSnapshot = .idle
@@ -2369,7 +2364,10 @@ struct WritingDeskView: View {
         guard let latestAISuggestionAcceptanceContext else {
             return "长篇候选稿缺少生成时上下文记录，请重新生成后再放入草稿箱。"
         }
-        guard latestAISuggestionAcceptanceContext == ChapterWritingSessionPolicy.acceptanceContext(for: project) else {
+        guard ChapterWritingSessionPolicy.isCurrent(
+            latestAISuggestionAcceptanceContext,
+            for: project
+        ) else {
             return "生成候选稿后，草稿、章节位置、记忆或长篇后台合同已经变化。请按当前内容重新生成，避免旧上下文污染新草稿。"
         }
 
@@ -2613,7 +2611,7 @@ struct WritingDeskView: View {
 
                     await MainActor.run {
                         guard let currentProject = appState.project(for: project.id),
-                              ChapterWritingSessionPolicy.chapterSaveValidationContext(for: currentProject) == saveContext
+                              ChapterWritingSessionPolicy.isCurrent(saveContext, for: currentProject)
                         else {
                             isSavingChapter = false
                             aiStatusMessage = "保存审查期间正文或章节位置已经变化，旧审查结果已丢弃。请按当前内容重新保存。"
@@ -2752,7 +2750,7 @@ struct WritingDeskView: View {
                 await MainActor.run {
                     if let reviewedSaveContext {
                         guard let currentProject = appState.project(for: project.id),
-                              ChapterWritingSessionPolicy.chapterSaveValidationContext(for: currentProject) == reviewedSaveContext
+                              ChapterWritingSessionPolicy.isCurrent(reviewedSaveContext, for: currentProject)
                         else {
                             isSavingChapter = false
                             aiStatusMessage = "拟标题期间正文、章节位置或长篇上下文已经变化，旧保存审查结果已丢弃。请按当前内容重新保存。"
@@ -2780,7 +2778,7 @@ struct WritingDeskView: View {
                 await MainActor.run {
                     if let reviewedSaveContext {
                         guard let currentProject = appState.project(for: project.id),
-                              ChapterWritingSessionPolicy.chapterSaveValidationContext(for: currentProject) == reviewedSaveContext
+                              ChapterWritingSessionPolicy.isCurrent(reviewedSaveContext, for: currentProject)
                         else {
                             isSavingChapter = false
                             aiStatusMessage = "拟标题期间正文、章节位置或长篇上下文已经变化，旧保存审查结果已丢弃。请按当前内容重新保存。"
@@ -2940,10 +2938,6 @@ struct WritingDeskView: View {
             from: chapterDraft,
             for: projectID,
             reviewFailureReason: reviewFailureReason
-        )
-        appState.appendLocalAntiPatterns(
-            from: chapterDraft.content,
-            for: projectID
         )
         return commit
     }
@@ -3161,12 +3155,6 @@ struct WritingDeskView: View {
                 if canAdvance {
                     appState.beginNextChapter(after: chapterDraft, for: project.id)
                 }
-
-                // Accumulate locally-detected AI anti-patterns
-                appState.appendLocalAntiPatterns(
-                    from: chapterContent,
-                    for: project.id
-                )
 
                 projectContextRefreshTokens.removeValue(forKey: project.id)
                 isSavingChapter = false
@@ -3419,7 +3407,7 @@ struct WritingDeskView: View {
     }
 
     private func requestChapterLoadFromNavigator(_ metadata: ChapterDraftMetadata, for project: NovelProject) {
-        if shouldConfirmChapterLoad(metadata, in: project) {
+        if ChapterWritingSessionPolicy.shouldConfirmChapterLoad(in: project) {
             pendingChapterLoad = metadata
             return
         }
@@ -3448,28 +3436,6 @@ struct WritingDeskView: View {
         } else {
             aiStatusMessage = appState.cloudSyncStatusMessage
         }
-    }
-
-    private func shouldConfirmChapterLoad(_ metadata: ChapterDraftMetadata, in project: NovelProject) -> Bool {
-        let currentDraft = project.draftText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !currentDraft.isEmpty else { return false }
-
-        let currentSavedDraft = project.chapterDrafts.first {
-            $0.volumeNumber == max(project.currentVolumeNumber, 1)
-                && $0.chapterNumber == max(project.currentChapterNumber, 1)
-        }
-        let savedText = currentSavedDraft?.content.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if savedText == currentDraft {
-            return false
-        }
-
-        if metadata.volumeNumber == max(project.currentVolumeNumber, 1),
-           metadata.chapterNumber == max(project.currentChapterNumber, 1) {
-            return true
-        }
-
-        return true
     }
 
     private func clearOutlineGenerationRequest(token: UUID) {
@@ -3590,8 +3556,12 @@ struct WritingDeskView: View {
             get: {
                 pendingDraftPolishReview?.projectID == projectID
             },
-            set: { _ in
-                // Keep the review open until the user chooses 保留 / 替换 / 舍弃.
+            set: { isPresented in
+                guard !isPresented,
+                      let review = pendingDraftPolishReview,
+                      review.projectID == projectID
+                else { return }
+                discardDraftPolishReview(review)
             }
         )
     }

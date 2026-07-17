@@ -11,6 +11,7 @@ final class AppState {
     let userDefaults: UserDefaults
     let projectStore: ProjectFileStore
     @ObservationIgnored let aiService: any AIWritingServicing
+    @ObservationIgnored let credentialStore: any CredentialStoring
     @ObservationIgnored private let commerceProvider: any CommerceEntitlementProviding
     @ObservationIgnored let cloudStore = ICloudProjectStore()
     @ObservationIgnored var cloudSaveTask: Task<Void, Never>?
@@ -164,6 +165,7 @@ final class AppState {
         userDefaults: UserDefaults = .standard,
         projectStore: ProjectFileStore? = nil,
         aiService: any AIWritingServicing = DefaultAIWritingService(),
+        credentialStore: any CredentialStoring = SecurityKeychainCredentialStore(),
         commerceProvider: any CommerceEntitlementProviding = DeferredAppleCommerceProvider()
     ) {
         let projectStore = projectStore ?? ProjectFileStore()
@@ -171,10 +173,11 @@ final class AppState {
         Self.migrateRetiredOpenAICompatibleDefaults(userDefaults)
         ModelConnectionConfigurationStore.clearBundledCustomDefaultsIfNeeded(userDefaults)
         Self.migrateLegacyEmailScopeIfNeeded(userDefaults, projectStore: projectStore)
-        Self.migrateAPIKeysToKeychainIfNeeded(userDefaults)
+        Self.migrateAPIKeysToKeychainIfNeeded(userDefaults, credentialStore: credentialStore)
         self.userDefaults = userDefaults
         self.projectStore = projectStore
         self.aiService = aiService
+        self.credentialStore = credentialStore
         self.commerceProvider = commerceProvider
         let resolvedActiveAccount = Self.loadActiveAppleAccount(from: userDefaults)
         let resolvedStorageScope = resolvedActiveAccount?.userID
@@ -182,7 +185,12 @@ final class AppState {
         self.activeAccount = resolvedActiveAccount
         self.selectedProvider = resolvedProvider
         self.modelName = Self.loadModelName(for: resolvedProvider, userDefaults: userDefaults)
-        self.apiKey = resolvedProvider.requiresAPIKey ? Self.loadAPIKeyFromKeychain(for: resolvedProvider) ?? "" : ""
+        self.apiKey = resolvedProvider.requiresAPIKey
+            ? ModelConnectionConfigurationStore.loadAPIKeyFromKeychain(
+                for: resolvedProvider,
+                credentialStore: credentialStore
+            ) ?? ""
+            : ""
         self.baseURL = Self.loadBaseURL(for: resolvedProvider, userDefaults: userDefaults)
         self.autoValidateOnLaunch = Self.boolValue(
             forKey: StorageKey.autoValidateOnLaunch,
@@ -485,20 +493,8 @@ final class AppState {
     func deleteProject(_ projectID: NovelProject.ID) {
         guard recentProjects.contains(where: { $0.id == projectID }) else { return }
 
-        // MAJOR #4: Clean up orphaned UserDefaults keys for this project
-        let keysToRemove = [
-            "memoryBuckets_\(projectID)",
-            "strandWeave_\(projectID)",
-            "lastReview_\(projectID)",
-            "antiPatterns_\(projectID)",
-            "longformRuntime_\(projectID)",
-        ]
-        for key in keysToRemove {
-            userDefaults.removeObject(forKey: key)
-        }
-
-        // Clear in-memory cache for this project
-        NovelProject.clearIntegrationCache(for: projectID)
+        // Remove legacy sidecar data that predates project-file persistence.
+        NovelProject.clearIntegrationCache(for: projectID, userDefaults: userDefaults)
 
         recentProjects.removeAll { $0.id == projectID }
 
@@ -1408,568 +1404,6 @@ final class AppState {
         }
     }
 
-    // MARK: - Memory Buckets Auto-Population
-
-    /// Extract structured memory items from a chapter draft and upsert them
-    /// into the project's MemoryBuckets. Runs keyword-based extraction
-    /// for characters, relationships, locations, foreshadowing, and timeline.
-    @discardableResult
-    func extractAndStoreMemoryItems(
-        from chapterContent: String,
-        chapterNumber: Int,
-        for projectID: NovelProject.ID,
-        review: ChapterReviewResult? = nil,
-        reviewFailureReason: String? = nil,
-        contractOverride: LongformStoryContractBundle? = nil
-    ) -> LongformChapterCommit? {
-        let chapterDraft = ChapterDraft(
-            volumeNumber: max(project(for: projectID)?.currentVolumeNumber ?? 1, 1),
-            chapterNumber: chapterNumber,
-            chapterTitle: project(for: projectID)?.currentChapterTitle ?? "未命名章节",
-            content: chapterContent,
-            savedAt: Self.currentTimestampLabel()
-        )
-        return extractAndStoreMemoryItems(
-            from: chapterDraft,
-            for: projectID,
-            review: review,
-            reviewFailureReason: reviewFailureReason,
-            contractOverride: contractOverride
-        )
-    }
-
-    @discardableResult
-    func extractAndStoreMemoryItems(
-        from chapterDraft: ChapterDraft,
-        for projectID: NovelProject.ID,
-        review: ChapterReviewResult? = nil,
-        reviewFailureReason: String? = nil,
-        contractOverride: LongformStoryContractBundle? = nil
-    ) -> LongformChapterCommit? {
-        let allItems = extractedStructuredMemoryItems(
-            from: chapterDraft.content,
-            volumeNumber: chapterDraft.volumeNumber,
-            chapterNumber: chapterDraft.chapterNumber
-        )
-        var builtCommit: LongformChapterCommit?
-
-        updateProject(projectID) { project in
-            let contract = contractOverride ?? LongformStorySystem.buildRuntimeContract(for: project)
-            let commit = LongformStorySystem.buildCommit(
-                project: project,
-                chapterDraft: chapterDraft,
-                review: review,
-                reviewFailureReason: reviewFailureReason,
-                extractedMemoryItems: allItems,
-                contract: contract
-            )
-            LongformStorySystem.apply(commit: commit, contract: contract, to: &project)
-            builtCommit = project.longformRuntimeState.latestCommit ?? commit
-            project.updatedAt = Self.currentTimestampLabel()
-        }
-
-        return builtCommit
-    }
-
-    /// AI-powered memory extraction - runs after chapter save.
-    /// Sends chapter text to LLM to extract structured memory items across all 6 buckets.
-    /// Merges with keyword-based extraction for completeness.
-    func runAIMemoryExtraction(
-        from chapterContent: String,
-        chapterNumber: Int,
-        volumeNumber: Int? = nil,
-        expectedCommitID: LongformChapterCommit.ID? = nil,
-        projectID: NovelProject.ID
-    ) {
-        Task { [weak self] in
-            guard let self else { return }
-            let configuration = self.aiConfiguration
-
-            // Capture project context before the async call
-            let projectSnapshot: (
-                title: String,
-                genre: String,
-                summary: String,
-                volumeNumber: Int,
-                chapterSummary: String,
-                chapterFocus: String,
-                longformContext: String,
-                memoryContext: String,
-                reviewContext: String
-            )?
-            if let project = self.project(for: projectID) {
-                let runtime = project.longformRuntimeState
-                let reviewContext = [
-                    runtime.latestCommit?.reviewSummary,
-                    runtime.latestCommit?.revisionHints?.prefix(4).joined(separator: "；")
-                ]
-                    .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-                    .joined(separator: "\n")
-                projectSnapshot = (
-                    project.title,
-                    project.genre,
-                    project.summary,
-                    max(project.currentVolumeNumber, 1),
-                    project.currentChapterSummary,
-                    project.chapterFocus,
-                    Self.boundedPromptContext(project.longformStorySystemContext, limit: 3_600),
-                    Self.boundedPromptContext(project.enhancedMemoryContext, limit: 2_400),
-                    Self.boundedPromptContext(reviewContext, limit: 1_200)
-                )
-            } else {
-                projectSnapshot = nil
-            }
-
-            guard let config = configuration, let context = projectSnapshot else { return }
-            let sourceVolumeNumber = max(volumeNumber ?? context.volumeNumber, 1)
-
-            let systemPrompt = MemoryExtractionService.extractionSystemPrompt
-            let userPrompt = MemoryExtractionService.extractionUserPrompt(
-                chapterText: MemoryExtractionService.sampledChapterText(chapterContent),
-                chapterNumber: chapterNumber,
-                volumeNumber: sourceVolumeNumber,
-                projectContext: """
-                作品名：\(context.title)
-                题材：\(context.genre)
-                简介：\(context.summary)
-                当前章节：\(context.chapterSummary)
-                本章目标：\(context.chapterFocus)
-                """,
-                longformContext: context.longformContext,
-                existingMemoryContext: context.memoryContext,
-                reviewContext: context.reviewContext
-            )
-
-            do {
-                let response = try await aiService.generateText(
-                    configuration: config,
-                    systemPrompt: systemPrompt,
-                    userPrompt: userPrompt,
-                    temperature: 0.2,
-                    maxTokens: 3000
-                )
-
-                guard let extractionResult = MemoryExtractionService.parseExtractionResult(from: response) else {
-                    self.recordAIMemoryExtractionStatus(
-                        "parse_failed",
-                        volumeNumber: sourceVolumeNumber,
-                        chapterNumber: chapterNumber,
-                        expectedCommitID: expectedCommitID,
-                        projectID: projectID
-                    )
-                    return
-                }
-
-                let aiItems = extractionResult.allItems(
-                    sourceVolumeNumber: sourceVolumeNumber,
-                    sourceChapterNumber: chapterNumber
-                )
-                guard !aiItems.isEmpty else {
-                    self.recordAIMemoryExtractionStatus(
-                        "empty",
-                        volumeNumber: sourceVolumeNumber,
-                        chapterNumber: chapterNumber,
-                        expectedCommitID: expectedCommitID,
-                        projectID: projectID
-                    )
-                    return
-                }
-
-                self.updateProject(projectID) { project in
-                    var runtime = project.longformRuntimeState
-                    if var latestCommit = runtime.latestCommit,
-                       latestCommit.chapterNumber == chapterNumber,
-                       latestCommit.volumeNumber == sourceVolumeNumber,
-                       expectedCommitID.map({ latestCommit.id == $0 }) ?? true,
-                       latestCommit.isAccepted {
-                        var buckets = project.memoryBuckets
-                        buckets.removeItems(
-                            sourceVolumeNumber: sourceVolumeNumber,
-                            sourceChapter: chapterNumber
-                        )
-                        for item in latestCommit.extractedMemoryItems {
-                            buckets.upsert(item)
-                        }
-                        for item in aiItems {
-                            buckets.upsert(item)
-                        }
-                        buckets.compact(currentVolumeNumber: sourceVolumeNumber, currentChapter: chapterNumber)
-                        project.memoryBuckets = buckets
-
-                        let existingIDs = Set(latestCommit.extractedMemoryItems.map(\.id))
-                        let newItems = aiItems.filter { !existingIDs.contains($0.id) }
-                        latestCommit.extractedMemoryItems.append(contentsOf: newItems)
-                        latestCommit.projectionStatus["ai_memory"] = "done"
-                        runtime.record(commit: latestCommit)
-                        if let latestContract = runtime.latestContract {
-                            runtime.record(writeGate: LongformStorySystem.buildWriteGateReport(
-                                commit: latestCommit,
-                                contract: latestContract
-                            ))
-                        }
-                        project.longformRuntimeState = runtime
-                    }
-                }
-            } catch {
-                self.recordAIMemoryExtractionStatus(
-                    "failed",
-                    volumeNumber: sourceVolumeNumber,
-                    chapterNumber: chapterNumber,
-                    expectedCommitID: expectedCommitID,
-                    projectID: projectID
-                )
-            }
-        }
-    }
-
-    private func recordAIMemoryExtractionStatus(
-        _ status: String,
-        volumeNumber: Int,
-        chapterNumber: Int,
-        expectedCommitID: LongformChapterCommit.ID?,
-        projectID: NovelProject.ID
-    ) {
-        updateProject(projectID) { project in
-            var runtime = project.longformRuntimeState
-            guard var latestCommit = runtime.latestCommit,
-                  latestCommit.chapterNumber == chapterNumber,
-                  latestCommit.volumeNumber == volumeNumber,
-                  expectedCommitID.map({ latestCommit.id == $0 }) ?? true,
-                  latestCommit.isAccepted
-            else { return }
-
-            latestCommit.projectionStatus["ai_memory"] = status
-            runtime.record(commit: latestCommit)
-            if let latestContract = runtime.latestContract {
-                runtime.record(writeGate: LongformStorySystem.buildWriteGateReport(
-                    commit: latestCommit,
-                    contract: latestContract
-                ))
-            }
-            project.longformRuntimeState = runtime
-        }
-    }
-
-    /// Append locally-detected AI-flavor anti-patterns from a chapter draft.
-    /// These accumulate across chapters and are injected into writing prompts.
-    func appendLocalAntiPatterns(
-        from chapterContent: String,
-        for projectID: NovelProject.ID
-    ) {
-        let localPatterns = ChapterQualityReviewer.quickAIFlavorCheck(text: chapterContent)
-        guard !localPatterns.isEmpty else { return }
-
-        updateProject(projectID) { project in
-            project.appendAntiPatterns(from: localPatterns)
-        }
-    }
-
-    private func extractedStructuredMemoryItems(from text: String, volumeNumber: Int, chapterNumber: Int) -> [MemoryItem] {
-        let (characters, relationships, locations, foreshadowing, timeline, storyFacts) =
-            extractStructuredMemory(from: text, volumeNumber: volumeNumber, chapterNumber: chapterNumber)
-
-        return characters + relationships + locations + foreshadowing + timeline + storyFacts
-    }
-
-    /// Keyword-based extraction of structured memory items from Chinese chapter text.
-    private func extractStructuredMemory(
-        from text: String,
-        volumeNumber: Int,
-        chapterNumber: Int
-    ) -> (
-        characters: [MemoryItem],
-        relationships: [MemoryItem],
-        locations: [MemoryItem],
-        foreshadowing: [MemoryItem],
-        timeline: [MemoryItem],
-        storyFacts: [MemoryItem]
-    ) {
-        let sourceVolumeNumber = max(volumeNumber, 1)
-        let nonNameWords: Set<String> = [
-            // Pronouns & demonstratives
-            "什么", "怎么", "那个", "这个", "他们", "我们", "你们", "自己",
-            "别人", "大家", "哪个", "哪些", "任何", "某个", "某些", "每个",
-            "谁", "哪", "哪位", "哪边", "哪儿", "哪里",
-            // Common verbs
-            "知道", "没有", "觉得", "需要", "希望", "认为", "相信", "明白",
-            "看见", "听到", "感到", "想起", "发现", "决定", "开始", "结束",
-            "离开", "回来", "过来", "出去", "起来", "下来", "上去", "出来",
-            "告诉", "说道", "回答", "笑道", "说话", "问道", "叹道", "怒道",
-            "冷声道", "轻声道", "淡淡道", "大声道", "低声道", "急道", "惊道",
-            "道", "说", "答", "叫", "喊", "笑", "哭", "叹", "问", "怒",
-            "想", "看", "听", "走", "来", "去", "到", "回", "出", "入",
-            "站", "坐", "躺", "拿", "放", "拉", "推", "打", "挡",
-            // Adverbs & conjunctions
-            "已经", "不是", "可能", "可以", "应该", "还是", "就是", "只是",
-            "不过", "因为", "所以", "但是", "如果", "虽然", "或者", "然后",
-            "忽然", "突然", "居然", "竟然", "果然", "依然", "仍然", "当然",
-            "自然", "显然", "似乎", "仿佛", "好像", "大概", "也许", "或许",
-            "几乎", "简直", "根本", "实在", "确实", "真正", "完全", "非常",
-            "特别", "尤其", "甚至", "至少", "至多", "反正", "总之", "否则",
-            "于是", "接着", "随后", "随即", "马上", "立刻", "立即", "赶紧",
-            "连忙", "急忙", "急忙", "渐渐", "慢慢", "悄悄", "偷偷", "默默",
-            // Time & location words
-            "现在", "刚才", "此时", "这时", "那时", "这里", "那里", "到处",
-            "时候", "一下", "一点", "一些", "许多", "很多", "所有", "全部",
-            "刚才", "方才", "之前", "之后", "以后", "以前", "将来", "未来",
-            "昨天", "今天", "明天", "前天", "后天",
-            // Measure words & particles
-            "一个", "两个", "几个", "那些", "这些", "每个", "各种", "各位",
-            "本人", "自身", "对方", "彼此", "互相", "一起", "一同", "单独",
-            // Sentence-final particles & fillers
-            "的话", "罢了", "而已", "算了", "好吧", "对了", "行了", "够了"
-        ]
-
-        // --- Characters from dialogue (supports both "" and "" quotes) ---
-        var characterFrequency: [String: Int] = [:]
-        if let regex = try? NSRegularExpression(pattern: "[\u{201C}\u{0022}]([^\u{201C}\u{201D}\u{0022}\n]{1,20})[\u{201D}\u{0022}]") {
-            let nsText = text as NSString
-            for match in regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)) {
-                if match.numberOfRanges >= 2 {
-                    let contextStart = max(0, match.range.location - 10)
-                    let contextLength = min(match.range.location - contextStart, 20)
-                    let context = nsText.substring(with: NSRange(location: contextStart, length: contextLength))
-                    let candidates = extractNamesFromContext(context, excluding: nonNameWords)
-                    for name in candidates {
-                        characterFrequency[name, default: 0] += 1
-                    }
-                }
-            }
-        }
-
-        // --- Characters from action patterns ---
-        let actionPatterns = ["道：", "笑道", "怒道", "冷声道", "道，", "说道："]
-        for pattern in actionPatterns {
-            var searchStart = text.startIndex
-            while let range = text.range(of: pattern, range: searchStart..<text.endIndex) {
-                let contextStart = text.index(range.lowerBound, offsetBy: -min(10, text.distance(from: text.startIndex, to: range.lowerBound)), limitedBy: text.startIndex) ?? text.startIndex
-                let context = String(text[contextStart..<range.lowerBound])
-                let candidates = extractNamesFromContext(context, excluding: nonNameWords)
-                for name in candidates {
-                    characterFrequency[name, default: 0] += 2
-                }
-                searchStart = range.upperBound
-            }
-        }
-
-        let characterNames = characterFrequency
-            .filter { $0.value >= 2 }
-            .sorted { $0.value > $1.value }
-            .prefix(15)
-            .map { $0.key }
-
-        let characterItems = characterNames.map { name in
-            MemoryItem(
-                category: .characterState,
-                subject: name,
-                field: "出场",
-                value: "在第\(sourceVolumeNumber)卷第\(chapterNumber)章中出场并有对白或行动",
-                sourceVolumeNumber: sourceVolumeNumber,
-                sourceChapter: chapterNumber
-            )
-        }
-
-        // --- Relationships from co-occurrence in dialogue/action ---
-        var relationshipPairs: [String: Int] = [:]
-        let allNames = Set(characterNames)
-        let paragraphs = text.components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-
-        for paragraph in paragraphs {
-            let present = allNames.filter { paragraph.contains($0) }
-            if present.count >= 2 {
-                let sorted = present.sorted()
-                for i in 0..<sorted.count {
-                    for j in (i+1)..<sorted.count {
-                        let key = "\(sorted[i])↔\(sorted[j])"
-                        relationshipPairs[key, default: 0] += 1
-                    }
-                }
-            }
-        }
-
-        let relationshipItems = relationshipPairs
-            .filter { $0.value >= 1 }
-            .prefix(10)
-            .map { (pair, count) -> MemoryItem in
-                return MemoryItem(
-                    category: .relationship,
-                    subject: pair,
-                    field: count >= 3 ? "密切互动" : "互动",
-                    value: "第\(sourceVolumeNumber)卷第\(chapterNumber)章中共同出现\(count)次",
-                    sourceVolumeNumber: sourceVolumeNumber,
-                    sourceChapter: chapterNumber
-                )
-            }
-
-        // --- Locations ---
-        var locationFrequency: [String: Int] = [:]
-        let locationMarkers = [
-            "在(.{2,8}?)[，。,.]", "来到(.{2,8}?)[，。,.]",
-            "到达(.{2,8}?)[，。,.]", "离开(.{2,8}?)[，。,.]",
-            "进入(.{2,8}?)[，。,.]", "走出(.{2,8}?)[，。,.]"
-        ]
-        let nonLocationWords: Set<String> = [
-            "这里", "那里", "此时", "这时", "什么", "自己", "对方", "面前",
-            "身后", "旁边", "外面", "里面", "上面", "下面", "前面", "后面",
-            "之间", "其中", "之后", "之前", "以后", "以前"
-        ]
-
-        for pattern in locationMarkers {
-            if let regex = try? NSRegularExpression(pattern: pattern) {
-                let nsText = text as NSString
-                for match in regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)) {
-                    if match.numberOfRanges >= 2 {
-                        let location = nsText.substring(with: match.range(at: 1))
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
-                        if location.count >= 2 && location.count <= 8 && !nonLocationWords.contains(location) {
-                            locationFrequency[location, default: 0] += 1
-                        }
-                    }
-                }
-            }
-        }
-
-        let locationItems = locationFrequency
-            .filter { $0.value >= 1 }
-            .prefix(8)
-            .map { (location, _) -> MemoryItem in
-                MemoryItem(
-                    category: .worldRule,
-                    subject: location,
-                    field: "地点",
-                    value: "在第\(sourceVolumeNumber)卷第\(chapterNumber)章中出现",
-                    sourceVolumeNumber: sourceVolumeNumber,
-                    sourceChapter: chapterNumber
-                )
-            }
-
-        // --- Foreshadowing / Open Loops ---
-        var foreshadowItems: [MemoryItem] = []
-        let mysteryPatterns = [
-            ("暗示线索", ["暗示", "似乎", "仿佛", "好像"]),
-            ("悬疑伏笔", ["疑团", "谜团", "悬念", "蹊跷", "奇怪"]),
-            ("未解之谜", ["不知", "不解", "未明", "不明", "无法解释"]),
-            ("隐藏信息", ["秘密", "隐瞒", "隐藏", "藏着", "背后的真相"]),
-            ("预兆", ["预感", "预兆", "不祥", "隐隐"])
-        ]
-
-        for (field, markers) in mysteryPatterns {
-            for marker in markers {
-                var searchStart = text.startIndex
-                while let range = text.range(of: marker, range: searchStart..<text.endIndex) {
-                    let ctxStart = text.index(range.lowerBound, offsetBy: -min(8, text.distance(from: text.startIndex, to: range.lowerBound)), limitedBy: text.startIndex) ?? text.startIndex
-                    let ctxEnd = text.index(range.upperBound, offsetBy: min(20, text.distance(from: range.upperBound, to: text.endIndex)), limitedBy: text.endIndex) ?? text.endIndex
-                    let context = String(text[ctxStart..<ctxEnd])
-                        .replacingOccurrences(of: "\n", with: " ")
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    if context.count >= 4 {
-                        foreshadowItems.append(MemoryItem(
-                            category: .openLoop,
-                            subject: String(context.prefix(30)),
-                            field: field,
-                            value: context,
-                            status: .tentative,
-                            sourceVolumeNumber: sourceVolumeNumber,
-                            sourceChapter: chapterNumber
-                        ))
-                    }
-                    searchStart = range.upperBound
-                }
-            }
-        }
-
-        // --- Timeline ---
-        var timelineItems: [MemoryItem] = []
-        let timeMarkers = [
-            "黎明", "清晨", "早上", "上午", "中午", "下午",
-            "傍晚", "黄昏", "晚上", "深夜", "午夜", "凌晨",
-            "日出", "日落", "天亮", "天黑",
-            "三天后", "第二天", "次日", "当日", "当晚",
-            "一周后", "一个月后", "一年后", "数日后", "数月后",
-            "数年后", "半月后", "两周后", "数年后", "多年后",
-            "片刻后", "半晌", "一炷香", "一盏茶",
-            "过了许久", "过了很久", "不知过了多久",
-            "日复一日", "年复一年", "转眼间", "不知不觉",
-            "那一年", "这一年", "那日", "这日", "翌日"
-        ]
-
-        for marker in timeMarkers {
-            if text.contains(marker) {
-                timelineItems.append(MemoryItem(
-                    category: .timeline,
-                    subject: marker,
-                    field: "时间标记",
-                    value: "第\(sourceVolumeNumber)卷第\(chapterNumber)章提及「\(marker)」",
-                    sourceVolumeNumber: sourceVolumeNumber,
-                    sourceChapter: chapterNumber
-                ))
-            }
-        }
-
-        // --- Story Facts from plot-significant patterns ---
-        var storyFactItems: [MemoryItem] = []
-        let factPatterns = [
-            ("关键转折", ["决定", "选择", "放弃", "离开", "归来", "背叛"]),
-            ("能力揭示", ["觉醒", "突破", "领悟", "解锁", "获得"]),
-            ("重要信息", ["真相", "发现", "揭露", "得知", "原来"])
-        ]
-
-        for (field, markers) in factPatterns {
-            for marker in markers {
-                var count = 0
-                var searchStart = text.startIndex
-                while let range = text.range(of: marker, range: searchStart..<text.endIndex) {
-                    count += 1
-                    searchStart = range.upperBound
-                }
-                if count >= 2 {
-                    storyFactItems.append(MemoryItem(
-                        category: .storyFact,
-                        subject: marker,
-                        field: field,
-                        value: "第\(sourceVolumeNumber)卷第\(chapterNumber)章中出现\(count)次",
-                        sourceVolumeNumber: sourceVolumeNumber,
-                        sourceChapter: chapterNumber
-                    ))
-                }
-            }
-        }
-
-        return (
-            characters: Array(characterItems.prefix(10)),
-            relationships: Array(relationshipItems.prefix(8)),
-            locations: Array(locationItems.prefix(6)),
-            foreshadowing: Array(foreshadowItems.prefix(8)),
-            timeline: Array(timelineItems.prefix(6)),
-            storyFacts: Array(storyFactItems.prefix(8))
-        )
-    }
-
-    /// Extract likely character names from a short context string.
-    private func extractNamesFromContext(_ context: String, excluding nonNames: Set<String>) -> [String] {
-        let trimmed = context.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return [] }
-
-        let separators = CharacterSet(charactersIn: "，。、；：！？… \t\n\"'")
-        let tokens = trimmed.components(separatedBy: separators)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { $0.count >= 2 && $0.count <= 6 }
-
-        var names: [String] = []
-        for token in tokens {
-            guard !nonNames.contains(token) else { continue }
-            let isCapitalized = token.unicodeScalars.first.map { CharacterSet.uppercaseLetters.contains($0) } ?? false
-            let allChinese = token.unicodeScalars.allSatisfy { $0.value >= 0x4E00 && $0.value <= 0x9FFF }
-            if isCapitalized || (allChinese && token.count >= 2 && token.count <= 4) {
-                names.append(token)
-            }
-        }
-        return names
-    }
-
     func searchLongformProject(_ query: String, in projectID: NovelProject.ID, limit: Int = 60) -> [LongformSearchResult] {
         guard let project = hydratedProjectForFullText(projectID) else { return [] }
         let tokens = Self.searchTokens(from: query)
@@ -2189,18 +1623,18 @@ final class AppState {
         )
     }
 
-    private func updateProject(_ projectID: NovelProject.ID, mutate: (inout NovelProject) -> Void) {
+    func updateProject(_ projectID: NovelProject.ID, mutate: (inout NovelProject) -> Void) {
         guard let index = recentProjects.firstIndex(where: { $0.id == projectID }) else { return }
         var updatedProject = recentProjects[index]
         mutate(&updatedProject)
         recentProjects[index] = updatedProject
     }
 
-    private static func currentTimestampLabel() -> String {
+    static func currentTimestampLabel() -> String {
         PersistedTimestampCodec.displayLabel(for: Date(), style: .project)
     }
 
-    private static func boundedPromptContext(_ text: String, limit: Int) -> String {
+    static func boundedPromptContext(_ text: String, limit: Int) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count > limit else { return trimmed }
         return String(trimmed.suffix(limit))

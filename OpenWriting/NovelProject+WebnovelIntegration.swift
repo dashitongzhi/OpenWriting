@@ -8,14 +8,17 @@ import Foundation
 extension NovelProject {
 
     /// Clear legacy integration data for a given project ID (called on project deletion).
-    static func clearIntegrationCache(for projectID: String) {
-        let defaults = UserDefaults.standard
+    static func clearIntegrationCache(
+        for projectID: String,
+        userDefaults: UserDefaults = .standard
+    ) {
         [
             "memoryBuckets_\(projectID)",
             "strandWeave_\(projectID)",
             "lastReview_\(projectID)",
-            "antiPatterns_\(projectID)"
-        ].forEach { defaults.removeObject(forKey: $0) }
+            "antiPatterns_\(projectID)",
+            "longformRuntime_\(projectID)"
+        ].forEach { userDefaults.removeObject(forKey: $0) }
     }
 
     // MARK: - Memory Buckets

@@ -1,8 +1,12 @@
 name: PR Merge Checks
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
     branches:
+      - main
       - codex/xcode-migration
     types:
       - opened
@@ -23,7 +27,7 @@ jobs:
     name: Smoke checks (macOS)
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - name: Check out repository
@@ -52,7 +56,13 @@ jobs:
           fi
 
       - name: Run Codex PR review checks
+        if: ${{ github.event_name == 'pull_request' }}
         run: zsh -f ./scripts/run-codex-pr-review-checks.sh
+
+      - name: Verify architecture indexes and test target membership
+        run: |
+          zsh -f ./scripts/check-index-coverage.sh
+          zsh -f ./scripts/verify-xctest-membership.sh
 
       - name: Run smoke checks
         env:
@@ -63,3 +73,8 @@ jobs:
         env:
           DERIVED_DATA_PATH: ${{ runner.temp }}/OpenWritingHostedXCTestGuardDerivedData-${{ github.run_id }}-${{ github.run_attempt }}
         run: zsh -f ./scripts/run-hosted-xctest-guard.sh
+
+      - name: Run OpenWriting XCTest suite
+        env:
+          DERIVED_DATA_PATH: ${{ runner.temp }}/OpenWritingTestsDerivedData-${{ github.run_id }}-${{ github.run_attempt }}
+        run: zsh -f ./scripts/run-tests.sh

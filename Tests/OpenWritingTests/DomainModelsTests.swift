@@ -1,4 +1,3 @@
-import Security
 import XCTest
 @testable import OpenWriting
 
@@ -54,10 +53,17 @@ final class DomainModelsTests: XCTestCase {
     @MainActor
     func testOpenWritingServerManagedConnectionIgnoresLegacyKeychainAPIKey() throws {
         let userDefaults = makeIsolatedUserDefaults()
-        seedRawOpenWritingAPIKey("sk-legacy-openai-key")
-        defer { deleteRawOpenWritingAPIKey() }
+        let credentialStore = makeCredentialStore()
+        credentialStore.store(
+            "sk-legacy-openai-key",
+            service: ModelConnectionConfigurationStore.KeychainKey.service,
+            account: ModelConnectionConfigurationStore.KeychainKey.openWAccount
+        )
 
-        let configuration = try ModelConnectionConfigurationStore.loadConnectionConfiguration(userDefaults: userDefaults)
+        let configuration = try ModelConnectionConfigurationStore.loadConnectionConfiguration(
+            userDefaults: userDefaults,
+            credentialStore: credentialStore
+        )
 
         XCTAssertEqual(configuration.apiKey, "")
     }
@@ -65,16 +71,23 @@ final class DomainModelsTests: XCTestCase {
     @MainActor
     func testOpenWritingAPIKeyMigrationPurgesLegacyManagedKeyStorage() {
         let userDefaults = makeIsolatedUserDefaults()
+        let credentialStore = makeCredentialStore()
         userDefaults.set("sk-userdefaults-key", forKey: AppState.StorageKey.apiKey)
         userDefaults.set("sk-legacy-userdefaults-key", forKey: AppState.LegacyStorageKey.apiKey)
-        seedRawOpenWritingAPIKey("sk-keychain-key")
-        defer { deleteRawOpenWritingAPIKey() }
+        credentialStore.store(
+            "sk-keychain-key",
+            service: ModelConnectionConfigurationStore.KeychainKey.service,
+            account: ModelConnectionConfigurationStore.KeychainKey.openWAccount
+        )
 
-        AppState.migrateAPIKeysToKeychainIfNeeded(userDefaults)
+        AppState.migrateAPIKeysToKeychainIfNeeded(userDefaults, credentialStore: credentialStore)
 
         XCTAssertNil(userDefaults.string(forKey: AppState.StorageKey.apiKey))
         XCTAssertNil(userDefaults.string(forKey: AppState.LegacyStorageKey.apiKey))
-        XCTAssertNil(rawOpenWritingAPIKey())
+        XCTAssertNil(credentialStore.value(
+            service: ModelConnectionConfigurationStore.KeychainKey.service,
+            account: ModelConnectionConfigurationStore.KeychainKey.openWAccount
+        ))
     }
 
     @MainActor
@@ -423,16 +436,14 @@ final class DomainModelsTests: XCTestCase {
     @MainActor
     func testAppStateAcceptsInjectedAIService() {
         let userDefaults = makeIsolatedUserDefaults()
-        let store = ProjectFileStore(
-            baseDirectoryURL: FileManager.default.temporaryDirectory,
-            baseDirectoryName: "OpenWritingTests-\(UUID().uuidString)"
-        )
+        let store = makeIsolatedProjectStore()
         let aiService = MockAIWritingService()
 
         let appState = AppState(
             userDefaults: userDefaults,
             projectStore: store,
-            aiService: aiService
+            aiService: aiService,
+            credentialStore: makeCredentialStore()
         )
 
         XCTAssertTrue(appState.aiService is MockAIWritingService)
@@ -457,7 +468,11 @@ final class DomainModelsTests: XCTestCase {
         userDefaults.set(encodedProjects, forKey: AppState.recentProjectsStorageKey(for: account.userID))
         userDefaults.set(1_772_000_000.0, forKey: AppState.projectSnapshotTimestampStorageKey(for: account.userID))
 
-        let appState = AppState(userDefaults: userDefaults, projectStore: store)
+        let appState = AppState(
+            userDefaults: userDefaults,
+            projectStore: store,
+            credentialStore: makeCredentialStore()
+        )
         appState.activeAccount = account
         appState.recentProjects = [project]
 
@@ -480,7 +495,11 @@ final class DomainModelsTests: XCTestCase {
             email: "writer@example.com",
             fullName: "Writer"
         )
-        let appState = AppState(userDefaults: userDefaults, projectStore: store)
+        let appState = AppState(
+            userDefaults: userDefaults,
+            projectStore: store,
+            credentialStore: makeCredentialStore()
+        )
         appState.activeAccount = account
         appState.cloudSaveGeneration = 41
 
@@ -652,14 +671,28 @@ final class DomainModelsTests: XCTestCase {
         let suiteName = "OpenWritingTests.\(UUID().uuidString)"
         let userDefaults = UserDefaults(suiteName: suiteName)!
         userDefaults.removePersistentDomain(forName: suiteName)
+        addTeardownBlock {
+            userDefaults.removePersistentDomain(forName: suiteName)
+        }
         return userDefaults
     }
 
     private func makeIsolatedProjectStore() -> ProjectFileStore {
-        ProjectFileStore(
-            baseDirectoryURL: FileManager.default.temporaryDirectory,
-            baseDirectoryName: "OpenWritingTests-\(UUID().uuidString)"
+        let baseDirectoryName = "OpenWritingTests-\(UUID().uuidString)"
+        let baseDirectoryURL = FileManager.default.temporaryDirectory
+        addTeardownBlock {
+            try? FileManager.default.removeItem(
+                at: baseDirectoryURL.appendingPathComponent(baseDirectoryName, isDirectory: true)
+            )
+        }
+        return ProjectFileStore(
+            baseDirectoryURL: baseDirectoryURL,
+            baseDirectoryName: baseDirectoryName
         )
+    }
+
+    private func makeCredentialStore() -> InMemoryCredentialStore {
+        InMemoryCredentialStore()
     }
 
     private func makeProject(
@@ -687,42 +720,6 @@ final class DomainModelsTests: XCTestCase {
         )
         project.updatedAtDate = updatedAt
         return project
-    }
-
-    private func seedRawOpenWritingAPIKey(_ value: String) {
-        deleteRawOpenWritingAPIKey()
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: ModelConnectionConfigurationStore.KeychainKey.service,
-            kSecAttrAccount: ModelConnectionConfigurationStore.KeychainKey.openWAccount,
-            kSecValueData: Data(value.utf8),
-            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock
-        ]
-        SecItemAdd(query as CFDictionary, nil)
-    }
-
-    private func rawOpenWritingAPIKey() -> String? {
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: ModelConnectionConfigurationStore.KeychainKey.service,
-            kSecAttrAccount: ModelConnectionConfigurationStore.KeychainKey.openWAccount,
-            kSecReturnData: true,
-            kSecMatchLimit: kSecMatchLimitOne
-        ]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data
-        else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-
-    private func deleteRawOpenWritingAPIKey() {
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: ModelConnectionConfigurationStore.KeychainKey.service,
-            kSecAttrAccount: ModelConnectionConfigurationStore.KeychainKey.openWAccount
-        ]
-        SecItemDelete(query as CFDictionary)
     }
 
     // MARK: - Quality Review Schema Tests
@@ -1358,16 +1355,17 @@ final class DomainModelsTests: XCTestCase {
 
     func testClearIntegrationCacheRemovesLegacyDefaults() {
         let projectID = "integration-cache-test-\(UUID().uuidString)"
-        let defaults = UserDefaults.standard
+        let defaults = makeIsolatedUserDefaults()
         let keys = [
             "memoryBuckets_\(projectID)",
             "strandWeave_\(projectID)",
             "lastReview_\(projectID)",
-            "antiPatterns_\(projectID)"
+            "antiPatterns_\(projectID)",
+            "longformRuntime_\(projectID)"
         ]
         keys.forEach { defaults.set(Data("legacy".utf8), forKey: $0) }
 
-        NovelProject.clearIntegrationCache(for: projectID)
+        NovelProject.clearIntegrationCache(for: projectID, userDefaults: defaults)
 
         keys.forEach { XCTAssertNil(defaults.object(forKey: $0)) }
     }

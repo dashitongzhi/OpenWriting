@@ -1,6 +1,28 @@
 import Foundation
 @testable import OpenWriting
 
+nonisolated final class InMemoryCredentialStore: CredentialStoring {
+    private var values: [String: String] = [:]
+
+    func value(service: String, account: String) -> String? {
+        values[key(service: service, account: account)]
+    }
+
+    @discardableResult
+    func store(_ value: String, service: String, account: String) -> Bool {
+        values[key(service: service, account: account)] = value
+        return true
+    }
+
+    func remove(service: String, account: String) {
+        values.removeValue(forKey: key(service: service, account: account))
+    }
+
+    private func key(service: String, account: String) -> String {
+        "\(service)::\(account)"
+    }
+}
+
 extension NovelProject {
     init(
         title: String,
