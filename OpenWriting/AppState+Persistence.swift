@@ -143,6 +143,10 @@ extension AppState {
         ModelConnectionConfigurationStore.isRetiredKralAPIBaseURL(rawValue)
     }
 
+    static func isPreviousOpenWBaseURL(_ rawValue: String) -> Bool {
+        ModelConnectionConfigurationStore.isPreviousOpenWBaseURL(rawValue)
+    }
+
     static func migrateServerManagedOpenWritingProviderIfNeeded(_ userDefaults: UserDefaults) {
         ModelConnectionConfigurationStore.migrateServerManagedOpenWritingProviderIfNeeded(userDefaults)
     }
@@ -353,7 +357,9 @@ extension AppState {
 
     private static func replaceRetiredOpenWBaseURLIfNeeded(forKey key: String, userDefaults: UserDefaults) {
         guard let storedBaseURL = stringValue(forKey: key, userDefaults: userDefaults),
-              isRetiredOpenWBaseURL(storedBaseURL) || isRetiredKralAPIBaseURL(storedBaseURL)
+              isRetiredOpenWBaseURL(storedBaseURL) ||
+              isRetiredKralAPIBaseURL(storedBaseURL) ||
+              isPreviousOpenWBaseURL(storedBaseURL)
         else { return }
 
         userDefaults.set(defaultOpenWBaseURL, forKey: key)

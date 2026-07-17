@@ -34,8 +34,8 @@ final class DomainModelsTests: XCTestCase {
         let userDefaults = makeIsolatedUserDefaults()
 
         XCTAssertEqual(AppState.defaultModelName(for: .openAICompatible), "gpt-5.4-mini")
-        XCTAssertEqual(AppState.defaultBaseURL(for: .openAICompatible), "https://openwriting.kralai.tech/api/model/v1")
-        XCTAssertEqual(AppState.loadBaseURL(for: .openAICompatible, userDefaults: userDefaults), "https://openwriting.kralai.tech/api/model/v1")
+        XCTAssertEqual(AppState.defaultBaseURL(for: .openAICompatible), "https://openwriting.kralplus.asia/api/model/v1")
+        XCTAssertEqual(AppState.loadBaseURL(for: .openAICompatible, userDefaults: userDefaults), "https://openwriting.kralplus.asia/api/model/v1")
     }
 
     @MainActor
@@ -130,8 +130,8 @@ final class DomainModelsTests: XCTestCase {
 
         AppState.migrateRetiredOpenAICompatibleDefaults(userDefaults)
 
-        XCTAssertEqual(userDefaults.string(forKey: AppState.StorageKey.baseURL), "https://openwriting.kralai.tech/api/model/v1")
-        XCTAssertEqual(AppState.loadBaseURL(for: .openAICompatible, userDefaults: userDefaults), "https://openwriting.kralai.tech/api/model/v1")
+        XCTAssertEqual(userDefaults.string(forKey: AppState.StorageKey.baseURL), "https://openwriting.kralplus.asia/api/model/v1")
+        XCTAssertEqual(AppState.loadBaseURL(for: .openAICompatible, userDefaults: userDefaults), "https://openwriting.kralplus.asia/api/model/v1")
     }
 
     @MainActor
@@ -141,8 +141,8 @@ final class DomainModelsTests: XCTestCase {
 
         AppState.migrateRetiredOpenAICompatibleDefaults(userDefaults)
 
-        XCTAssertEqual(userDefaults.string(forKey: AppState.StorageKey.baseURL), "https://openwriting.kralai.tech/api/model/v1")
-        XCTAssertEqual(AppState.loadBaseURL(for: .openAICompatible, userDefaults: userDefaults), "https://openwriting.kralai.tech/api/model/v1")
+        XCTAssertEqual(userDefaults.string(forKey: AppState.StorageKey.baseURL), "https://openwriting.kralplus.asia/api/model/v1")
+        XCTAssertEqual(AppState.loadBaseURL(for: .openAICompatible, userDefaults: userDefaults), "https://openwriting.kralplus.asia/api/model/v1")
     }
 
     @MainActor
@@ -156,8 +156,19 @@ final class DomainModelsTests: XCTestCase {
 
         XCTAssertEqual(ModelConnectionConfigurationStore.loadSelectedProvider(userDefaults: userDefaults), .openAICompatible)
         XCTAssertEqual(userDefaults.string(forKey: AppState.StorageKey.selectedProvider), ModelProvider.openAICompatible.rawValue)
-        XCTAssertEqual(userDefaults.string(forKey: AppState.StorageKey.baseURL), "https://openwriting.kralai.tech/api/model/v1")
-        XCTAssertEqual(AppState.loadBaseURL(for: .openAICompatible, userDefaults: userDefaults), "https://openwriting.kralai.tech/api/model/v1")
+        XCTAssertEqual(userDefaults.string(forKey: AppState.StorageKey.baseURL), "https://openwriting.kralplus.asia/api/model/v1")
+        XCTAssertEqual(AppState.loadBaseURL(for: .openAICompatible, userDefaults: userDefaults), "https://openwriting.kralplus.asia/api/model/v1")
+    }
+
+    @MainActor
+    func testPreviousOpenWritingBaseURLMigratesToWorkingServerManagedBackend() {
+        let userDefaults = makeIsolatedUserDefaults()
+        userDefaults.set("https://openwriting.kralai.tech/api/model/v1", forKey: AppState.StorageKey.baseURL)
+
+        AppState.migrateRetiredOpenAICompatibleDefaults(userDefaults)
+
+        XCTAssertEqual(userDefaults.string(forKey: AppState.StorageKey.baseURL), "https://openwriting.kralplus.asia/api/model/v1")
+        XCTAssertEqual(AppState.loadBaseURL(for: .openAICompatible, userDefaults: userDefaults), "https://openwriting.kralplus.asia/api/model/v1")
     }
 
     // MARK: - ConnectionStatus Tests

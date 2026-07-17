@@ -23,8 +23,9 @@ enum ModelConnectionConfigurationStore {
     }
 
     static let defaultOpenWModelName = "gpt-5.4-mini"
-    static let defaultOpenWBaseURL = "https://openwriting.kralai.tech/api/model/v1"
+    static let defaultOpenWBaseURL = "https://openwriting.kralplus.asia/api/model/v1"
     static let defaultAnthropicBaseURL = "https://api.anthropic.com/v1"
+    private static let previousOpenWBaseURL = "https://openwriting.kralai.tech/api/model/v1"
     private static let retiredOpenWBaseURL = "https://ai." + "xxread.top/v1"
     private static let retiredKralAPIBaseURL = "https://kralapi.kralai.tech/v1"
 
@@ -193,7 +194,9 @@ enum ModelConnectionConfigurationStore {
 
     static func baseURLReplacingRetiredDefault(_ rawValue: String, for provider: ModelProvider) -> String {
         guard provider == .openAICompatible,
-              isRetiredOpenWBaseURL(rawValue) || isRetiredKralAPIBaseURL(rawValue)
+              isRetiredOpenWBaseURL(rawValue) ||
+              isRetiredKralAPIBaseURL(rawValue) ||
+              isPreviousOpenWBaseURL(rawValue)
         else { return rawValue }
 
         return defaultOpenWBaseURL
@@ -207,8 +210,13 @@ enum ModelConnectionConfigurationStore {
         normalizedBaseURLString(from: rawValue) == retiredKralAPIBaseURL
     }
 
+    static func isPreviousOpenWBaseURL(_ rawValue: String) -> Bool {
+        normalizedBaseURLString(from: rawValue) == previousOpenWBaseURL
+    }
+
     static func isServerManagedOpenWritingBaseURL(_ rawValue: String) -> Bool {
-        normalizedBaseURLString(from: rawValue) == defaultOpenWBaseURL
+        let normalizedBaseURL = normalizedBaseURLString(from: rawValue)
+        return normalizedBaseURL == defaultOpenWBaseURL || normalizedBaseURL == previousOpenWBaseURL
     }
 
     static func shouldTreatCustomProviderAsServerManagedOpenWriting(userDefaults: UserDefaults) -> Bool {
