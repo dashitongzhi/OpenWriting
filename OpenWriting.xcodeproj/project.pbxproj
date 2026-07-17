@@ -14,6 +14,7 @@
 		B0010000000000000000000C /* ProjectExportServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00100000000000000000007 /* ProjectExportServiceTests.swift */; };
 		B00100000000000000000016 /* TestFactories.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00100000000000000000017 /* TestFactories.swift */; };
 		B00100000000000000000019 /* HostedXCTestLaunchGuardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00100000000000000000018 /* HostedXCTestLaunchGuardTests.swift */; };
+		B0010000000000000000001B /* WritingDeskSessionPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0010000000000000000001A /* WritingDeskSessionPolicyTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -36,6 +37,7 @@
 		B00100000000000000000007 /* ProjectExportServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/ProjectExportServiceTests.swift; sourceTree = "<group>"; };
 		B00100000000000000000017 /* TestFactories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/TestFactories.swift; sourceTree = "<group>"; };
 		B00100000000000000000018 /* HostedXCTestLaunchGuardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/HostedXCTestLaunchGuardTests.swift; sourceTree = "<group>"; };
+		B0010000000000000000001A /* WritingDeskSessionPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/WritingDeskSessionPolicyTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -92,6 +94,7 @@
 				B00100000000000000000004 /* ProjectFileStoreTests.swift */,
 				B00100000000000000000006 /* SearchTests.swift */,
 				B00100000000000000000017 /* TestFactories.swift */,
+				B0010000000000000000001A /* WritingDeskSessionPolicyTests.swift */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -216,6 +219,7 @@
 				B00100000000000000000009 /* ProjectFileStoreTests.swift in Sources */,
 				B0010000000000000000000B /* SearchTests.swift in Sources */,
 				B00100000000000000000016 /* TestFactories.swift in Sources */,
+				B0010000000000000000001B /* WritingDeskSessionPolicyTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

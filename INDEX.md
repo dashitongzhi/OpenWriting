@@ -61,7 +61,11 @@
 
 | File | Role |
 | --- | --- |
-| `OpenWriting/WritingDeskView.swift` | 正文写作主界面、AI 候选稿、保存、查找替换、专注模式和上下文刷新。 |
+| `OpenWriting/WritingDeskView.swift` | 正文写作主界面、用户交互和章节写作会话调用。 |
+| `OpenWriting/WritingDeskSessionModels.swift` | 章节写作会话状态、请求上下文、过期结果校验和字数策略。 |
+| `OpenWriting/WritingDeskNavigationViews.swift` | 写作台章节导航、章节载入确认和正文差异预览。 |
+| `OpenWriting/WritingDeskDraftProcessingViews.swift` | 写作台草稿处理请求、进度和结果交互。 |
+| `OpenWriting/WritingDeskStatusViews.swift` | 写作台状态、长篇提示和质量审查面板。 |
 | `OpenWriting/WritingDeskSupportViews.swift` | 写作台共享布局、文本表面、NSTextView 正文编辑器和弹层组件。 |
 | `OpenWriting/WritingDeskOutlineGeneratorSheet.swift` | 大纲生成 sheet 和参数表单。 |
 | `OpenWriting/OutlineWorkspacePanel.swift` | 章节目录、章节树、全局记忆和长篇支撑面板。 |
@@ -111,17 +115,6 @@
 | `OpenWriting/ReviewSummarySection.swift` | 审查摘要 section。 |
 | `OpenWriting/ScoreGaugeRing.swift` | 分数环形仪表。 |
 | `OpenWriting/SidebarItem.swift` | 侧边栏枚举和显示信息。 |
-
-## Managers
-
-| File | Role |
-| --- | --- |
-| `OpenWriting/Managers/AppStateManagers.swift` | AppState manager 聚合。 |
-| `OpenWriting/Managers/ChapterManager.swift` | 章节相关状态操作。 |
-| `OpenWriting/Managers/DashboardManager.swift` | Dashboard 数据协调。 |
-| `OpenWriting/Managers/ProjectManager.swift` | 项目 CRUD 辅助。 |
-| `OpenWriting/Managers/SearchManager.swift` | 搜索能力封装。 |
-| `OpenWriting/Managers/WritersAICommandsManager.swift` | 写作 AI 命令协调。 |
 
 ## 阅读顺序建议
 

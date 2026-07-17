@@ -10,6 +10,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 LONGFORM="$REPO_ROOT/OpenWriting/LongformStorySystem.swift"
 WRITING_DESK="$REPO_ROOT/OpenWriting/WritingDeskView.swift"
+WRITING_DESK_NAVIGATION="$REPO_ROOT/OpenWriting/WritingDeskNavigationViews.swift"
+WRITING_DESK_SESSION="$REPO_ROOT/OpenWriting/WritingDeskSessionModels.swift"
 REVIEWER="$REPO_ROOT/OpenWriting/ChapterQualityReviewer.swift"
 ENHANCED="$REPO_ROOT/OpenWriting/AIWritingService+Enhanced.swift"
 PROMPTS="$REPO_ROOT/OpenWriting/AIWritingService+Prompts.swift"
@@ -155,10 +157,14 @@ require_text "$MEMORY_BUCKETS" "restoringLatestActiveItems" \
 require_text "$MEMORY_BUCKETS" "restoredItems[restorationIndex].status = .active" \
     "memory rollback must explicitly reactivate the restored memory item"
 
-require_text "$WRITING_DESK" "latestAISuggestionAcceptanceContext == acceptanceContext(for: project)" \
+require_text "$WRITING_DESK" "latestAISuggestionAcceptanceContext == ChapterWritingSessionPolicy.acceptanceContext(for: project)" \
     "candidate acceptance must bind to generation context"
-require_text "$WRITING_DESK" "latestChapterReviewDraftContext == chapterSaveValidationContext(for: project)" \
+require_text "$WRITING_DESK" "latestChapterReviewDraftContext == ChapterWritingSessionPolicy.chapterSaveValidationContext(for: project)" \
     "displayed draft reviews must bind to the current save context"
+require_text "$WRITING_DESK_SESSION" "static func draftGenerationContext" \
+    "chapter writing session must own candidate generation context"
+require_text "$WRITING_DESK_SESSION" "static func chapterSaveValidationContext" \
+    "chapter writing session must own save validation context"
 require_text "$WRITING_DESK" "let reviewedSaveContext = preSaveReview.map" \
     "pre-save reviews must carry a save context through async title generation"
 require_text "$WRITING_DESK" "拟标题期间正文、章节位置或长篇上下文已经变化" \
@@ -195,13 +201,13 @@ require_text "$WRITING_DESK" "qualityDebtPanel" \
     "writing desk must expose unresolved quality debt"
 require_text "$WRITING_DESK" "storageHealthPanel" \
     "writing desk must expose storage health and recovery actions"
-require_text "$WRITING_DESK" "ChapterLoadDiffSheet" \
+require_text "$WRITING_DESK_NAVIGATION" "ChapterLoadDiffSheet" \
     "writing desk chapter loads must show a diff/confirmation sheet"
 require_text "$WRITING_DESK" "pendingChapterLoad" \
     "writing desk chapter navigator must track pending chapter loads"
-require_text "$WRITING_DESK" "载入并覆盖当前草稿" \
+require_text "$WRITING_DESK_NAVIGATION" "载入并覆盖当前草稿" \
     "writing desk chapter navigator must confirm destructive chapter loads"
-require_text "$WRITING_DESK" "先保存当前草稿" \
+require_text "$WRITING_DESK_NAVIGATION" "先保存当前草稿" \
     "writing desk chapter navigator must offer a save-before-load path"
 require_text "$SAVED_CHAPTERS_SHEET" "pendingChapterLoad" \
     "saved chapters sheet must track pending chapter loads"

@@ -20,7 +20,6 @@ final class AppState {
     @ObservationIgnored var isHydratingAccountScopedData = false
     @ObservationIgnored var isApplyingProviderConfiguration = false
     @ObservationIgnored var validationTask: Task<Void, Never>?
-    @ObservationIgnored private var cachedManagers: AppStateManagers?
 
     var selectedProvider: ModelProvider {
         willSet {
@@ -278,16 +277,6 @@ final class AppState {
 
     func restoreCommercePurchases() async {
         commerceEntitlement = await commerceProvider.restorePurchases(accountID: activeAccount?.userID)
-    }
-
-    /// 便捷访问所有专业化管理器
-    var managers: AppStateManagers {
-        if let cached = cachedManagers {
-            return cached
-        }
-        let managers = AppStateManagers(appState: self)
-        cachedManagers = managers
-        return managers
     }
 
     var dashboardStats: [DashboardStat] {
