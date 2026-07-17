@@ -314,6 +314,10 @@ require_text "$RUN_TESTS" "build-for-testing" \
     "full XCTest entry must build the test bundle once"
 require_text "$RUN_TESTS" "test-without-building" \
     "full XCTest entry must execute discovered classes without rebuilding"
+require_text "$RUN_TESTS" 'MACOS_DEPLOYMENT_TARGET="${MACOS_DEPLOYMENT_TARGET:-$(sw_vers -productVersion)}"' \
+    "full XCTest entry must target the current macOS test host"
+require_text "$RUN_TESTS" 'MACOSX_DEPLOYMENT_TARGET="$MACOS_DEPLOYMENT_TARGET"' \
+    "full XCTest build and execution must share the host deployment target"
 require_text "$RUN_TESTS" "Tests/OpenWritingTests" \
     "full XCTest entry must discover tests from the OpenWritingTests directory"
 require_text "$RUN_TESTS" "XCTestCase" \
