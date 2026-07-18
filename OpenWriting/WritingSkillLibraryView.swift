@@ -5,12 +5,12 @@ struct WritingSkillLibraryView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Bindable var appState: AppState
 
-    @State private var selectedMode: WritingSkillLibraryMode = .installed
+    @State private var selectedMode: WritingSkillLibraryMode = .marketplace
     @State private var selectedSkillID: WritingSkill.ID?
     @State private var selectedMarketplaceSkillID: WritingSkill.ID = WritingSkillMarketplace.featured.first?.id ?? ""
     @State private var isImportingSkills = false
     @State private var isCreatorPresented = false
-    @State private var statusMessage = "导入或启用的 Skill 会作为写作策略参与后续 AI 续写、修订和大纲生成。"
+    @State private var statusMessage = "安装并启用的 Skill 会参与 AI 续写、修订、大纲生成与质量审查。"
 
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
@@ -21,9 +21,9 @@ struct WritingSkillLibraryView: View {
         return appState.writingSkills.first { $0.id == selectedSkillID } ?? appState.writingSkills.first
     }
 
-    private var selectedMarketplaceSkill: WritingSkill {
-        WritingSkillMarketplace.featured.first { $0.id == selectedMarketplaceSkillID }
-            ?? WritingSkillMarketplace.featured[0]
+    private var selectedMarketplaceSkill: WritingSkill? {
+        appState.marketplaceWritingSkills.first { $0.id == selectedMarketplaceSkillID }
+            ?? appState.marketplaceWritingSkills.first
     }
 
     private var supportedSkillImportTypes: [UTType] {
@@ -36,8 +36,8 @@ struct WritingSkillLibraryView: View {
 
     var body: some View {
         DashboardPanel(
-            title: "Skill 广场",
-            subtitle: "导入写作 Skill、自建策略卡，或从广场安装一组可启用的创作能力。"
+            title: "Skill 市场",
+            subtitle: "发现、上传和发布写作能力。当前版本先提供本机市场目录，并为后续公开审核与同步保留接入接口。"
         ) {
             VStack(alignment: .leading, spacing: 18) {
                 skillOverviewRow
@@ -68,18 +68,26 @@ struct WritingSkillLibraryView: View {
             onCompletion: handleSkillImport
         )
         .sheet(isPresented: $isCreatorPresented) {
-            WritingSkillCreatorSheet { skill in
-                appState.importWritingSkills([skill])
-                selectedMode = .installed
-                selectedSkillID = skill.id
-                statusMessage = "已创建并启用「\(skill.title)」。"
+            WritingSkillPublisherSheet(
+                defaultPublisherName: appState.activeAccount?.displayName ?? "本机创作者"
+            ) { skill, publisherName, version in
+                let published = appState.publishWritingSkills(
+                    [skill],
+                    publisherName: publisherName,
+                    version: version
+                )
+                selectedMode = .marketplace
+                selectedMarketplaceSkillID = published.first?.id ?? skill.id
+                statusMessage = "已发布并启用「\(skill.title)」，它现在出现在本机 Skill 市场。"
             }
         }
         .onAppear {
             syncInstalledSelection()
+            syncMarketplaceSelection()
         }
         .onChange(of: appState.writingSkills) { _, _ in
             syncInstalledSelection()
+            syncMarketplaceSelection()
         }
     }
 
@@ -88,7 +96,7 @@ struct WritingSkillLibraryView: View {
             HStack(spacing: 12) {
                 WorkspaceMetricBadge(label: "已安装", value: "\(appState.writingSkills.count)")
                 WorkspaceMetricBadge(label: "已启用", value: "\(appState.enabledWritingSkills.count)")
-                WorkspaceMetricBadge(label: "广场 Skill", value: "\(WritingSkillMarketplace.featured.count)")
+                WorkspaceMetricBadge(label: "市场目录", value: "\(appState.marketplaceWritingSkills.count)")
             }
 
             ViewThatFits(in: .horizontal) {
@@ -96,7 +104,7 @@ struct WritingSkillLibraryView: View {
                     Button {
                         isImportingSkills = true
                     } label: {
-                        Label("导入 Skill", systemImage: "square.and.arrow.down")
+                        Label("上传 Skill", systemImage: "square.and.arrow.up")
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(palette.coolAccent)
@@ -104,7 +112,7 @@ struct WritingSkillLibraryView: View {
                     Button {
                         isCreatorPresented = true
                     } label: {
-                        Label("自建 Skill", systemImage: "plus")
+                        Label("发布 Skill", systemImage: "plus")
                     }
                     .buttonStyle(.bordered)
                 }
@@ -113,7 +121,7 @@ struct WritingSkillLibraryView: View {
                     Button {
                         isImportingSkills = true
                     } label: {
-                        Label("导入 Skill", systemImage: "square.and.arrow.down")
+                        Label("上传 Skill", systemImage: "square.and.arrow.up")
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(palette.coolAccent)
@@ -121,7 +129,7 @@ struct WritingSkillLibraryView: View {
                     Button {
                         isCreatorPresented = true
                     } label: {
-                        Label("自建 Skill", systemImage: "plus")
+                        Label("发布 Skill", systemImage: "plus")
                     }
                     .buttonStyle(.bordered)
                 }
@@ -135,9 +143,9 @@ struct WritingSkillLibraryView: View {
             WorkspaceChecklist(
                 title: "开始使用 Skill",
                 items: [
-                    "导入 Markdown、TXT 或 JSON 格式的写作 Skill",
-                    "用自建 Skill 写下你自己的文风、节奏或题材规则",
-                    "从 Skill 广场安装内置策略后，可随时启用或停用"
+                    "从 Skill 市场安装一项写作能力",
+                    "上传 Markdown、TXT 或 JSON 后发布为本机市场条目",
+                    "启用后可随时停用，不会影响已保存正文"
                 ]
             )
         } else {
@@ -224,25 +232,29 @@ struct WritingSkillLibraryView: View {
                 marketplaceList
                     .frame(width: 360)
 
-                marketplaceDetail(selectedMarketplaceSkill)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                if let selectedMarketplaceSkill {
+                    marketplaceDetail(selectedMarketplaceSkill)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
             }
 
             VStack(alignment: .leading, spacing: 24) {
                 marketplaceList
-                marketplaceDetail(selectedMarketplaceSkill)
+                if let selectedMarketplaceSkill {
+                    marketplaceDetail(selectedMarketplaceSkill)
+                }
             }
         }
     }
 
     private var marketplaceList: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("精选广场")
+            Text("市场目录")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(palette.textPrimary)
 
             LazyVStack(alignment: .leading, spacing: 10) {
-                ForEach(WritingSkillMarketplace.featured) { skill in
+                ForEach(appState.marketplaceWritingSkills) { skill in
                     Button {
                         selectedMarketplaceSkillID = skill.id
                     } label: {
@@ -318,6 +330,15 @@ struct WritingSkillLibraryView: View {
                     WritingSkillTag(title: "已启用", symbolName: "checkmark.circle.fill", isActive: true)
                 }
             }
+
+            if let listing = skill.marketplaceListing {
+                Label(
+                    "\(listing.publisherName) · \(listing.source.title) · v\(listing.version) · \(listing.publishedAtLabel)",
+                    systemImage: "person.crop.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(palette.textSecondary)
+            }
         }
     }
 
@@ -347,208 +368,27 @@ struct WritingSkillLibraryView: View {
         selectedSkillID = appState.writingSkills.first?.id
     }
 
+    private func syncMarketplaceSelection() {
+        if appState.marketplaceWritingSkills.contains(where: { $0.id == selectedMarketplaceSkillID }) {
+            return
+        }
+
+        selectedMarketplaceSkillID = appState.marketplaceWritingSkills.first?.id ?? ""
+    }
+
     private func handleSkillImport(_ result: Result<[URL], Error>) {
         do {
             let urls = try result.get()
             let skills = try WritingSkillImporting.skills(from: urls)
-            appState.importWritingSkills(skills)
-            selectedMode = .installed
-            selectedSkillID = skills.first?.id
-            statusMessage = "已导入并启用 \(skills.count) 个写作 Skill。"
+            let published = appState.publishWritingSkills(
+                skills,
+                publisherName: appState.activeAccount?.displayName ?? "本机创作者"
+            )
+            selectedMode = .marketplace
+            selectedMarketplaceSkillID = published.first?.id ?? ""
+            statusMessage = "已上传并发布 \(published.count) 个 Skill 到本机市场，同时完成安装和启用。"
         } catch {
             statusMessage = "导入 Skill 失败：\(error.localizedDescription)"
         }
-    }
-}
-
-private enum WritingSkillLibraryMode: String, CaseIterable, Identifiable {
-    case installed
-    case marketplace
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .installed:
-            return "本地 Skill"
-        case .marketplace:
-            return "Skill 广场"
-        }
-    }
-
-    var symbolName: String {
-        switch self {
-        case .installed:
-            return "tray.full"
-        case .marketplace:
-            return "sparkles"
-        }
-    }
-}
-
-private struct WritingSkillRow: View {
-    @Environment(\.colorScheme) private var colorScheme
-    let skill: WritingSkill
-    let isSelected: Bool
-    var trailingLabel: String?
-
-    private var palette: DashboardPalette {
-        DashboardPalette(colorScheme: colorScheme)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Label(skill.title, systemImage: skill.category.symbolName)
-                    .font(.headline.weight(.semibold))
-                    .foregroundStyle(palette.textPrimary)
-                    .lineLimit(1)
-
-                Spacer()
-
-                Text(trailingLabel ?? (skill.isEnabled ? "启用" : "停用"))
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(skill.isEnabled || trailingLabel != nil ? palette.coolAccent : palette.textSecondary)
-            }
-
-            Text(skill.summary)
-                .font(.caption)
-                .foregroundStyle(palette.textSecondary)
-                .lineLimit(2)
-
-            HStack(spacing: 8) {
-                Text(skill.category.title)
-                Text(skill.origin.title)
-                Text(skill.importedAt)
-            }
-            .font(.caption2.weight(.medium))
-            .foregroundStyle(palette.textSecondary)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(isSelected ? palette.selectedPanel : palette.panelBase.opacity(palette.isDark ? 0.82 : 0.68))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(isSelected ? palette.coolAccent.opacity(0.36) : palette.stroke, lineWidth: 1)
-        )
-    }
-}
-
-private struct WritingSkillTag: View {
-    @Environment(\.colorScheme) private var colorScheme
-    let title: String
-    let symbolName: String
-    var isActive = false
-
-    private var palette: DashboardPalette {
-        DashboardPalette(colorScheme: colorScheme)
-    }
-
-    var body: some View {
-        Label(title, systemImage: symbolName)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(isActive ? .white : palette.textPrimary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(
-                Capsule()
-                    .fill(isActive ? palette.coolAccent : palette.panelBase.opacity(palette.isDark ? 0.82 : 0.68))
-            )
-            .overlay(
-                Capsule()
-                    .strokeBorder(isActive ? palette.coolAccent : palette.stroke, lineWidth: 1)
-            )
-    }
-}
-
-private struct WritingSkillCreatorSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var colorScheme
-
-    @State private var title = ""
-    @State private var summary = ""
-    @State private var instructions = ""
-    @State private var category: WritingSkillCategory = .custom
-
-    let onCreate: (WritingSkill) -> Void
-
-    private var palette: DashboardPalette {
-        DashboardPalette(colorScheme: colorScheme)
-    }
-
-    private var canCreate: Bool {
-        !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("自建 Skill")
-                    .font(.system(size: 30, weight: .bold, design: .serif))
-                    .foregroundStyle(palette.textPrimary)
-
-                Text("把你自己的写作规则整理成一个可启用的 Skill。")
-                    .font(.subheadline)
-                    .foregroundStyle(palette.textSecondary)
-            }
-
-            TextField("Skill 名称", text: $title)
-                .textFieldStyle(.roundedBorder)
-
-            TextField("一句话说明", text: $summary)
-                .textFieldStyle(.roundedBorder)
-
-            Picker("分类", selection: $category) {
-                ForEach(WritingSkillCategory.allCases) { category in
-                    Label(category.title, systemImage: category.symbolName).tag(category)
-                }
-            }
-            .pickerStyle(.menu)
-
-            TextEditor(text: $instructions)
-                .font(.system(size: 14, design: .serif))
-                .frame(minHeight: 260)
-                .scrollContentBackground(.hidden)
-                .background(DashboardInsetPanelBackground(cornerRadius: 18, palette: palette))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(palette.stroke, lineWidth: 1)
-                )
-
-            HStack {
-                Spacer()
-
-                Button("取消") {
-                    dismiss()
-                }
-                .keyboardShortcut(.cancelAction)
-
-                Button("创建") {
-                    let trimmedInstructions = instructions.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let resolvedSummary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
-                    onCreate(
-                        WritingSkill(
-                            title: title.trimmingCharacters(in: .whitespacesAndNewlines),
-                            summary: resolvedSummary.isEmpty ? String(trimmedInstructions.prefix(90)) : resolvedSummary,
-                            instructions: trimmedInstructions,
-                            category: category,
-                            origin: .custom,
-                            sourceName: "自建 Skill"
-                        )
-                    )
-                    dismiss()
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(palette.coolAccent)
-                .disabled(!canCreate)
-                .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(24)
-        .frame(minWidth: 620, idealWidth: 720, minHeight: 560)
     }
 }

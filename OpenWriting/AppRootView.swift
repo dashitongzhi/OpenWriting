@@ -49,7 +49,7 @@ struct AppRootView: View {
             Section {
                 sidebarRows([.library])
             } header: {
-                SidebarSectionHeader(title: "创作资源")
+                SidebarSectionHeader(title: "能力扩展")
             }
         }
         .listStyle(.sidebar)

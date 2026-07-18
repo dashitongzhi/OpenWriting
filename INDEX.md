@@ -82,10 +82,13 @@
 | File | Role |
 | --- | --- |
 | `OpenWriting/HomeDashboardView.swift` | 首页工作台、项目概览、入口卡片和项目空间。 |
-| `OpenWriting/PlaceholderWorkspaceView.swift` | 尚未展开工作区的占位页。 |
+| `OpenWriting/PlaceholderWorkspaceView.swift` | 项目空间与通用工作区容器；Skill 市场通过独立界面接入。 |
 | `OpenWriting/NewProjectSheet.swift` | 新建项目 sheet。 |
-| `OpenWriting/WritingSkill.swift` | 写作技能模型、导入格式和 prompt 注入。 |
-| `OpenWriting/WritingSkillLibraryView.swift` | 写作技能库 UI。 |
+| `OpenWriting/WritingSkill.swift` | 写作 Skill 模型、市场发布元数据与导入格式。 |
+| `OpenWriting/WritingSkillMarketplaceCatalog.swift` | Skill 市场目录接口、官方精选与本机投稿聚合。 |
+| `OpenWriting/WritingSkillLibraryView.swift` | Skill 市场、安装库和启停管理 UI。 |
+| `OpenWriting/WritingSkillLibraryComponents.swift` | Skill 市场模式、列表行与标签等共享展示组件。 |
+| `OpenWriting/WritingSkillPublisherSheet.swift` | 自建 Skill 的发布表单与版本/发布者元数据。 |
 | `OpenWriting/GenreTemplateData.swift` | 新题材模板基础枚举和参数类型。 |
 | `OpenWriting/GenreTemplateEngine.swift` | 新题材模板库、旧模板迁移和模板匹配。 |
 | `OpenWriting/GenreTemplates.swift` | 旧题材模板库和别名 lookup。 |

@@ -16,6 +16,7 @@
 		B00100000000000000000019 /* HostedXCTestLaunchGuardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00100000000000000000018 /* HostedXCTestLaunchGuardTests.swift */; };
 		B0010000000000000000001B /* WritingDeskSessionPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0010000000000000000001A /* WritingDeskSessionPolicyTests.swift */; };
 		B0010000000000000000001D /* ChapterCommitUseCaseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0010000000000000000001C /* ChapterCommitUseCaseTests.swift */; };
+		B0010000000000000000001F /* WritingSkillMarketplaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0010000000000000000001E /* WritingSkillMarketplaceTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -40,6 +41,7 @@
 		B00100000000000000000018 /* HostedXCTestLaunchGuardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/HostedXCTestLaunchGuardTests.swift; sourceTree = "<group>"; };
 		B0010000000000000000001A /* WritingDeskSessionPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/WritingDeskSessionPolicyTests.swift; sourceTree = "<group>"; };
 		B0010000000000000000001C /* ChapterCommitUseCaseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/ChapterCommitUseCaseTests.swift; sourceTree = "<group>"; };
+		B0010000000000000000001E /* WritingSkillMarketplaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/WritingSkillMarketplaceTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -98,6 +100,7 @@
 				B00100000000000000000006 /* SearchTests.swift */,
 				B00100000000000000000017 /* TestFactories.swift */,
 				B0010000000000000000001A /* WritingDeskSessionPolicyTests.swift */,
+				B0010000000000000000001E /* WritingSkillMarketplaceTests.swift */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -224,6 +227,7 @@
 				B0010000000000000000000B /* SearchTests.swift in Sources */,
 				B00100000000000000000016 /* TestFactories.swift in Sources */,
 				B0010000000000000000001B /* WritingDeskSessionPolicyTests.swift in Sources */,
+				B0010000000000000000001F /* WritingSkillMarketplaceTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -18,7 +18,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .outline:
             return "章节树"
         case .library:
-            return "创作资源"
+            return "Skill 市场"
         }
     }
 
@@ -33,7 +33,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .outline:
             return "list.bullet.rectangle.portrait"
         case .library:
-            return "books.vertical"
+            return "wand.and.stars"
         }
     }
 
@@ -48,7 +48,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .outline:
             return "这里会放章节树、场景卡片和剧情推进视图。"
         case .library:
-            return "这里会集中管理人物、地点、世界观素材和写作 Skill。"
+            return "发现、上传、发布并启用进入 AI 创作链路的写作 Skill。"
         }
     }
 }

@@ -13,6 +13,7 @@ final class AppState {
     @ObservationIgnored let projectPersistence: ProjectPersistenceActor
     @ObservationIgnored let aiService: any AIWritingServicing
     @ObservationIgnored let credentialStore: any CredentialStoring
+    @ObservationIgnored let writingSkillCatalog: any WritingSkillCatalogProviding
     @ObservationIgnored private let commerceProvider: any CommerceEntitlementProviding
     @ObservationIgnored let cloudStore = ICloudProjectStore()
     @ObservationIgnored var cloudSaveTask: Task<Void, Never>?
@@ -162,11 +163,18 @@ final class AppState {
         }
     }
 
+    var publishedWritingSkills: [WritingSkill] {
+        didSet {
+            persistPublishedWritingSkills(publishedWritingSkills)
+        }
+    }
+
     init(
         userDefaults: UserDefaults = .standard,
         projectStore: ProjectFileStore? = nil,
         aiService: any AIWritingServicing = DefaultAIWritingService(),
         credentialStore: any CredentialStoring = SecurityKeychainCredentialStore(),
+        writingSkillCatalog: (any WritingSkillCatalogProviding)? = nil,
         commerceProvider: any CommerceEntitlementProviding = DeferredAppleCommerceProvider()
     ) {
         let projectStore = projectStore ?? ProjectFileStore()
@@ -180,6 +188,7 @@ final class AppState {
         self.projectPersistence = ProjectPersistenceActor(store: projectStore.independentCopy())
         self.aiService = aiService
         self.credentialStore = credentialStore
+        self.writingSkillCatalog = writingSkillCatalog ?? BundledWritingSkillCatalog()
         self.commerceProvider = commerceProvider
         let resolvedActiveAccount = Self.loadActiveAppleAccount(from: userDefaults)
         let resolvedStorageScope = resolvedActiveAccount?.userID
@@ -234,6 +243,7 @@ final class AppState {
             projectStore: projectStore
         ) ?? Self.defaultRecentProjects
         self.writingSkills = Self.loadWritingSkills(from: userDefaults) ?? []
+        self.publishedWritingSkills = Self.loadPublishedWritingSkills(from: userDefaults) ?? []
         self.connectionStatus = .idle
         self.validationMessage = Self.emptyConfigurationMessage
         self.commerceEntitlement = .localDefault()
@@ -306,9 +316,9 @@ final class AppState {
                 destination: .writingDesk
             ),
             DashboardStat(
-                title: "设定资料",
-                value: "\(totalReferenceDocumentCount)",
-                detail: "进入素材库整理",
+                title: "已安装 Skill",
+                value: "\(writingSkills.count)",
+                detail: "进入 Skill 市场",
                 symbolName: SidebarItem.library.symbolName,
                 destination: .library
             )

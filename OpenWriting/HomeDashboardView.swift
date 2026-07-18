@@ -379,7 +379,7 @@ struct HomeDashboardView: View {
 
             QuickActionRow(
                 title: "导入设定资料",
-                subtitle: "支持把已有大纲、角色卡和碎片灵感整理进素材库。",
+                subtitle: "支持把已有大纲、角色卡和碎片灵感导入当前项目参考资料。",
                 symbolName: "square.and.arrow.down",
                 action: presentWorldbuildingImport
             )
@@ -620,9 +620,9 @@ struct HomeDashboardView: View {
                     )
 
                     homeMiniMetricCard(
-                        title: "创作资源",
-                        value: "\(appState.totalReferenceDocumentCount) 份",
-                        detail: "整理素材与写作 Skill",
+                        title: "Skill 市场",
+                        value: "\(appState.marketplaceWritingSkills.count) 项",
+                        detail: "发现、上传与启用 Skill",
                         symbolName: SidebarItem.library.symbolName,
                         action: openLibraryWorkspace
                     )
@@ -655,9 +655,9 @@ struct HomeDashboardView: View {
                         )
 
                         homeMiniMetricCard(
-                            title: "创作资源",
-                            value: "\(appState.totalReferenceDocumentCount) 份",
-                            detail: "整理素材与写作 Skill",
+                            title: "Skill 市场",
+                            value: "\(appState.marketplaceWritingSkills.count) 项",
+                            detail: "发现、上传与启用 Skill",
                             symbolName: SidebarItem.library.symbolName,
                             action: openLibraryWorkspace
                         )
@@ -880,7 +880,7 @@ struct HomeDashboardView: View {
                         .buttonStyle(.bordered)
                     Button("章节树", action: openOutlineWorkspace)
                         .buttonStyle(.bordered)
-                    Button("创作资源", action: openLibraryWorkspace)
+                    Button("Skill 市场", action: openLibraryWorkspace)
                         .buttonStyle(.bordered)
                 }
 
@@ -889,7 +889,7 @@ struct HomeDashboardView: View {
                         .buttonStyle(.bordered)
                     Button("章节树", action: openOutlineWorkspace)
                         .buttonStyle(.bordered)
-                    Button("创作资源", action: openLibraryWorkspace)
+                    Button("Skill 市场", action: openLibraryWorkspace)
                         .buttonStyle(.bordered)
                 }
             }

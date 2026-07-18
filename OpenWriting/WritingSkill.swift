@@ -12,7 +12,7 @@ enum WritingSkillOrigin: String, Codable, CaseIterable {
         case .custom:
             return "自建"
         case .marketplace:
-            return "广场"
+            return "市场"
         }
     }
 }
@@ -62,6 +62,31 @@ enum WritingSkillCategory: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum WritingSkillListingSource: String, Codable, Hashable {
+    case curated
+    case localSubmission
+
+    var title: String {
+        switch self {
+        case .curated:
+            return "官方精选"
+        case .localSubmission:
+            return "本机投稿"
+        }
+    }
+}
+
+struct WritingSkillMarketplaceListing: Codable, Hashable {
+    var publisherName: String
+    var version: String
+    var source: WritingSkillListingSource
+    var publishedAt: Date
+
+    var publishedAtLabel: String {
+        PersistedTimestampCodec.displayLabel(for: publishedAt, style: .compact)
+    }
+}
+
 struct WritingSkill: Identifiable, Codable, Hashable {
     let id: String
     var title: String
@@ -71,6 +96,7 @@ struct WritingSkill: Identifiable, Codable, Hashable {
     var origin: WritingSkillOrigin
     var sourceName: String
     var isEnabled: Bool
+    var marketplaceListing: WritingSkillMarketplaceListing?
     private var importedAtTimestamp: Date
 
     enum CodingKeys: String, CodingKey {
@@ -82,6 +108,7 @@ struct WritingSkill: Identifiable, Codable, Hashable {
         case origin
         case sourceName
         case isEnabled
+        case marketplaceListing
         case importedAt
     }
 
@@ -112,6 +139,7 @@ struct WritingSkill: Identifiable, Codable, Hashable {
         origin: WritingSkillOrigin,
         sourceName: String,
         isEnabled: Bool = true,
+        marketplaceListing: WritingSkillMarketplaceListing? = nil,
         importedAt: String = TimestampLabel.now()
     ) {
         self.id = id
@@ -122,6 +150,7 @@ struct WritingSkill: Identifiable, Codable, Hashable {
         self.origin = origin
         self.sourceName = sourceName
         self.isEnabled = isEnabled
+        self.marketplaceListing = marketplaceListing
         self.importedAtTimestamp = PersistedTimestampCodec.parse(importedAt) ?? PersistedTimestampCodec.now()
     }
 
@@ -135,6 +164,10 @@ struct WritingSkill: Identifiable, Codable, Hashable {
         origin = try container.decodeIfPresent(WritingSkillOrigin.self, forKey: .origin) ?? .imported
         sourceName = try container.decodeIfPresent(String.self, forKey: .sourceName) ?? title
         isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        marketplaceListing = try container.decodeIfPresent(
+            WritingSkillMarketplaceListing.self,
+            forKey: .marketplaceListing
+        )
         importedAtTimestamp = try PersistedTimestampCodec.decodeRequired(container, forKey: .importedAt)
     }
 
@@ -148,6 +181,7 @@ struct WritingSkill: Identifiable, Codable, Hashable {
         try container.encode(origin, forKey: .origin)
         try container.encode(sourceName, forKey: .sourceName)
         try container.encode(isEnabled, forKey: .isEnabled)
+        try container.encodeIfPresent(marketplaceListing, forKey: .marketplaceListing)
         try PersistedTimestampCodec.encode(importedAtTimestamp, to: &container, forKey: .importedAt)
     }
 
@@ -159,70 +193,27 @@ struct WritingSkill: Identifiable, Codable, Hashable {
             category: category,
             origin: origin,
             sourceName: sourceName,
-            isEnabled: isEnabled
+            isEnabled: isEnabled,
+            marketplaceListing: nil
         )
     }
-}
 
-enum WritingSkillMarketplace {
-    static let featured: [WritingSkill] = [
-        WritingSkill(
-            id: "marketplace-longform-continuity",
-            title: "长篇连续性守门",
-            summary: "续写前先压住人物状态、伏笔边界和上一章尾声，适合长篇连载。",
-            instructions: """
-            - 续写必须承接上一章末尾的动作、情绪和信息缺口，不要用总结式开头重讲设定。
-            - 新增设定前先检查它是否服务本章目标、长期伏笔或人物关系变化。
-            - 不提前揭示长期真相；需要制造信息增量时，优先给出可验证的线索、代价或选择。
-            - 每一段场景推进都要让人物状态、局势压力或读者问题至少变化一项。
-            """,
-            category: .structure,
-            origin: .marketplace,
-            sourceName: "OpenWriting Skill 广场"
-        ),
-        WritingSkill(
-            id: "marketplace-webnovel-hook",
-            title: "网文追读钩子",
-            summary: "强化章节内的小悬念、段尾推进和结尾追读，不牺牲连续性。",
-            instructions: """
-            - 每 600 到 900 字制造一次明确的信息增量、情绪翻面或行动压力。
-            - 段尾避免空泛感叹，优先落在未完成动作、意外线索、关系错位或选择代价上。
-            - 章节结尾留下一个下一章必须处理的问题，但不要用生硬断章破坏当前场景。
-            - 钩子要来自现有设定和人物目标，不凭空添加大反转。
-            """,
-            category: .genre,
-            origin: .marketplace,
-            sourceName: "OpenWriting Skill 广场"
-        ),
-        WritingSkill(
-            id: "marketplace-natural-dialogue",
-            title: "对白自然化",
-            summary: "降低说明腔，让对白承担试探、隐瞒、误解和关系推进。",
-            instructions: """
-            - 对白不要替作者解释世界观；人物只说自己此刻会说、敢说、想隐藏的话。
-            - 长句说明拆成动作、停顿、反问和未说出口的信息。
-            - 每段对白至少承担一种功能：推进关系、暴露欲望、制造误解、交换筹码或改变局势。
-            - 避免所有角色同一种口吻；用词长度、礼貌程度和关注点区分人物。
-            """,
-            category: .voice,
-            origin: .marketplace,
-            sourceName: "OpenWriting Skill 广场"
-        ),
-        WritingSkill(
-            id: "marketplace-revision-pass",
-            title: "终稿减 AI 味",
-            summary: "返修时优先删解释、压重复、补动作细节，让正文更像人工终稿。",
-            instructions: """
-            - 删除重复解释、抽象感慨和已经由动作表达过的心理复述。
-            - 把泛泛的情绪词替换成可见动作、环境反应、身体感受或具体选择。
-            - 保留剧情事实和段落顺序，只做必要的节奏、句式和细节修订。
-            - 避免连续使用同构句式、成套转折词和总结性金句。
-            """,
-            category: .revision,
-            origin: .marketplace,
-            sourceName: "OpenWriting Skill 广场"
+    func publishedForLocalMarketplace(
+        publisherName: String,
+        version: String = "1.0.0",
+        publishedAt: Date = Date()
+    ) -> WritingSkill {
+        var published = self
+        published.origin = .marketplace
+        published.isEnabled = true
+        published.marketplaceListing = WritingSkillMarketplaceListing(
+            publisherName: publisherName,
+            version: version,
+            source: .localSubmission,
+            publishedAt: publishedAt
         )
-    ]
+        return published
+    }
 }
 
 enum WritingSkillImporting {
