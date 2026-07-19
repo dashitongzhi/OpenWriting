@@ -1,0 +1,41 @@
+{
+  "name": "promo-video",
+  "version": "1.0.0",
+  "description": "OpenWriting Chinese product promo rendered with Remotion",
+  "repository": {},
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@remotion/captions": "4.0.491",
+    "@remotion/cli": "4.0.491",
+    "@remotion/fonts": "4.0.491",
+    "@remotion/media": "4.0.491",
+    "@remotion/tailwind-v4": "4.0.491",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.491",
+    "tailwindcss": "4.0.0"
+  },
+  "devDependencies": {
+    "@remotion/eslint-config-flat": "4.0.491",
+    "@types/react": "19.2.7",
+    "@types/web": "0.0.166",
+    "eslint": "9.19.0",
+    "prettier": "3.8.1",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "dev": "remotion studio",
+    "build": "remotion bundle",
+    "voiceover": "./scripts/generate-voiceover.sh",
+    "manbo-track": "node ./scripts/generate-manbo-track.mjs",
+    "still": "remotion still OpenWritingPromo out/preview.png --frame=960",
+    "render": "remotion render OpenWritingPromo out/OpenWriting-Promo.mp4 --codec=h264 --crf=18",
+    "render:manbo": "remotion render OpenWritingPromoManbo out/OpenWriting-Promo-Manbo.mp4 --codec=h264 --crf=18",
+    "upgrade": "remotion upgrade",
+    "lint": "eslint src && tsc"
+  },
+  "sideEffects": [
+    "*.css"
+  ]
+}
