@@ -21,7 +21,12 @@ struct PlaceholderWorkspaceView: View {
     }
 
     private var workspaceHeaderHeight: CGFloat? {
-        472
+        switch item {
+        case .projects:
+            return 472
+        case .home, .writingDesk, .outline, .library:
+            return 420
+        }
     }
 
     private var workspaceHeaderAlignment: VerticalAlignment {

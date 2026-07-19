@@ -16,7 +16,11 @@ struct HomeDashboardView: View {
     private let contentTopPadding: CGFloat = 18
     private let contentHorizontalPadding: CGFloat = 32
     private let contentBottomPadding: CGFloat = 32
-    private let homeWorkbenchPanelHeight: CGFloat = 548
+    private let homeTopWorkbenchPanelHeight: CGFloat = 500
+
+    private var homeBottomWorkbenchPanelHeight: CGFloat {
+        appState.recentProjects.count == 1 ? 460 : 568
+    }
 
     private var palette: DashboardPalette {
         DashboardPalette(colorScheme: colorScheme)
@@ -211,7 +215,7 @@ struct HomeDashboardView: View {
             DashboardPanel(
                 title: "创作雷达",
                 subtitle: "把关键指标、当前焦点和今日写作节奏一起固定在首页。",
-                fixedHeight: homeWorkbenchPanelHeight
+                fixedHeight: homeTopWorkbenchPanelHeight
             ) {
                 VStack(alignment: .leading, spacing: 18) {
                     statGrid
@@ -222,7 +226,7 @@ struct HomeDashboardView: View {
             DashboardPanel(
                 title: "快速开始",
                 subtitle: "把最常用的动作排成一条清晰顺手的入口。",
-                fixedHeight: homeWorkbenchPanelHeight
+                fixedHeight: homeTopWorkbenchPanelHeight
             ) {
                 VStack(alignment: .leading, spacing: 18) {
                     quickStartSection
@@ -237,7 +241,7 @@ struct HomeDashboardView: View {
             DashboardPanel(
                 title: "最近项目",
                 subtitle: "继续你昨天停下的那一章，把最近推进重新接上。",
-                fixedHeight: homeWorkbenchPanelHeight
+                fixedHeight: homeBottomWorkbenchPanelHeight
             ) {
                 recentProjectsSection
             }
@@ -245,7 +249,7 @@ struct HomeDashboardView: View {
             DashboardPanel(
                 title: "写作骨架",
                 subtitle: "把人物、结构和灵感入口收进同一张工作卡。",
-                fixedHeight: homeWorkbenchPanelHeight
+                fixedHeight: homeBottomWorkbenchPanelHeight
             ) {
                 homeWritingSkeletonSection
             }
@@ -496,7 +500,7 @@ struct HomeDashboardView: View {
                 }
             }
             .padding(18)
-            .frame(maxWidth: .infinity, minHeight: 148, maxHeight: 148, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: 156, maxHeight: 156, alignment: .topLeading)
             .background(
                 GlassPanelBackground(
                     cornerRadius: 22,
@@ -571,7 +575,7 @@ struct HomeDashboardView: View {
             }
             .contentShape(Rectangle())
             .padding(18)
-            .frame(maxWidth: .infinity, minHeight: 148, maxHeight: 148, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: 156, maxHeight: 156, alignment: .topLeading)
             .background(
                 GlassPanelBackground(
                     cornerRadius: 22,
@@ -698,7 +702,7 @@ struct HomeDashboardView: View {
                                     endPoint: .bottomTrailing
                                 )
                             )
-                            .frame(width: 10, height: 36)
+                            .frame(width: 12, height: 42)
                             .shadow(color: palette.coolAccent.opacity(0.35), radius: 10, y: 4)
 
                         VStack(alignment: .leading, spacing: 5) {
@@ -712,7 +716,7 @@ struct HomeDashboardView: View {
                                 .lineSpacing(3)
                         }
                     }
-                    .padding(16)
+                    .padding(18)
                     .background(
                         GlassPanelBackground(
                             cornerRadius: 22,
