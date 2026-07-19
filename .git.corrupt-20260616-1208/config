@@ -1,0 +1,21 @@
+[core]
+	bare = false
+	repositoryformatversion = 0
+	filemode = true
+	ignorecase = true
+	precomposeunicode = true
+	logallrefupdates = true
+[remote "OpenWriting"]
+	url = https://github.com/dashitongzhi/OpenWriting.git
+	fetch = +refs/heads/*:refs/remotes/OpenWriting/*
+[branch "main-new"]
+	remote = OpenWriting
+	vscode-merge-base = OpenWriting/main
+	merge = refs/heads/main-new
+[branch "codex/xcode-migration"]
+	remote = OpenWriting
+	vscode-merge-base = OpenWriting/codex/xcode-migration
+	merge = refs/heads/codex/xcode-migration
+[branch "main"]
+	remote = OpenWriting
+	merge = refs/heads/main

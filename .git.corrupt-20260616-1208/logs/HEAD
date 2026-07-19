@@ -1,0 +1,83 @@
+0000000000000000000000000000000000000000 d0744bd5223f230b1b1feabefed2932d2c9427ea dashitongzhi <civilization.cn@outlook.com> 1775648605 +0800	commit (initial): Initial Commit
+d0744bd5223f230b1b1feabefed2932d2c9427ea d0744bd5223f230b1b1feabefed2932d2c9427ea dashitongzhi <civilization.cn@outlook.com> 1775651633 +0800	checkout: moving from main to codex/xcode-migration-local-snapshot
+d0744bd5223f230b1b1feabefed2932d2c9427ea 62a137e6ed4de44979bbf9e5a089e3e9e24c8f3f dashitongzhi <civilization.cn@outlook.com> 1775651642 +0800	commit: Migrate app into Xcode project with Apple ID and iCloud sync
+62a137e6ed4de44979bbf9e5a089e3e9e24c8f3f 02424f765f05d30ca72e9179e0f97d3821c08a92 dashitongzhi <civilization.cn@outlook.com> 1775651666 +0800	checkout: moving from codex/xcode-migration-local-snapshot to codex/xcode-migration
+02424f765f05d30ca72e9179e0f97d3821c08a92 10e3fc8edd1d32cc0f27a709e8478427f232addb dashitongzhi <civilization.cn@outlook.com> 1775651829 +0800	commit: Migrate repository to Xcode project
+10e3fc8edd1d32cc0f27a709e8478427f232addb 178bcf929a525f1007ca29b9ee16df9c05f82c9d dashitongzhi <civilization.cn@outlook.com> 1775652733 +0800	commit: 添加 INDEX.md 和 README.md 文件，提供项目结构、核心能力及运行要求的详细说明
+178bcf929a525f1007ca29b9ee16df9c05f82c9d 6d10fb2b6240c6dbe607dd0f7fddb29e290fb450 dashitongzhi <civilization.cn@outlook.com> 1776168350 +0800	commit: 重构应用外观管理，添加命令行构建脚本以支持调试构建
+6d10fb2b6240c6dbe607dd0f7fddb29e290fb450 80114c776d9926664ba9f2c51d9d4bb078c73ee2 dashitongzhi <civilization.cn@outlook.com> 1776347960 +0800	commit: Refactor AIWritingService and WritingDeskView for enhanced functionality and polish requirements
+80114c776d9926664ba9f2c51d9d4bb078c73ee2 b1d011426bca5d6ea555bcbb636697de9a9045d8 dashitongzhi <civilization.cn@outlook.com> 1776349764 +0800	commit: 为 PlaceholderWorkspaceView 添加新建项目按钮，并更新项目列表面板的提示信息；新增调试运行脚本
+b1d011426bca5d6ea555bcbb636697de9a9045d8 d2ed36e9a8813ac81289db6df143af8ee931a7ba dashitongzhi <civilization.cn@outlook.com> 1776440290 +0800	commit: Refactor code structure for improved readability and maintainability
+d2ed36e9a8813ac81289db6df143af8ee931a7ba 8b7734b081ef3077c8370d1525fef97421536d9a dashitongzhi <civilization.cn@outlook.com> 1776783715 +0800	commit: test
+8b7734b081ef3077c8370d1525fef97421536d9a 62a137e6ed4de44979bbf9e5a089e3e9e24c8f3f dashitongzhi <civilization.cn@outlook.com> 1776783799 +0800	checkout: moving from codex/xcode-migration to codex/xcode-migration-local-snapshot
+62a137e6ed4de44979bbf9e5a089e3e9e24c8f3f 8b7734b081ef3077c8370d1525fef97421536d9a dashitongzhi <civilization.cn@outlook.com> 1776783802 +0800	checkout: moving from codex/xcode-migration-local-snapshot to codex/xcode-migration
+8b7734b081ef3077c8370d1525fef97421536d9a 8b7734b081ef3077c8370d1525fef97421536d9a dashitongzhi <civilization.cn@outlook.com> 1776784588 +0800	checkout: moving from codex/xcode-migration to codex/xcode-migration
+8b7734b081ef3077c8370d1525fef97421536d9a 0000000000000000000000000000000000000000 dashitongzhi <civilization.cn@outlook.com> 1776784598 +0800	Branch: renamed refs/heads/codex/xcode-migration to refs/heads/main-new
+0000000000000000000000000000000000000000 8b7734b081ef3077c8370d1525fef97421536d9a dashitongzhi <civilization.cn@outlook.com> 1776784598 +0800	Branch: renamed refs/heads/codex/xcode-migration to refs/heads/main-new
+8b7734b081ef3077c8370d1525fef97421536d9a 8b7734b081ef3077c8370d1525fef97421536d9a dashitongzhi <civilization.cn@outlook.com> 1776784750 +0800	checkout: moving from main-new to codex/xcode-migration
+8b7734b081ef3077c8370d1525fef97421536d9a 8b7734b081ef3077c8370d1525fef97421536d9a dashitongzhi <civilization.cn@outlook.com> 1776784770 +0800	checkout: moving from codex/xcode-migration to codex/xcode-migration
+8b7734b081ef3077c8370d1525fef97421536d9a 8b7734b081ef3077c8370d1525fef97421536d9a dashitongzhi <civilization.cn@outlook.com> 1776859754 +0800	checkout: moving from codex/xcode-migration to codex/xcode-migration
+8b7734b081ef3077c8370d1525fef97421536d9a b08efc98500abb6cfaecc5c2d733961ee906a1f2 dashitongzhi <civilization.cn@outlook.com> 1776861992 +0800	commit: 修改
+b08efc98500abb6cfaecc5c2d733961ee906a1f2 ee14b28f499dae499fbfedb72d73b2fefe1828bc dashitongzhi <civilization.cn@outlook.com> 1776864871 +0800	commit: 1
+ee14b28f499dae499fbfedb72d73b2fefe1828bc 9ea2144f46eedf480bc92898b18ad2ee2531aee8 dashitongzhi <civilization.cn@outlook.com> 1776864876 +0800	commit: 12
+9ea2144f46eedf480bc92898b18ad2ee2531aee8 497c56dc2f4c43af6264c86568c09b7fd6dcb1b8 dashitongzhi <civilization.cn@outlook.com> 1776946589 +0800	commit: Refactor WritingDeskView for improved outline and draft generation handling
+497c56dc2f4c43af6264c86568c09b7fd6dcb1b8 309fd36fdcbc2ce36707e52222ff6a90bee375f0 dashitongzhi <civilization.cn@outlook.com> 1777032564 +0800	commit: 为章节草稿和项目新增时间戳处理与格式化功能
+309fd36fdcbc2ce36707e52222ff6a90bee375f0 10c9e948800e8e3a6945ce0883d7f7b2e3f6342c dashitongzhi <civilization.cn@outlook.com> 1777034959 +0800	commit: 更新 .gitignore 和 INDEX.md，新增 .claude/settings.json 记录；调整 HomeDashboardView 布局和按钮样式
+10c9e948800e8e3a6945ce0883d7f7b2e3f6342c 4d0b19aa7cdf49b109aec4105fa0536fd622019e dashitongzhi <civilization.cn@outlook.com> 1777037408 +0800	commit: 新增连接验证功能，更新模型连接设置界面，优化状态反馈
+4d0b19aa7cdf49b109aec4105fa0536fd622019e 54d31ed7db9902aa90f7aae4c26f42f328f03482 dashitongzhi <civilization.cn@outlook.com> 1777037769 +0800	commit: 更新默认模型名称和基础 URL，支持自定义提供者配置
+54d31ed7db9902aa90f7aae4c26f42f328f03482 ded1c0a945a1448e1ed70a4459e26bb2988192fe dashitongzhi <civilization.cn@outlook.com> 1777095065 +0800	commit: 功能：新增文稿润色功能并优化AI写作控制能力
+ded1c0a945a1448e1ed70a4459e26bb2988192fe 38858a752ec15776054c12bbe268cc9d2afd343a dashitongzhi <civilization.cn@outlook.com> 1777095130 +0800	commit: 功能：新增项目表单并重构大纲工作区
+38858a752ec15776054c12bbe268cc9d2afd343a b8f9d7052bfa94e2f972082578747d8eae9a88ec dashitongzhi <civilization.cn@outlook.com> 1777187609 +0800	commit: 功能：更新模型连接设置，优化用户提示信息和界面布局
+b8f9d7052bfa94e2f972082578747d8eae9a88ec e8e40d3f691aaa7221bb9897e68c829086154139 dashitongzhi <civilization.cn@outlook.com> 1777192517 +0800	commit: 功能：更新应用图标资源，新增多种尺寸和分辨率的图标文件
+e8e40d3f691aaa7221bb9897e68c829086154139 a31b9bb074fb235b3b70fb4a494bdf5c09295ac7 dashitongzhi <civilization.cn@outlook.com> 1777202039 +0800	commit: 功能：新增重写方向选择，优化用户对候选稿的修改指引
+a31b9bb074fb235b3b70fb4a494bdf5c09295ac7 74d4ac602c0b1ad57fe98e2a7e18dfde909d67e9 dashitongzhi <civilization.cn@outlook.com> 1777294385 +0800	commit: 功能：更新.gitignore文件，新增对.dmg文件的忽略
+74d4ac602c0b1ad57fe98e2a7e18dfde909d67e9 872a544d4b34374dd01e39ca693f9d6aea2eae95 dashitongzhi <civilization.cn@outlook.com> 1777297279 +0800	commit: 重构应用状态，移除旧版存储键与相关方法，简化用户默认设置的处理逻辑。更新应用窗口协调器，负责管理窗口展示逻辑的生成。优化文学语录库，为解析后的语录链接增加缓存机制，并完善来源信息的净化处理规则。
+872a544d4b34374dd01e39ca693f9d6aea2eae95 d01c556c04a05b4f2c03663884aded18349b3280 dashitongzhi <civilization.cn@outlook.com> 1777381816 +0800	commit: 优化主窗口控制器的工具栏刷新逻辑，简化延迟调度，移除多余的工作项数组，确保工具栏配置的更新更加高效。
+d01c556c04a05b4f2c03663884aded18349b3280 0a72d9e3e6bc8cee2a26e9e8e34fb37d3915c1ba dashitongzhi <civilization.cn@outlook.com> 1777459853 +0800	commit: 功能：新增章节保存并自动进入下一章的功能，优化章节草稿保存逻辑，确保章节标题和内容的更新。
+0a72d9e3e6bc8cee2a26e9e8e34fb37d3915c1ba c9a73fe8deef3bdc1356b058cd87b4bb0b451f31 dashitongzhi <civilization.cn@outlook.com> 1777534908 +0800	commit: feat: Add chapter version history and export functionality
+c9a73fe8deef3bdc1356b058cd87b4bb0b451f31 25d01fff82fe7e476e52c534b8e8d575b1fb96d6 dashitongzhi <civilization.cn@outlook.com> 1777642840 +0800	commit: feat: integrate webnovel-writer capabilities into OpenWriting
+25d01fff82fe7e476e52c534b8e8d575b1fb96d6 0df717d681bc51faa50b4ea784f1f5917bedd171 dashitongzhi <civilization.cn@outlook.com> 1777642898 +0800	pull --rebase OpenWriting codex/xcode-migration (start): checkout 0df717d681bc51faa50b4ea784f1f5917bedd171
+0df717d681bc51faa50b4ea784f1f5917bedd171 aeb1e3f3b6e6263f535562dd4ae9b8cd121e3b55 dashitongzhi <civilization.cn@outlook.com> 1777642898 +0800	pull --rebase OpenWriting codex/xcode-migration (pick): 优化主窗口控制器的工具栏刷新逻辑，简化延迟调度，移除多余的工作项数组，确保工具栏配置的更新更加高效。
+aeb1e3f3b6e6263f535562dd4ae9b8cd121e3b55 4d64df0458891cf49ea5b71d57aec8506916cbb6 dashitongzhi <civilization.cn@outlook.com> 1777642898 +0800	pull --rebase OpenWriting codex/xcode-migration (pick): 功能：新增章节保存并自动进入下一章的功能，优化章节草稿保存逻辑，确保章节标题和内容的更新。
+4d64df0458891cf49ea5b71d57aec8506916cbb6 c3293b55ac73bba8e022453bc344286c79c36d3b dashitongzhi <civilization.cn@outlook.com> 1777642928 +0800	rebase (continue): feat: Add chapter version history and export functionality
+c3293b55ac73bba8e022453bc344286c79c36d3b bc3ce1e5be25ed242e1185ed2410766e46680ac6 dashitongzhi <civilization.cn@outlook.com> 1777642948 +0800	rebase (continue): feat: integrate webnovel-writer capabilities into OpenWriting
+bc3ce1e5be25ed242e1185ed2410766e46680ac6 bc3ce1e5be25ed242e1185ed2410766e46680ac6 dashitongzhi <civilization.cn@outlook.com> 1777642948 +0800	rebase (finish): returning to refs/heads/codex/xcode-migration
+bc3ce1e5be25ed242e1185ed2410766e46680ac6 bc3ce1e5be25ed242e1185ed2410766e46680ac6 dashitongzhi <civilization.cn@outlook.com> 1777645081 +0800	reset: moving to HEAD
+bc3ce1e5be25ed242e1185ed2410766e46680ac6 30ba3a8e0298b3bc510d417880136e2fe225d8a2 dashitongzhi <civilization.cn@outlook.com> 1777650258 +0800	commit: docs: restore README from commit 56c770c
+30ba3a8e0298b3bc510d417880136e2fe225d8a2 f728e608724f06cb7b2f1a9ce45fc874ae1f2840 dashitongzhi <civilization.cn@outlook.com> 1777651085 +0800	commit: docs: enhance README with market analysis, competitive landscape, and updated feature status
+f728e608724f06cb7b2f1a9ce45fc874ae1f2840 96739c9fb4ff0a42c50463fc09507feee06e9e4d dashitongzhi <civilization.cn@outlook.com> 1777652553 +0800	commit: feat: enhance long-form writing capabilities inspired by webnovel-writer
+96739c9fb4ff0a42c50463fc09507feee06e9e4d 7a8866414ba82fcdce541235713da98987d89cb8 dashitongzhi <civilization.cn@outlook.com> 1777655465 +0800	commit: fix: resolve all CRITICAL and MAJOR issues from code review
+7a8866414ba82fcdce541235713da98987d89cb8 d7bbdb4a656b8fe4730a0f92d230783ba5942d6d dashitongzhi <civilization.cn@outlook.com> 1777655716 +0800	commit: fix: resolve all MINOR issues from code review
+d7bbdb4a656b8fe4730a0f92d230783ba5942d6d c4445c37f96cac8b630a53a4833374d84c557d6e dashitongzhi <civilization.cn@outlook.com> 1777663023 +0800	commit: feat: BM25 reference retrieval + dynamic context ranking
+c4445c37f96cac8b630a53a4833374d84c557d6e 731bf3a13586b9cf219df2038d76f01bd56f23d8 dashitongzhi <civilization.cn@outlook.com> 1777961662 +0800	commit: Refactor chapter management and metadata handling in the writing project
+731bf3a13586b9cf219df2038d76f01bd56f23d8 644d68eee531485bef3077c55431d9783565ec53 dashitongzhi <civilization.cn@outlook.com> 1779115412 +0800	commit: Add search and AI command managers, implement tests for domain models and project file storage
+644d68eee531485bef3077c55431d9783565ec53 10e3fc8edd1d32cc0f27a709e8478427f232addb dashitongzhi <civilization.cn@outlook.com> 1779115556 +0800	checkout: moving from codex/xcode-migration to main
+10e3fc8edd1d32cc0f27a709e8478427f232addb 644d68eee531485bef3077c55431d9783565ec53 dashitongzhi <civilization.cn@outlook.com> 1779115559 +0800	checkout: moving from main to codex/xcode-migration
+644d68eee531485bef3077c55431d9783565ec53 8b7734b081ef3077c8370d1525fef97421536d9a dashitongzhi <civilization.cn@outlook.com> 1779115562 +0800	checkout: moving from codex/xcode-migration to main-new
+8b7734b081ef3077c8370d1525fef97421536d9a 644d68eee531485bef3077c55431d9783565ec53 dashitongzhi <civilization.cn@outlook.com> 1779115565 +0800	checkout: moving from main-new to codex/xcode-migration
+644d68eee531485bef3077c55431d9783565ec53 887c3831e5f8280fab223737a45ea66c5cea5fd3 dashitongzhi <civilization.cn@outlook.com> 1779115599 +0800	pull --rebase OpenWriting codex/xcode-migration (start): checkout 887c3831e5f8280fab223737a45ea66c5cea5fd3
+887c3831e5f8280fab223737a45ea66c5cea5fd3 42cd4adbf3b1342e19832ef8b64ea68c7269f191 dashitongzhi <civilization.cn@outlook.com> 1779115599 +0800	pull --rebase OpenWriting codex/xcode-migration (pick): Add search and AI command managers, implement tests for domain models and project file storage
+42cd4adbf3b1342e19832ef8b64ea68c7269f191 42cd4adbf3b1342e19832ef8b64ea68c7269f191 dashitongzhi <civilization.cn@outlook.com> 1779115599 +0800	pull --rebase OpenWriting codex/xcode-migration (finish): returning to refs/heads/codex/xcode-migration
+42cd4adbf3b1342e19832ef8b64ea68c7269f191 5994c5a0c0121567db2fa1357ebca43b8ddbe90f dashitongzhi <civilization.cn@outlook.com> 1779157142 +0800	commit: feat: 添加结构化伏笔管理功能，包括增删改查和迁移笔记
+5994c5a0c0121567db2fa1357ebca43b8ddbe90f 8a3fbbc370deb58f7317fc87c79e2c60c5070fbb dashitongzhi <civilization.cn@outlook.com> 1779157165 +0800	commit: Add Review Summary Section, Score Gauge Ring, and Writing Desk Models & Views
+8a3fbbc370deb58f7317fc87c79e2c60c5070fbb ec29ebaf8a4d72adc12fdc51ef4fba7ac0b184ed dashitongzhi <civilization.cn@outlook.com> 1779248934 +0800	commit: Remove WritingDeskModels and WritingDeskViews files to streamline codebase and improve maintainability.
+ec29ebaf8a4d72adc12fdc51ef4fba7ac0b184ed 3b5f8d0bb5b095fc0db22d27edbfa4941ead06bb dashitongzhi <civilization.cn@outlook.com> 1779373477 +0800	commit: # English Description
+3b5f8d0bb5b095fc0db22d27edbfa4941ead06bb 4cb0906506b7808cbcac6b5050186a3b001cc108 dashitongzhi <civilization.cn@outlook.com> 1779373969 +0800	commit: # English
+4cb0906506b7808cbcac6b5050186a3b001cc108 ce8f42aebdf8e989f33180d59f0fed9ada8e5bc1 dashitongzhi <civilization.cn@outlook.com> 1779895083 +0800	commit: # English
+ce8f42aebdf8e989f33180d59f0fed9ada8e5bc1 9fc33792b49d863f931178d3e527f04ddc5f8fbf dashitongzhi <civilization.cn@outlook.com> 1780471531 +0800	commit: # English
+9fc33792b49d863f931178d3e527f04ddc5f8fbf 1e8cb6a8cfccd10f30acae27a8a4ab6a97861673 dashitongzhi <civilization.cn@outlook.com> 1780746891 +0800	commit: # English
+1e8cb6a8cfccd10f30acae27a8a4ab6a97861673 343030774c70a31fc51f2f7b931c49443ac96da1 dashitongzhi <civilization.cn@outlook.com> 1781421356 +0800	commit: Switch OpenW default backend
+343030774c70a31fc51f2f7b931c49443ac96da1 a8e171721d70dedf9a02470847951d1b733164ce dashitongzhi <civilization.cn@outlook.com> 1781423515 +0800	commit: Harden storage recovery flow
+a8e171721d70dedf9a02470847951d1b733164ce 85c11881445d682a01a479bebe9443a9e4e6b8da dashitongzhi <civilization.cn@outlook.com> 1781423653 +0800	commit (amend): # English Description (英文描述)
+85c11881445d682a01a479bebe9443a9e4e6b8da 6debe180f620c86859ca3b5a78c5615e9b7af18c dashitongzhi <civilization.cn@outlook.com> 1781423718 +0800	commit (amend): Harden storage recovery flow / 强化存储恢复流程
+6debe180f620c86859ca3b5a78c5615e9b7af18c a32f10492a3339c133bc28d57fb6e82d9307941d dashitongzhi <civilization.cn@outlook.com> 1781424994 +0800	commit: Polish OpenWriting UI surfaces
+a32f10492a3339c133bc28d57fb6e82d9307941d 1e6a9c5aa74b5c8370e5c4360306fbd7d65453dc dashitongzhi <civilization.cn@outlook.com> 1781425327 +0800	commit: Stabilize OpenWriting test checks
+1e6a9c5aa74b5c8370e5c4360306fbd7d65453dc a5b77610ab8686b8691ca7d7769fb24578989b64 dashitongzhi <civilization.cn@outlook.com> 1781426490 +0800	commit: Harden chapter review validation
+a5b77610ab8686b8691ca7d7769fb24578989b64 aee25a274db92ab49a1d0e80a4e5f50b71fb8f05 dashitongzhi <civilization.cn@outlook.com> 1781426498 +0800	commit: Carry quality debt into longform briefs
+aee25a274db92ab49a1d0e80a4e5f50b71fb8f05 f5d5db60d0d410fd63b2d1899b4ec0555085d75f dashitongzhi <civilization.cn@outlook.com> 1781426508 +0800	commit: Protect chapter loading and exports
+f5d5db60d0d410fd63b2d1899b4ec0555085d75f c4690258eead1dc9f277210b820f04af9fe44341 dashitongzhi <civilization.cn@outlook.com> 1781426519 +0800	commit: Add longform eval and reliable checks
+c4690258eead1dc9f277210b820f04af9fe44341 3ef0d6d9a380e7195fe2a5d1e1022d4329323f2c dashitongzhi <civilization.cn@outlook.com> 1781507250 +0800	commit: Wire longform evals to local pipeline
+3ef0d6d9a380e7195fe2a5d1e1022d4329323f2c 7f58d5ae02e51ee18b5563d05fb279ee46ac674e dashitongzhi <civilization.cn@outlook.com> 1781509420 +0800	commit: Implement local longform eval runner
+7f58d5ae02e51ee18b5563d05fb279ee46ac674e 0e95b7dba63ed9c079d992d8c8de036714be6290 dashitongzhi <civilization.cn@outlook.com> 1781528734 +0800	commit: Run hosted macOS tests by default
+0e95b7dba63ed9c079d992d8c8de036714be6290 d11194cc11dfbe1a599723c22b96bda8f630b716 dashitongzhi <civilization.cn@outlook.com> 1781579678 +0800	commit: Implement real longform eval mode
+d11194cc11dfbe1a599723c22b96bda8f630b716 f2717d818d02adc20463265a0c55f6c87d5a3da9 dashitongzhi <civilization.cn@outlook.com> 1781582372 +0800	commit: Wire OpenWriting model backend

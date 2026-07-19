@@ -1,0 +1,13 @@
+.DS_Store
+UserInterfaceState.xcuserstate
+
+# Local-only agent instruction files
+AGENTS.md
+AGENTS.*.md
+CLAUDE.md
+GEMINI.md
+CODEX.md
+.cursorrules
+.cursor/
+.windsurfrules
+.continue/

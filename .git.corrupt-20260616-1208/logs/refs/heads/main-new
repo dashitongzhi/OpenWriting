@@ -1,0 +1,9 @@
+0000000000000000000000000000000000000000 02424f765f05d30ca72e9179e0f97d3821c08a92 dashitongzhi <civilization.cn@outlook.com> 1775651666 +0800	branch: Created from OpenWriting/main
+02424f765f05d30ca72e9179e0f97d3821c08a92 10e3fc8edd1d32cc0f27a709e8478427f232addb dashitongzhi <civilization.cn@outlook.com> 1775651829 +0800	commit: Migrate repository to Xcode project
+10e3fc8edd1d32cc0f27a709e8478427f232addb 178bcf929a525f1007ca29b9ee16df9c05f82c9d dashitongzhi <civilization.cn@outlook.com> 1775652733 +0800	commit: 添加 INDEX.md 和 README.md 文件，提供项目结构、核心能力及运行要求的详细说明
+178bcf929a525f1007ca29b9ee16df9c05f82c9d 6d10fb2b6240c6dbe607dd0f7fddb29e290fb450 dashitongzhi <civilization.cn@outlook.com> 1776168350 +0800	commit: 重构应用外观管理，添加命令行构建脚本以支持调试构建
+6d10fb2b6240c6dbe607dd0f7fddb29e290fb450 80114c776d9926664ba9f2c51d9d4bb078c73ee2 dashitongzhi <civilization.cn@outlook.com> 1776347960 +0800	commit: Refactor AIWritingService and WritingDeskView for enhanced functionality and polish requirements
+80114c776d9926664ba9f2c51d9d4bb078c73ee2 b1d011426bca5d6ea555bcbb636697de9a9045d8 dashitongzhi <civilization.cn@outlook.com> 1776349764 +0800	commit: 为 PlaceholderWorkspaceView 添加新建项目按钮，并更新项目列表面板的提示信息；新增调试运行脚本
+b1d011426bca5d6ea555bcbb636697de9a9045d8 d2ed36e9a8813ac81289db6df143af8ee931a7ba dashitongzhi <civilization.cn@outlook.com> 1776440290 +0800	commit: Refactor code structure for improved readability and maintainability
+d2ed36e9a8813ac81289db6df143af8ee931a7ba 8b7734b081ef3077c8370d1525fef97421536d9a dashitongzhi <civilization.cn@outlook.com> 1776783715 +0800	commit: test
+8b7734b081ef3077c8370d1525fef97421536d9a 8b7734b081ef3077c8370d1525fef97421536d9a dashitongzhi <civilization.cn@outlook.com> 1776784598 +0800	Branch: renamed refs/heads/codex/xcode-migration to refs/heads/main-new
