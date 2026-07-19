@@ -2,8 +2,8 @@ import {readFile, writeFile} from "node:fs/promises";
 import {resolve} from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
-const source = resolve(root, "public/audio/voiceover.vtt");
-const target = resolve(root, "public/audio/captions.json");
+const source = resolve(root, process.argv[2] ?? "public/audio/voiceover.vtt");
+const target = resolve(root, process.argv[3] ?? "public/audio/captions.json");
 
 const toMs = (timestamp) => {
   const [hours, minutes, rest] = timestamp.split(":");

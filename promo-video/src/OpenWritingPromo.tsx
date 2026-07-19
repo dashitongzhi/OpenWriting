@@ -11,11 +11,15 @@ import {colors} from "./theme";
 type OpenWritingPromoProps = {
   backgroundMusic?: string;
   backgroundMusicVolume?: number;
+  voiceover?: string;
+  captionSet?: "standard" | "manboVoice";
 };
 
 export const OpenWritingPromo: React.FC<OpenWritingPromoProps> = ({
   backgroundMusic,
   backgroundMusicVolume = 0.3,
+  voiceover = "audio/voiceover.mp3",
+  captionSet = "standard",
 }) => {
   return (
     <AbsoluteFill style={{background: colors.ink}}>
@@ -76,11 +80,11 @@ export const OpenWritingPromo: React.FC<OpenWritingPromoProps> = ({
         <OutroScene duration={420} />
       </Sequence>
 
-      <Audio src={staticFile("audio/voiceover.mp3")} volume={1} />
+      <Audio src={staticFile(voiceover)} volume={1} />
       {backgroundMusic ? (
         <Audio src={staticFile(backgroundMusic)} volume={backgroundMusicVolume} />
       ) : null}
-      <SubtitleOverlay />
+      <SubtitleOverlay captionSet={captionSet} />
     </AbsoluteFill>
   );
 };

@@ -24,6 +24,18 @@ export const MyComposition: React.FC = () => {
           backgroundMusicVolume: 0.3,
         }}
       />
+      <Composition
+        id="OpenWritingPromoManboVoice"
+        component={OpenWritingPromo}
+        durationInFrames={2040}
+        fps={30}
+        width={1920}
+        height={1080}
+        defaultProps={{
+          voiceover: "audio/voiceover-manbo.mp3",
+          captionSet: "manboVoice",
+        }}
+      />
     </>
   );
 };

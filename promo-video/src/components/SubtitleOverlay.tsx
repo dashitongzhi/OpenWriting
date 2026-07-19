@@ -1,14 +1,25 @@
 import type {Caption} from "@remotion/captions";
 import {Easing, interpolate, useCurrentFrame, useVideoConfig} from "remotion";
 import captionsJson from "../../public/audio/captions.json";
+import manboCaptionsJson from "../../public/audio/captions-manbo.json";
 import {colors, fonts} from "../theme";
 
-const captions = captionsJson as Caption[];
+const captionSets = {
+  standard: captionsJson as Caption[],
+  manboVoice: manboCaptionsJson as Caption[],
+};
 
-export const SubtitleOverlay: React.FC = () => {
+type SubtitleOverlayProps = {
+  captionSet?: keyof typeof captionSets;
+};
+
+export const SubtitleOverlay: React.FC<SubtitleOverlayProps> = ({
+  captionSet = "standard",
+}) => {
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
   const timeMs = (frame / fps) * 1000;
+  const captions = captionSets[captionSet];
   const caption = captions.find((item) => timeMs >= item.startMs && timeMs <= item.endMs);
 
   if (!caption) return null;
@@ -58,4 +69,3 @@ export const SubtitleOverlay: React.FC = () => {
     </div>
   );
 };
-

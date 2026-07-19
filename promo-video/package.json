@@ -28,10 +28,12 @@
     "dev": "remotion studio",
     "build": "remotion bundle",
     "voiceover": "./scripts/generate-voiceover.sh",
+    "voiceover:manbo": "./scripts/generate-manbo-voiceover.sh",
     "manbo-track": "node ./scripts/generate-manbo-track.mjs",
     "still": "remotion still OpenWritingPromo out/preview.png --frame=960",
     "render": "remotion render OpenWritingPromo out/OpenWriting-Promo.mp4 --codec=h264 --crf=18",
     "render:manbo": "remotion render OpenWritingPromoManbo out/OpenWriting-Promo-Manbo.mp4 --codec=h264 --crf=18",
+    "render:manbo-voice": "remotion render OpenWritingPromoManboVoice out/OpenWriting-Promo-ManboVoice.mp4 --codec=h264 --crf=18",
     "upgrade": "remotion upgrade",
     "lint": "eslint src && tsc"
   },

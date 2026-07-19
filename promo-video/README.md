@@ -29,6 +29,15 @@ TTS 使用 Microsoft Edge 在线神经语音服务：
 - Rate：`+4%`
 - Pitch：`-2Hz`
 
+“曼波式口播”版本使用同一免费在线服务中的卡通/小说女声，并通过短句、停顿和反差文案塑造语气：
+
+- Voice：`zh-CN-XiaoyiNeural`（官方标签：Cartoon、Novel、Lively）
+- Rate：`+18%`
+- Pitch：`+8Hz`
+- 文案：`voiceover-manbo.txt`
+
+该版本不是《赛马娘》角色或声优的声音克隆，也没有使用来源与商用许可不明的社区 RVC/GPT-SoVITS 权重。“曼波式”仅描述网络短视频中呆萌、平直断句与一本正经反差叙事的表达方式。
+
 ## 视频版本
 
 无背景节奏的原版：
@@ -49,6 +58,15 @@ npm run render:manbo
 输出：`out/OpenWriting-Promo-Manbo.mp4`
 
 曼波节奏使用 VCSL 的 conga、quinto、bongo、cowbell、claves 和 shaker 单击采样重新编排，不包含从抖音或其他短视频平台提取的音频。素材及许可证说明见 `public/audio/manbo/README.md`。
+
+使用曼波式中文口播的新版本：
+
+```bash
+npm run voiceover:manbo
+npm run render:manbo-voice
+```
+
+输出：`out/OpenWriting-Promo-ManboVoice.mp4`
 
 ## 素材目录
 
