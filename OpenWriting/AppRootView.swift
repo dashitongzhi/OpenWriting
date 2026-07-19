@@ -73,19 +73,28 @@ struct AppRootView: View {
     @ViewBuilder
     private func sidebarRows(_ items: [SidebarItem]) -> some View {
         ForEach(items) { item in
-            Label {
-                Text(item.title)
-                    .font(.system(size: 15, weight: .semibold))
-            } icon: {
-                Image(systemName: item.symbolName)
-                    .font(.system(size: 16, weight: .medium))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 22)
-            }
+            SidebarNavigationRow(
+                item: item,
+                accent: sidebarAccent(for: item),
+                isSelected: appState.selectedSidebarItem == item
+            )
                 .tag(item)
-                .padding(.vertical, 6)
-                .listRowInsets(EdgeInsets(top: 1, leading: 16, bottom: 1, trailing: 16))
+                .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
+        }
+    }
+
+    private func sidebarAccent(for item: SidebarItem) -> Color {
+        switch item {
+        case .home:
+            return Color(red: 0.08, green: 0.53, blue: 0.98)
+        case .projects:
+            return Color(red: 0.16, green: 0.48, blue: 0.96)
+        case .writingDesk:
+            return Color(red: 0.20, green: 0.76, blue: 0.42)
+        case .outline:
+            return Color(red: 0.96, green: 0.56, blue: 0.16)
+        case .library:
+            return Color(red: 0.57, green: 0.36, blue: 0.95)
         }
     }
 
@@ -754,6 +763,58 @@ private struct SidebarSectionHeader: View {
             .tracking(0.6)
             .textCase(nil)
             .padding(.top, 10)
+    }
+}
+
+private struct SidebarNavigationRow: View {
+    @Environment(\.controlActiveState) private var controlActiveState
+    let item: SidebarItem
+    let accent: Color
+    let isSelected: Bool
+
+    private var usesActiveSelectionAppearance: Bool {
+        isSelected && controlActiveState == .key
+    }
+
+    var body: some View {
+        HStack(spacing: 13) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                usesActiveSelectionAppearance ? Color.white.opacity(0.24) : accent,
+                                usesActiveSelectionAppearance ? Color.white.opacity(0.13) : accent.opacity(0.82)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .strokeBorder(Color.white.opacity(usesActiveSelectionAppearance ? 0.24 : 0.42), lineWidth: 0.8)
+                    )
+                    .shadow(
+                        color: Color.black.opacity(usesActiveSelectionAppearance ? 0.08 : 0.16),
+                        radius: 2.5,
+                        y: 1.5
+                    )
+
+                Image(systemName: item.symbolName)
+                    .font(.system(size: 16, weight: .semibold))
+                    .symbolRenderingMode(.monochrome)
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 32, height: 32)
+
+            Text(item.title)
+                .font(.system(size: 17, weight: isSelected ? .semibold : .medium))
+                .foregroundStyle(usesActiveSelectionAppearance ? Color.white : Color.primary)
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }
 
