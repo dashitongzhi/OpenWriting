@@ -1,6 +1,11 @@
 import Foundation
 import OSLog
 
+nonisolated struct AccountScopedProjectLoadResult {
+    var projects: [NovelProject]?
+    var issues: [ProjectLoadIssue]
+}
+
 extension AppState {
     var isAccountSignedIn: Bool {
         activeAccount != nil
@@ -22,11 +27,30 @@ extension AppState {
         return "登录 Apple ID 后，项目会按 Apple 账户隔离，并同步到 iCloud。"
     }
 
+    var unsupportedFutureProjectCount: Int {
+        projectLoadIssues.filter {
+            $0.kind == .unsupportedFutureProjectDocument
+        }.count
+    }
+
+    var projectLoadWarningMessage: String? {
+        let count = unsupportedFutureProjectCount
+        guard count > 0 else { return nil }
+        return "有 \(count) 个项目由更高版本的 OpenWriting 创建，请更新应用后再打开。"
+    }
+
     @discardableResult
     func bindAppleAccount(_ profile: AppleAccountProfile) async -> Bool {
         let normalizedProfile = Self.normalizedAppleAccount(profile)
         let targetScope = normalizedProfile.userID
+        flushAPIKeyPersistence()
         guard await flushProjectPersistence() else { return false }
+        if activeAccount?.userID != targetScope {
+            cloudSaveTask?.cancel()
+            cloudSaveTask = nil
+            cloudSaveGeneration &+= 1
+            _ = updateOfficialChannelCredential(nil)
+        }
 
         if Self.loadRecentProjects(for: targetScope, from: userDefaults, projectStore: projectStore) == nil {
             Self.copyAccountScopedProjectData(
@@ -45,9 +69,11 @@ extension AppState {
         reloadAccountScopedProjects()
 
         Task { @MainActor in
-            _ = await refreshActiveAppleCredentialState()
+            let hasValidAppleCredential = await refreshActiveAppleCredentialState()
             await refreshCommerceEntitlements()
-            await synchronizeWithICloud(forcePull: false)
+            if hasValidAppleCredential {
+                await synchronizeWithICloud(forcePull: false)
+            }
         }
         return true
     }
@@ -55,6 +81,7 @@ extension AppState {
     @discardableResult
     func logoutAccount(removingLocalData: Bool = false) async -> Bool {
         guard let account = activeAccount else { return true }
+        flushAPIKeyPersistence()
         cloudSaveTask?.cancel()
         cloudSaveTask = nil
         cloudSaveGeneration &+= 1
@@ -74,6 +101,7 @@ extension AppState {
         } else if !(await flushProjectPersistence()) {
             return false
         }
+        _ = updateOfficialChannelCredential(nil)
         activeAccount = nil
         currentProjectSnapshotTimestamp = Self.doubleValue(
             forKey: Self.projectSnapshotTimestampStorageKey(for: nil),
@@ -96,11 +124,16 @@ extension AppState {
         cancelPendingProjectPersistence(for: currentStorageScope)
         invalidateStorageHealthCache()
         isHydratingAccountScopedData = true
-        recentProjects = Self.loadRecentProjects(
+        projectDeletionTombstones = projectStore.loadProjectDeletionTombstones(
+            for: currentStorageScope
+        )
+        let loadResult = Self.loadRecentProjectsReport(
             for: currentStorageScope,
             from: userDefaults,
             projectStore: projectStore
-        ) ?? Self.defaultRecentProjects
+        )
+        projectLoadIssues = loadResult.issues
+        recentProjects = loadResult.projects ?? Self.defaultRecentProjects
         activeProjectID = Self.stringValue(
             forKey: Self.activeProjectIDStorageKey(for: currentStorageScope),
             userDefaults: userDefaults
@@ -115,14 +148,30 @@ extension AppState {
         from userDefaults: UserDefaults,
         projectStore: ProjectFileStore
     ) -> [NovelProject]? {
-        if let storedProjects = projectStore.loadProjects(for: scope) {
-            return LegacyProjectSidecarMigrator(userDefaults: userDefaults).migrate(storedProjects) {
+        loadRecentProjectsReport(
+            for: scope,
+            from: userDefaults,
+            projectStore: projectStore
+        ).projects
+    }
+
+    static func loadRecentProjectsReport(
+        for scope: String?,
+        from userDefaults: UserDefaults,
+        projectStore: ProjectFileStore
+    ) -> AccountScopedProjectLoadResult {
+        if let report = projectStore.loadProjectsReport(for: scope) {
+            let migratedProjects = LegacyProjectSidecarMigrator(userDefaults: userDefaults).migrate(report.projects) {
                 (try? projectStore.saveProjects($0, for: scope)) != nil
             }
+            return AccountScopedProjectLoadResult(
+                projects: migratedProjects,
+                issues: report.issues
+            )
         }
 
         guard let decodedProjects = loadLegacyRecentProjectsFromUserDefaults(for: scope, userDefaults: userDefaults) else {
-            return nil
+            return AccountScopedProjectLoadResult(projects: nil, issues: [])
         }
 
         let migratedProjects = LegacyProjectSidecarMigrator(userDefaults: userDefaults).migrate(decodedProjects) {
@@ -133,7 +182,10 @@ extension AppState {
             clearLegacyRecentProjectsFromUserDefaults(for: scope, userDefaults: userDefaults)
         }
 
-        return migratedProjects
+        return AccountScopedProjectLoadResult(
+            projects: migratedProjects,
+            issues: []
+        )
     }
 
     static func loadLegacyRecentProjectsFromUserDefaults(

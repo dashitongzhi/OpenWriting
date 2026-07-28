@@ -398,7 +398,18 @@ private enum EPUBExporter {
     }
 }
 
-private struct ZipArchiveBuilder {
+nonisolated enum ZipArchiveError: LocalizedError, Equatable {
+    case classicZIPLimitExceeded(field: String, value: UInt64, maximum: UInt64)
+
+    var errorDescription: String? {
+        switch self {
+        case let .classicZIPLimitExceeded(field, value, maximum):
+            return "ZIP 导出超出经典格式限制：\(field) 为 \(value)，最大允许 \(maximum)。"
+        }
+    }
+}
+
+nonisolated struct ZipArchiveBuilder {
     private enum CompressionMethod: UInt16 {
         case stored = 0
     }
@@ -422,12 +433,26 @@ private struct ZipArchiveBuilder {
     func data() throws -> Data {
         var output = Data()
         var centralDirectory = Data()
+        let entryCount = try Self.checkedUInt16(
+            entries.count,
+            field: "entry count"
+        )
 
         for entry in entries {
-            let offset = UInt32(output.count)
+            let offset = try Self.checkedUInt32(
+                output.count,
+                field: "local header offset"
+            )
             let nameData = Data(entry.path.utf8)
             let checksum = CRC32.checksum(entry.data)
-            let size = UInt32(entry.data.count)
+            let size = try Self.checkedUInt32(
+                entry.data.count,
+                field: "entry size for \(entry.path)"
+            )
+            let nameLength = try Self.checkedUInt16(
+                nameData.count,
+                field: "entry name length for \(entry.path)"
+            )
 
             output.appendUInt32(0x04034b50)
             output.appendUInt16(20)
@@ -438,7 +463,7 @@ private struct ZipArchiveBuilder {
             output.appendUInt32(checksum)
             output.appendUInt32(size)
             output.appendUInt32(size)
-            output.appendUInt16(UInt16(nameData.count))
+            output.appendUInt16(nameLength)
             output.appendUInt16(0)
             output.append(nameData)
             output.append(entry.data)
@@ -453,7 +478,7 @@ private struct ZipArchiveBuilder {
             centralDirectory.appendUInt32(checksum)
             centralDirectory.appendUInt32(size)
             centralDirectory.appendUInt32(size)
-            centralDirectory.appendUInt16(UInt16(nameData.count))
+            centralDirectory.appendUInt16(nameLength)
             centralDirectory.appendUInt16(0)
             centralDirectory.appendUInt16(0)
             centralDirectory.appendUInt16(0)
@@ -463,21 +488,56 @@ private struct ZipArchiveBuilder {
             centralDirectory.append(nameData)
         }
 
-        let centralDirectoryOffset = UInt32(output.count)
+        let centralDirectoryOffset = try Self.checkedUInt32(
+            output.count,
+            field: "central directory offset"
+        )
+        let centralDirectorySize = try Self.checkedUInt32(
+            centralDirectory.count,
+            field: "central directory size"
+        )
         output.append(centralDirectory)
         output.appendUInt32(0x06054b50)
         output.appendUInt16(0)
         output.appendUInt16(0)
-        output.appendUInt16(UInt16(entries.count))
-        output.appendUInt16(UInt16(entries.count))
-        output.appendUInt32(UInt32(centralDirectory.count))
+        output.appendUInt16(entryCount)
+        output.appendUInt16(entryCount)
+        output.appendUInt32(centralDirectorySize)
         output.appendUInt32(centralDirectoryOffset)
         output.appendUInt16(0)
         return output
     }
+
+    static func checkedUInt16(
+        _ value: Int,
+        field: String
+    ) throws -> UInt16 {
+        guard value >= 0, let result = UInt16(exactly: value) else {
+            throw ZipArchiveError.classicZIPLimitExceeded(
+                field: field,
+                value: value < 0 ? 0 : UInt64(value),
+                maximum: UInt64(UInt16.max)
+            )
+        }
+        return result
+    }
+
+    static func checkedUInt32(
+        _ value: Int,
+        field: String
+    ) throws -> UInt32 {
+        guard value >= 0, let result = UInt32(exactly: value) else {
+            throw ZipArchiveError.classicZIPLimitExceeded(
+                field: field,
+                value: value < 0 ? 0 : UInt64(value),
+                maximum: UInt64(UInt32.max)
+            )
+        }
+        return result
+    }
 }
 
-private enum CRC32 {
+nonisolated private enum CRC32 {
     static func checksum(_ data: Data) -> UInt32 {
         var crc: UInt32 = 0xffffffff
         for byte in data {
@@ -492,12 +552,12 @@ private enum CRC32 {
 }
 
 private extension Data {
-    mutating func appendUInt16(_ value: UInt16) {
+    nonisolated mutating func appendUInt16(_ value: UInt16) {
         var littleEndian = value.littleEndian
         append(Data(bytes: &littleEndian, count: MemoryLayout<UInt16>.size))
     }
 
-    mutating func appendUInt32(_ value: UInt32) {
+    nonisolated mutating func appendUInt32(_ value: UInt32) {
         var littleEndian = value.littleEndian
         append(Data(bytes: &littleEndian, count: MemoryLayout<UInt32>.size))
     }

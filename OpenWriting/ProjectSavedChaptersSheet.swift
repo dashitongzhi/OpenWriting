@@ -8,6 +8,7 @@ struct ProjectSavedChaptersSheet: View {
 
     @State private var selectedChapterID: ChapterDraft.ID?
     @State private var searchText = ""
+    @State private var searchResults: [LongformSearchResult] = []
     @State private var pendingChapterLoad: ChapterDraft?
     @State private var pendingRestore: (chapter: ChapterDraft, version: ChapterDraftVersion)?
 
@@ -27,10 +28,6 @@ struct ProjectSavedChaptersSheet: View {
     private var selectedChapterMetadata: ChapterDraftMetadata? {
         guard let project else { return nil }
         return resolvedSavedChapterMetadata(in: project, selectedChapterID: selectedChapterID)
-    }
-
-    private var searchResults: [LongformSearchResult] {
-        appState.searchLongformProject(searchText, in: projectID)
     }
 
     private var directoryStyle: SavedChapterDirectoryStyle {
@@ -221,6 +218,25 @@ struct ProjectSavedChaptersSheet: View {
             }
         }
         .frame(minWidth: 720, minHeight: 540, alignment: .topLeading)
+        .task(id: searchText) {
+            let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !query.isEmpty else {
+                searchResults = []
+                return
+            }
+            do {
+                try await Task.sleep(for: .milliseconds(180))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            let results = await appState.searchLongformProjectFromDisk(query, in: projectID)
+            guard !Task.isCancelled,
+                  searchText.trimmingCharacters(in: .whitespacesAndNewlines) == query else {
+                return
+            }
+            searchResults = results
+        }
         .sheet(item: $pendingChapterLoad) { chapterDraft in
             if let project {
                 ProjectSavedChapterLoadDiffSheet(

@@ -1,6 +1,20 @@
+import AuthenticationServices
 import CloudKit
 import XCTest
 @testable import OpenWriting
+
+nonisolated private struct FailingAppleCredentialStateProvider:
+    AppleCredentialStateProviding {
+    struct LookupFailure: Error {}
+
+    func credentialState(
+        for userID: String
+    ) async throws -> ASAuthorizationAppleIDProvider.CredentialState {
+        throw LookupFailure()
+    }
+}
+
+nonisolated private struct InjectedPersistenceFailure: Error {}
 
 final class DomainModelsTests: XCTestCase {
     func testNovelProjectInitializerCarriesStructuredForeshadowAndPlotThreads() {
@@ -56,6 +70,231 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertTrue(ModelProvider.anthropic.requiresAPIKey)
     }
 
+    func testTextFileDecodingPrefersGB18030BeforeBOMLessUTF16() throws {
+        let gb18030Bytes = Data([0xD6, 0xD0, 0xCE, 0xC4, 0xB2, 0xE2, 0xCA, 0xD4])
+
+        XCTAssertEqual(try TextFileDecoding.decodeText(from: gb18030Bytes), "中文测试")
+    }
+
+    func testMergedAntiPatternsIsStableDeduplicatedAndBounded() {
+        let existing = (0..<60).map { "existing-\($0)" }
+        let incoming = ["new-2", "new-1", "new-2", "existing-3"]
+
+        let first = NovelProject.mergedAntiPatterns(existing: existing, incoming: incoming)
+        let second = NovelProject.mergedAntiPatterns(existing: existing, incoming: incoming)
+
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(Array(first.prefix(3)), ["new-2", "new-1", "existing-3"])
+        XCTAssertEqual(first.count, 50)
+        XCTAssertEqual(Set(first).count, first.count)
+    }
+
+    @MainActor
+    func testAPIKeyPersistenceDebouncesTypingAndFlushesLatestValue() async {
+        let defaults = makeIsolatedUserDefaults()
+        defaults.set(ModelProvider.custom.rawValue, forKey: AppState.StorageKey.selectedProvider)
+        let credentialStore = InMemoryCredentialStore()
+        let appState = AppState(
+            userDefaults: defaults,
+            projectStore: makeIsolatedProjectStore(),
+            credentialStore: credentialStore
+        )
+        let baselineStoreCount = credentialStore.storeCallCount
+
+        appState.apiKey = "sk-a"
+        appState.apiKey = "sk-ab"
+        appState.apiKey = "sk-final"
+        XCTAssertEqual(credentialStore.storeCallCount, baselineStoreCount)
+
+        try? await Task.sleep(for: .milliseconds(750))
+
+        XCTAssertEqual(credentialStore.storeCallCount, baselineStoreCount + 1)
+        XCTAssertEqual(
+            credentialStore.value(
+                service: ModelConnectionConfigurationStore.KeychainKey.service,
+                account: ModelConnectionConfigurationStore.KeychainKey.customAccount
+            ),
+            "sk-final"
+        )
+    }
+
+    @MainActor
+    func testAIConfigurationResolutionHasNoObservableSideEffects() {
+        let defaults = makeIsolatedUserDefaults()
+        defaults.set(ModelProvider.custom.rawValue, forKey: AppState.StorageKey.selectedProvider)
+        let appState = AppState(
+            userDefaults: defaults,
+            projectStore: makeIsolatedProjectStore(),
+            credentialStore: InMemoryCredentialStore()
+        )
+        appState.hasAcceptedAIDataTransfer = true
+        appState.modelName = "test-model"
+        appState.apiKey = "sk-test"
+        appState.baseURL = " https://example.com/v1/ "
+        appState.connectionStatus = .idle
+        appState.validationMessage = "sentinel"
+        let defaultsBeforeResolution = defaults.dictionaryRepresentation()
+
+        XCTAssertNotNil(appState.aiConfiguration)
+        XCTAssertTrue(appState.isConfigurationReady)
+        XCTAssertEqual(appState.baseURL, " https://example.com/v1/ ")
+        XCTAssertEqual(appState.connectionStatus, .idle)
+        XCTAssertEqual(appState.validationMessage, "sentinel")
+        XCTAssertTrue(
+            (defaults.dictionaryRepresentation() as NSDictionary)
+                .isEqual(to: defaultsBeforeResolution)
+        )
+        appState.flushAPIKeyPersistence()
+    }
+
+    @MainActor
+    func testProjectFlushDoesNotRewriteUnchangedAPIKey() async {
+        let defaults = makeIsolatedUserDefaults()
+        defaults.set(ModelProvider.custom.rawValue, forKey: AppState.StorageKey.selectedProvider)
+        let credentialStore = InMemoryCredentialStore()
+        let appState = AppState(
+            userDefaults: defaults,
+            projectStore: makeIsolatedProjectStore(),
+            credentialStore: credentialStore
+        )
+        appState.apiKey = "sk-stable"
+        appState.flushAPIKeyPersistence()
+        let baselineStoreCount = credentialStore.storeCallCount
+
+        let firstFlushSucceeded = await appState.flushProjectPersistence()
+        let secondFlushSucceeded = await appState.flushProjectPersistence()
+        XCTAssertTrue(firstFlushSucceeded)
+        XCTAssertTrue(secondFlushSucceeded)
+
+        XCTAssertEqual(credentialStore.storeCallCount, baselineStoreCount)
+    }
+
+    @MainActor
+    func testFinalProjectFlushFailureWritesEmergencySnapshot() async throws {
+        let store = makeIsolatedProjectStore(
+            testHooks: .init(beforeAtomicWrite: { url in
+                if url.lastPathComponent == "index.json" {
+                    throw InjectedPersistenceFailure()
+                }
+            })
+        )
+        let appState = AppState(
+            userDefaults: makeIsolatedUserDefaults(),
+            projectStore: store,
+            credentialStore: makeCredentialStore()
+        )
+        let project = makeProject(
+            id: "emergency-final",
+            title: "终止保存项目",
+            updatedAt: Date(timeIntervalSince1970: 1_710_000_000.125)
+        )
+        appState.recentProjects = [project]
+
+        let didFlush = await appState.flushProjectPersistence()
+
+        XCTAssertFalse(didFlush)
+        let emergencyURL = try XCTUnwrap(appState.lastEmergencySnapshotURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: emergencyURL.path))
+        let emergency = try JSONDecoder().decode(
+            ProjectEmergencySnapshot.self,
+            from: Data(contentsOf: emergencyURL)
+        )
+        XCTAssertEqual(emergency.projects.map(\.id), [project.id])
+        XCTAssertTrue(
+            appState.lastProjectPersistenceErrorMessage?
+                .contains("应急副本") == true
+        )
+    }
+
+    @MainActor
+    func testAutosaveFailureWritesRetryableEmergencySnapshot() async throws {
+        let store = makeIsolatedProjectStore(
+            testHooks: .init(beforeAtomicWrite: { url in
+                if url.lastPathComponent == "index.json" {
+                    throw InjectedPersistenceFailure()
+                }
+            })
+        )
+        let appState = AppState(
+            userDefaults: makeIsolatedUserDefaults(),
+            projectStore: store,
+            credentialStore: makeCredentialStore()
+        )
+        let project = makeProject(
+            id: "emergency-autosave",
+            title: "自动保存项目",
+            updatedAt: Date(timeIntervalSince1970: 1_710_000_000.125)
+        )
+
+        appState.recentProjects = [project]
+        try await Task.sleep(for: .milliseconds(550))
+
+        let emergencyURL = try XCTUnwrap(appState.lastEmergencySnapshotURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: emergencyURL.path))
+        let emergency = try JSONDecoder().decode(
+            ProjectEmergencySnapshot.self,
+            from: Data(contentsOf: emergencyURL)
+        )
+        XCTAssertEqual(emergency.projects.map(\.id), [project.id])
+        XCTAssertEqual(appState.cloudSyncTitle, "保存失败")
+    }
+
+    @MainActor
+    func testStorageHealthGetterDoesNotScanDiskAndExplicitRefreshDoes() async {
+        nonisolated(unsafe) var scanCount = 0
+        let store = makeIsolatedProjectStore(
+            testHooks: .init(onStorageHealthScan: { scanCount += 1 })
+        )
+        let appState = AppState(
+            userDefaults: makeIsolatedUserDefaults(),
+            projectStore: store,
+            credentialStore: InMemoryCredentialStore()
+        )
+        let project = makeProject(
+            id: "storage-health-explicit-refresh",
+            title: "存储健康检查",
+            updatedAt: Date()
+        )
+        appState.recentProjects = [project]
+        appState.activeProjectID = project.id
+        let projectID = project.id
+
+        _ = appState.storageHealthReport(for: projectID)
+        _ = appState.storageHealthReport(for: projectID)
+        XCTAssertEqual(scanCount, 0)
+
+        await appState.refreshStorageHealthReport(for: projectID)
+        XCTAssertEqual(scanCount, 1)
+    }
+
+    @MainActor
+    func testRapidStorageHealthInvalidationsDebounceToOneScan() async {
+        nonisolated(unsafe) var scanCount = 0
+        let store = makeIsolatedProjectStore(
+            testHooks: .init(onStorageHealthScan: { scanCount += 1 })
+        )
+        let appState = AppState(
+            userDefaults: makeIsolatedUserDefaults(),
+            projectStore: store,
+            credentialStore: InMemoryCredentialStore()
+        )
+        let project = makeProject(
+            id: "storage-health-debounce",
+            title: "存储健康去抖",
+            updatedAt: Date()
+        )
+        appState.recentProjects = [project]
+        appState.activeProjectID = project.id
+        let projectID = project.id
+
+        appState.invalidateStorageHealthCache(for: projectID)
+        appState.invalidateStorageHealthCache(for: projectID)
+        appState.invalidateStorageHealthCache(for: projectID)
+        try? await Task.sleep(for: .milliseconds(1_200))
+
+        XCTAssertEqual(scanCount, 1)
+    }
+
     @MainActor
     func testOpenWritingDefaultConnectionUsesServerManagedBackend() {
         let userDefaults = makeIsolatedUserDefaults()
@@ -96,6 +335,60 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(configuration.apiKey, "")
     }
 
+    func testOfficialChannelCredentialStoreKeepsRefreshTokenOutOfRequestToken() throws {
+        let credentialStore = InMemoryCredentialStore()
+        let credential = OfficialChannelCredential(
+            accessToken: " short-lived-access ",
+            refreshToken: "refresh-token-never-sent",
+            expiresAt: Date().addingTimeInterval(300)
+        )
+
+        XCTAssertTrue(
+            OfficialChannelCredentialStore.save(
+                credential,
+                credentialStore: credentialStore
+            )
+        )
+        let loaded = try XCTUnwrap(
+            OfficialChannelCredentialStore.load(credentialStore: credentialStore)
+        )
+
+        XCTAssertEqual(loaded.validAccessToken(), "short-lived-access")
+        XCTAssertEqual(loaded.refreshToken, "refresh-token-never-sent")
+    }
+
+    func testOfficialChannelFailsClosedBeforeNetworkWithoutCredential() async {
+        let configuration = AIConnectionConfiguration(
+            baseURL: URL(string: "https://openwriting.kralplus.asia/api/model/v1")!,
+            apiKey: "",
+            modelName: "gpt-5.4-mini",
+            additionalHeaders: ["X-OpenWriting-Client": "macOS"],
+            requiresOfficialAuthentication: true
+        )
+        nonisolated(unsafe) var loaderCalled = false
+
+        do {
+            _ = try await AIWritingService.completeOpenAIText(
+                configuration: configuration,
+                systemPrompt: "system",
+                userPrompt: "user",
+                temperature: 0.1,
+                maxTokens: 16,
+                loader: { _ in
+                    loaderCalled = true
+                    throw URLError(.badServerResponse)
+                }
+            )
+            XCTFail("Expected authenticationRequired")
+        } catch AIWritingError.authenticationRequired {
+            // Expected.
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        XCTAssertFalse(loaderCalled)
+    }
+
     @MainActor
     func testOpenWritingAPIKeyMigrationPurgesLegacyManagedKeyStorage() {
         let userDefaults = makeIsolatedUserDefaults()
@@ -130,6 +423,38 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(headers["X-OpenWriting-Account-ID"], "userid")
         let installationID = headers["X-OpenWriting-Installation-ID"] ?? ""
         XCTAssertNotNil(UUID(uuidString: installationID))
+    }
+
+    func testModelBaseURLRequiresHTTPSExceptForLoopbackDevelopment() {
+        XCTAssertNil(
+            ModelConnectionConfigurationStore.normalizedBaseURLString(
+                from: "http://api.example.com/v1"
+            )
+        )
+        XCTAssertEqual(
+            ModelConnectionConfigurationStore.normalizedBaseURLString(
+                from: "http://localhost:8080/v1/"
+            ),
+            "http://localhost:8080/v1"
+        )
+        XCTAssertEqual(
+            ModelConnectionConfigurationStore.normalizedBaseURLString(
+                from: "http://127.0.0.1:8080"
+            ),
+            "http://127.0.0.1:8080/v1"
+        )
+        XCTAssertEqual(
+            ModelConnectionConfigurationStore.normalizedBaseURLString(
+                from: "http://[::1]:8080/v1"
+            ),
+            "http://[::1]:8080/v1"
+        )
+        XCTAssertEqual(
+            ModelConnectionConfigurationStore.normalizedBaseURLString(
+                from: "https://api.example.com/v1/"
+            ),
+            "https://api.example.com/v1"
+        )
     }
 
     func testCommerceEntitlementDefaultsToFreeWhenAppleCommerceIsDeferred() {
@@ -509,6 +834,144 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertThrowsError(try decoder.decode(AccountProjectSnapshot.self, from: Data(futureJSON.utf8)))
     }
 
+    func testAccountProjectSnapshotMigratesV1WithoutDeletionTombstones() throws {
+        let legacyJSON = """
+        {
+          "schemaVersion": 1,
+          "activeProjectID": null,
+          "recentProjects": [],
+          "updatedAt": "2026-07-17T12:00:00Z"
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        let snapshot = try decoder.decode(
+            AccountProjectSnapshot.self,
+            from: Data(legacyJSON.utf8)
+        )
+
+        XCTAssertEqual(snapshot.schemaVersion, AccountProjectSnapshot.currentSchemaVersion)
+        XCTAssertTrue(snapshot.deletedProjects.isEmpty)
+    }
+
+    func testAccountProjectSnapshotNormalizesDeletionTombstonesDeterministically() throws {
+        let older = ProjectDeletionTombstone(
+            projectID: "project-b",
+            deletedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        let newer = ProjectDeletionTombstone(
+            projectID: "project-b",
+            deletedAt: Date(timeIntervalSince1970: 1_772_000_100)
+        )
+        let first = ProjectDeletionTombstone(
+            projectID: " project-a ",
+            deletedAt: Date(timeIntervalSince1970: 1_772_000_050)
+        )
+        let snapshot = AccountProjectSnapshot(
+            activeProjectID: nil,
+            recentProjects: [],
+            deletedProjects: [older, newer, first],
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_200)
+        )
+
+        XCTAssertEqual(snapshot.deletedProjects.map(\.projectID), ["project-a", "project-b"])
+        XCTAssertEqual(snapshot.deletedProjects.last?.deletedAt, newer.deletedAt)
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(
+            AccountProjectSnapshot.self,
+            from: encoder.encode(snapshot)
+        )
+        XCTAssertEqual(decoded.deletedProjects, snapshot.deletedProjects)
+    }
+
+    func testCloudProjectJSONCodingUsesFractionalUTCAndReadsLegacyDateForms() throws {
+        struct DateProbe: Codable {
+            let value: Date
+        }
+
+        let expected = Date(timeIntervalSince1970: 1_710_000_000.125)
+        let encoded = try CloudProjectJSONCoding.makeEncoder().encode(
+            DateProbe(value: expected)
+        )
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        XCTAssertEqual(
+            object["value"] as? String,
+            "2024-03-09T16:00:00.125Z"
+        )
+
+        let decoder = CloudProjectJSONCoding.makeDecoder()
+        let fractional = try decoder.decode(
+            DateProbe.self,
+            from: Data(#"{"value":"2024-03-09T16:00:00.125Z"}"#.utf8)
+        )
+        let wholeSecond = try decoder.decode(
+            DateProbe.self,
+            from: Data(#"{"value":"2024-03-09T16:00:00Z"}"#.utf8)
+        )
+        let epoch = try decoder.decode(
+            DateProbe.self,
+            from: Data(#"{"value":1710000000.125}"#.utf8)
+        )
+
+        XCTAssertEqual(
+            fractional.value.timeIntervalSince1970,
+            expected.timeIntervalSince1970,
+            accuracy: 0.000_001
+        )
+        XCTAssertEqual(
+            wholeSecond.value.timeIntervalSince1970,
+            1_710_000_000,
+            accuracy: 0.000_001
+        )
+        XCTAssertEqual(
+            epoch.value.timeIntervalSince1970,
+            expected.timeIntervalSince1970,
+            accuracy: 0.000_001
+        )
+    }
+
+    func testDeletionSnapshotAndCloudKitFieldNamesMatchCrossPlatformContract() throws {
+        let snapshot = AccountProjectSnapshot(
+            activeProjectID: nil,
+            recentProjects: [],
+            deletedProjects: [
+                ProjectDeletionTombstone(
+                    projectID: "project-a",
+                    deletedAt: Date(timeIntervalSince1970: 1_710_000_000.125)
+                )
+            ],
+            updatedAt: Date(timeIntervalSince1970: 1_710_000_001)
+        )
+        let data = try CloudProjectJSONCoding.makeEncoder().encode(snapshot)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+
+        XCTAssertNotNil(object["deletedProjects"])
+        XCTAssertNil(object["projectDeletionTombstones"])
+        XCTAssertEqual(
+            ICloudProjectStore.deletedProjectIDsFieldName,
+            "deletedProjectIDs"
+        )
+        XCTAssertEqual(
+            ICloudProjectStore.deletedProjectDatesFieldName,
+            "deletedProjectDates"
+        )
+        XCTAssertEqual(
+            CloudProjectPayloadCodec.deletionTombstoneRevisionComponent(
+                snapshot.deletedProjects[0]
+            ),
+            "deleted:project-a:1710000000.125"
+        )
+    }
+
     @MainActor
     func testAppStateAcceptsInjectedAIService() {
         let userDefaults = makeIsolatedUserDefaults()
@@ -523,6 +986,29 @@ final class DomainModelsTests: XCTestCase {
         )
 
         XCTAssertTrue(appState.aiService is MockAIWritingService)
+    }
+
+    @MainActor
+    func testAppleCredentialStateLookupFailureFailsClosed() async {
+        let appState = AppState(
+            userDefaults: makeIsolatedUserDefaults(),
+            projectStore: makeIsolatedProjectStore(),
+            credentialStore: makeCredentialStore(),
+            appleCredentialStateProvider: FailingAppleCredentialStateProvider()
+        )
+        let account = AppleAccountProfile(
+            userID: "apple-user-\(UUID().uuidString)",
+            email: "writer@example.com",
+            fullName: "Writer"
+        )
+        appState.activeAccount = account
+
+        let isAuthorized = await appState.refreshActiveAppleCredentialState()
+
+        XCTAssertFalse(isAuthorized)
+        XCTAssertEqual(appState.activeAccount, account)
+        XCTAssertEqual(appState.cloudSyncTitle, "本机保存")
+        XCTAssertEqual(appState.cloudSyncSymbolName, "icloud.slash")
     }
 
     @MainActor
@@ -813,6 +1299,488 @@ final class DomainModelsTests: XCTestCase {
         )
     }
 
+    func testIndexedCloudKitReaderUsesExplicitContentAddressedManifest() throws {
+        let index = CKRecord(
+            recordType: "ProjectSnapshot",
+            recordID: CKRecord.ID(recordName: "snapshot_scope")
+        )
+        index["projectIDs"] = ["project-1", "project-2"] as NSArray
+        index["projectRecordNames"] = [
+            "project_scope_sha256-one_project-1",
+            "project_scope_sha256-two_project-2"
+        ] as NSArray
+        index["payloadRevision"] = "sha256-manifest" as NSString
+
+        let projectRecordIDs = try XCTUnwrap(
+            ICloudProjectStore.indexedProjectRecordIDs(from: index, scope: "scope")
+        )
+        let firstProject = CKRecord(recordType: "ProjectPayload", recordID: projectRecordIDs[0])
+        firstProject["chapterIDs"] = ["chapter-1", "chapter-2"] as NSArray
+        firstProject["chapterRecordNames"] = [
+            "chapter_scope_sha256-a_project-1_chapter-1",
+            "chapter_scope_sha256-b_project-1_chapter-2"
+        ] as NSArray
+        let secondProject = CKRecord(recordType: "ProjectPayload", recordID: projectRecordIDs[1])
+        secondProject["chapterIDs"] = ["chapter-3"] as NSArray
+        secondProject["chapterRecordNames"] = [
+            "chapter_scope_sha256-c_project-2_chapter-3"
+        ] as NSArray
+
+        XCTAssertEqual(
+            try ICloudProjectStore.indexedChapterRecordIDs(
+                from: [
+                    projectRecordIDs[0]: firstProject,
+                    projectRecordIDs[1]: secondProject
+                ],
+                indexRecord: index,
+                scope: "scope"
+            ).map(\.recordName),
+            [
+                "chapter_scope_sha256-a_project-1_chapter-1",
+                "chapter_scope_sha256-b_project-1_chapter-2",
+                "chapter_scope_sha256-c_project-2_chapter-3"
+            ]
+        )
+    }
+
+    func testIndexedCloudKitReaderRejectsMismatchedExplicitManifestCounts() throws {
+        let index = CKRecord(
+            recordType: "ProjectSnapshot",
+            recordID: CKRecord.ID(recordName: "snapshot_scope")
+        )
+        index["projectIDs"] = ["project-1", "project-2"] as NSArray
+        index["projectRecordNames"] = ["project-only-one"] as NSArray
+        XCTAssertNil(ICloudProjectStore.indexedProjectRecordIDs(from: index, scope: "scope"))
+
+        index["projectIDs"] = ["project-1"] as NSArray
+        index["projectRecordNames"] = ["project-explicit"] as NSArray
+        let projectRecordID = CKRecord.ID(recordName: "project-explicit")
+        let project = CKRecord(recordType: "ProjectPayload", recordID: projectRecordID)
+        project["chapterIDs"] = ["chapter-1", "chapter-2"] as NSArray
+        project["chapterRecordNames"] = ["chapter-only-one"] as NSArray
+
+        XCTAssertThrowsError(
+            try ICloudProjectStore.indexedChapterRecordIDs(
+                from: [projectRecordID: project],
+                indexRecord: index,
+                scope: "scope"
+            )
+        ) { error in
+            guard case ICloudProjectStore.StoreError.missingPayload = error else {
+                return XCTFail("Expected missingPayload, got \(error)")
+            }
+        }
+    }
+
+    func testIndexedCloudKitReaderRejectsDuplicateManifestEntries() throws {
+        let index = CKRecord(
+            recordType: "ProjectSnapshot",
+            recordID: CKRecord.ID(recordName: "snapshot_scope")
+        )
+        index["projectIDs"] = ["project-1", "project-1"] as NSArray
+        index["projectRecordNames"] = ["project-a", "project-b"] as NSArray
+        XCTAssertNil(ICloudProjectStore.indexedProjectRecordIDs(from: index, scope: "scope"))
+
+        index["projectIDs"] = ["project-1"] as NSArray
+        index["projectRecordNames"] = ["project-a"] as NSArray
+        let projectRecordID = CKRecord.ID(recordName: "project-a")
+        let project = CKRecord(recordType: "ProjectPayload", recordID: projectRecordID)
+        project["chapterIDs"] = ["chapter-1", "chapter-1"] as NSArray
+        project["chapterRecordNames"] = ["chapter-a", "chapter-b"] as NSArray
+
+        XCTAssertThrowsError(
+            try ICloudProjectStore.indexedChapterRecordIDs(
+                from: [projectRecordID: project],
+                indexRecord: index,
+                scope: "scope"
+            )
+        )
+    }
+
+    func testIndexedCloudKitReaderRejectsBlankManifestEntries() throws {
+        let index = CKRecord(
+            recordType: "ProjectSnapshot",
+            recordID: CKRecord.ID(recordName: "snapshot_scope")
+        )
+        index["projectIDs"] = ["   "] as NSArray
+        index["projectRecordNames"] = ["project-a"] as NSArray
+        XCTAssertNil(ICloudProjectStore.indexedProjectRecordIDs(from: index, scope: "scope"))
+
+        index["projectIDs"] = ["project-1"] as NSArray
+        index["projectRecordNames"] = ["\n"] as NSArray
+        XCTAssertNil(ICloudProjectStore.indexedProjectRecordIDs(from: index, scope: "scope"))
+
+        index["projectRecordNames"] = ["project-a"] as NSArray
+        let projectRecordID = CKRecord.ID(recordName: "project-a")
+        let project = CKRecord(recordType: "ProjectPayload", recordID: projectRecordID)
+        project["chapterIDs"] = ["\t"] as NSArray
+        project["chapterRecordNames"] = ["chapter-a"] as NSArray
+        XCTAssertThrowsError(
+            try ICloudProjectStore.indexedChapterRecordIDs(
+                from: [projectRecordID: project],
+                indexRecord: index,
+                scope: "scope"
+            )
+        )
+
+        project["chapterIDs"] = ["chapter-1"] as NSArray
+        project["chapterRecordNames"] = ["  "] as NSArray
+        XCTAssertThrowsError(
+            try ICloudProjectStore.indexedChapterRecordIDs(
+                from: [projectRecordID: project],
+                indexRecord: index,
+                scope: "scope"
+            )
+        )
+    }
+
+    func testCloudKitDeletionTombstoneManifestRequiresAlignedUniqueFields() throws {
+        let index = CKRecord(
+            recordType: "ProjectSnapshot",
+            recordID: CKRecord.ID(recordName: "snapshot_scope")
+        )
+        XCTAssertEqual(try ICloudProjectStore.deletionTombstones(from: index), [])
+
+        index["deletedProjectIDs"] = ["project-b", "project-a"] as NSArray
+        index["deletedProjectDates"] = [
+            Date(timeIntervalSince1970: 1_772_000_100) as NSDate,
+            Date(timeIntervalSince1970: 1_772_000_000) as NSDate
+        ] as NSArray
+        XCTAssertEqual(
+            try ICloudProjectStore.deletionTombstones(from: index).map(\.projectID),
+            ["project-a", "project-b"]
+        )
+
+        index["deletedProjectDates"] = [
+            Date(timeIntervalSince1970: 1_772_000_100) as NSDate
+        ] as NSArray
+        XCTAssertThrowsError(try ICloudProjectStore.deletionTombstones(from: index))
+
+        index["deletedProjectIDs"] = ["project-a", "project-a"] as NSArray
+        index["deletedProjectDates"] = [
+            Date(timeIntervalSince1970: 1_772_000_000) as NSDate,
+            Date(timeIntervalSince1970: 1_772_000_100) as NSDate
+        ] as NSArray
+        XCTAssertThrowsError(try ICloudProjectStore.deletionTombstones(from: index))
+    }
+
+    func testCloudKitCleanupKeepsOnlyTrueDeletionFailures() {
+        let successID = CKRecord.ID(recordName: "success")
+        let alreadyDeletedID = CKRecord.ID(recordName: "already-deleted")
+        let failedID = CKRecord.ID(recordName: "failed")
+        let missingResultID = CKRecord.ID(recordName: "missing-result")
+        let unknownItem = NSError(
+            domain: CKErrorDomain,
+            code: CKError.Code.unknownItem.rawValue
+        )
+        let realFailure = NSError(domain: "OpenWritingTests", code: 1)
+        let results: [CKRecord.ID: Result<Void, Error>] = [
+            successID: .success(()),
+            alreadyDeletedID: .failure(unknownItem),
+            failedID: .failure(realFailure)
+        ]
+
+        XCTAssertEqual(
+            ICloudProjectStore.failedDeletionRecordIDs(
+                results,
+                expected: [successID, alreadyDeletedID, failedID, missingResultID]
+            ).map(\.recordName),
+            ["failed", "missing-result"]
+        )
+    }
+
+    func testContentAddressedUploadPlanChangesOnlyOneChapterAndOwningProject() throws {
+        func chapterTarget(
+            projectID: String,
+            chapterID: String,
+            payload: String
+        ) -> ContentAddressedPayloadTarget {
+            let hash = CloudProjectPayloadCodec.payloadHash(for: Data(payload.utf8))
+            let revision = CloudProjectPayloadCodec.chapterRevision(payloadHash: hash)
+            return ContentAddressedPayloadTarget(
+                recordID: CKRecord.ID(
+                    recordName: ICloudProjectStore.chapterRecordName(
+                        for: chapterID,
+                        projectID: projectID,
+                        scope: "scope",
+                        revision: revision
+                    )
+                ),
+                payloadHash: hash
+            )
+        }
+
+        func projectTarget(
+            projectID: String,
+            payload: String,
+            chapters: [(String, ContentAddressedPayloadTarget)]
+        ) -> ContentAddressedPayloadTarget {
+            let hash = CloudProjectPayloadCodec.payloadHash(for: Data(payload.utf8))
+            let revision = CloudProjectPayloadCodec.projectRevision(
+                payloadHash: hash,
+                chapterReferences: chapters.map {
+                    (chapterID: $0.0, recordName: $0.1.recordID.recordName)
+                }
+            )
+            return ContentAddressedPayloadTarget(
+                recordID: CKRecord.ID(
+                    recordName: ICloudProjectStore.projectRecordName(
+                        for: projectID,
+                        scope: "scope",
+                        revision: revision
+                    )
+                ),
+                payloadHash: hash
+            )
+        }
+
+        let oldA1 = chapterTarget(projectID: "project-a", chapterID: "a1", payload: "old-a1")
+        let newA1 = chapterTarget(projectID: "project-a", chapterID: "a1", payload: "new-a1")
+        let a2 = chapterTarget(projectID: "project-a", chapterID: "a2", payload: "same-a2")
+        let b1 = chapterTarget(projectID: "project-b", chapterID: "b1", payload: "same-b1")
+        let oldProjectA = projectTarget(
+            projectID: "project-a",
+            payload: "project-a",
+            chapters: [("a1", oldA1), ("a2", a2)]
+        )
+        let newProjectA = projectTarget(
+            projectID: "project-a",
+            payload: "project-a",
+            chapters: [("a1", newA1), ("a2", a2)]
+        )
+        let projectB = projectTarget(
+            projectID: "project-b",
+            payload: "project-b",
+            chapters: [("b1", b1)]
+        )
+        let desired = [newProjectA, projectB, newA1, a2, b1]
+        let existing = [oldProjectA, projectB, oldA1, a2, b1]
+        let existingIDs = Set(existing.map(\.recordID))
+        let existingHashes = Dictionary(
+            uniqueKeysWithValues: existing.map { ($0.recordID, $0.payloadHash) }
+        )
+
+        let plan = try ContentAddressedUploadPlan.build(
+            desired: desired,
+            existingRecordIDs: existingIDs,
+            existingPayloadHashes: existingHashes
+        )
+
+        XCTAssertEqual(
+            Set(plan.recordIDsToCreate.map(\.recordName)),
+            Set([newA1.recordID.recordName, newProjectA.recordID.recordName])
+        )
+        XCTAssertTrue(plan.publishesIndex)
+
+        let identicalPlan = try ContentAddressedUploadPlan.build(
+            desired: desired,
+            existingRecordIDs: Set(desired.map(\.recordID)),
+            existingPayloadHashes: Dictionary(
+                uniqueKeysWithValues: desired.map { ($0.recordID, $0.payloadHash) }
+            )
+        )
+        XCTAssertTrue(identicalPlan.recordIDsToCreate.isEmpty)
+
+        XCTAssertThrowsError(
+            try ContentAddressedUploadPlan.build(
+                desired: [newA1],
+                existingRecordIDs: [newA1.recordID],
+                existingPayloadHashes: [newA1.recordID: "corrupt-hash"]
+            )
+        )
+    }
+
+    func testContentAddressedTargetVerifiesAssetBytesAndManifestMetadata() throws {
+        let payload = Data("expected".utf8)
+        let expectedHash = CloudProjectPayloadCodec.payloadHash(for: payload)
+        let recordID = CKRecord.ID(recordName: "project-content-addressed")
+        let target = ContentAddressedPayloadTarget(
+            recordID: recordID,
+            payloadHash: expectedHash,
+            recordType: "ProjectPayload",
+            scope: "scope",
+            projectID: "project-1",
+            chapterIDs: ["chapter-1"],
+            chapterRecordNames: ["chapter-record-1"]
+        )
+        let assetURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("OpenWriting-content-address-\(UUID().uuidString).json")
+        try Data("corrupt".utf8).write(to: assetURL)
+        defer { try? FileManager.default.removeItem(at: assetURL) }
+        let record = CKRecord(recordType: "ProjectPayload", recordID: recordID)
+        record["scope"] = "scope" as NSString
+        record["projectID"] = "project-1" as NSString
+        record["chapterIDs"] = ["chapter-1"] as NSArray
+        record["chapterRecordNames"] = ["wrong-record-name"] as NSArray
+        record["payloadHash"] = expectedHash as NSString
+        record["payloadAsset"] = CKAsset(fileURL: assetURL)
+
+        XCTAssertFalse(target.matchesMetadata(in: record))
+
+        record["chapterRecordNames"] = ["chapter-record-1"] as NSArray
+        XCTAssertNil(ICloudProjectStore.verifiedExistingPayloadHash(for: record, matching: target))
+        XCTAssertThrowsError(
+            try ContentAddressedUploadPlan.build(
+                desired: [target],
+                existingRecordIDs: [recordID],
+                existingPayloadHashes: [:]
+            )
+        )
+
+        try payload.write(to: assetURL, options: .atomic)
+        record["payloadHash"] = "wrong-hash" as NSString
+        XCTAssertNil(ICloudProjectStore.verifiedExistingPayloadHash(for: record, matching: target))
+
+        record["payloadHash"] = expectedHash as NSString
+        XCTAssertEqual(
+            ICloudProjectStore.verifiedExistingPayloadHash(for: record, matching: target),
+            expectedHash
+        )
+
+        let wrongTimestampTarget = ContentAddressedPayloadTarget(
+            recordID: recordID,
+            payloadHash: expectedHash,
+            recordType: "ProjectPayload",
+            scope: "scope",
+            projectID: "project-1",
+            updatedAt: Date(timeIntervalSince1970: 1),
+            chapterIDs: ["chapter-1"],
+            chapterRecordNames: ["chapter-record-1"]
+        )
+        record["updatedAt"] = Date(timeIntervalSince1970: 2) as NSDate
+        XCTAssertNil(
+            ICloudProjectStore.verifiedExistingPayloadHash(
+                for: record,
+                matching: wrongTimestampTarget
+            )
+        )
+    }
+
+    func testContentAddressedMetadataUsesCanonicalMillisecondTimestamp() throws {
+        let original = Date(timeIntervalSince1970: 1_710_000_000.123_456)
+        let encoded = try CloudProjectJSONCoding.makeEncoder().encode(original)
+        let roundTripped = try CloudProjectJSONCoding.makeDecoder().decode(
+            Date.self,
+            from: encoded
+        )
+        let recordID = CKRecord.ID(recordName: "canonical-timestamp")
+        let record = CKRecord(recordType: "ChapterPayload", recordID: recordID)
+        record["updatedAt"] = original as NSDate
+
+        let matchingTarget = ContentAddressedPayloadTarget(
+            recordID: recordID,
+            payloadHash: "hash",
+            updatedAt: roundTripped
+        )
+        XCTAssertTrue(matchingTarget.matchesMetadata(in: record))
+
+        let differentMillisecondTarget = ContentAddressedPayloadTarget(
+            recordID: recordID,
+            payloadHash: "hash",
+            updatedAt: roundTripped.addingTimeInterval(0.002)
+        )
+        XCTAssertFalse(differentMillisecondTarget.matchesMetadata(in: record))
+    }
+
+    func testContentAddressedMetadataAcceptsLegacyUnsortedChapterManifest() {
+        let recordID = CKRecord.ID(recordName: "legacy-unsorted-manifest")
+        let target = ContentAddressedPayloadTarget(
+            recordID: recordID,
+            payloadHash: "hash",
+            chapterIDs: ["chapter-a", "chapter-b"],
+            chapterRecordNames: ["record-a", "record-b"]
+        )
+        let record = CKRecord(recordType: "ProjectPayload", recordID: recordID)
+        record["chapterIDs"] = ["chapter-b", "chapter-a"] as NSArray
+        record["chapterRecordNames"] = ["record-b", "record-a"] as NSArray
+
+        XCTAssertTrue(target.matchesMetadata(in: record))
+
+        record["chapterRecordNames"] = ["record-a", "record-b"] as NSArray
+        XCTAssertFalse(target.matchesMetadata(in: record))
+    }
+
+    func testContentAddressedMetadataRejectsIncompleteOrInvalidManifestTargets() {
+        let recordID = CKRecord.ID(recordName: "incomplete-manifest")
+        let record = CKRecord(recordType: "ProjectPayload", recordID: recordID)
+        record["chapterIDs"] = ["chapter-a"] as NSArray
+        record["chapterRecordNames"] = ["record-a"] as NSArray
+
+        let idsOnly = ContentAddressedPayloadTarget(
+            recordID: recordID,
+            payloadHash: "hash",
+            chapterIDs: ["chapter-a"]
+        )
+        let namesOnly = ContentAddressedPayloadTarget(
+            recordID: recordID,
+            payloadHash: "hash",
+            chapterRecordNames: ["record-a"]
+        )
+        let invalidPair = ContentAddressedPayloadTarget(
+            recordID: recordID,
+            payloadHash: "hash",
+            chapterIDs: [""],
+            chapterRecordNames: [""]
+        )
+
+        XCTAssertFalse(idsOnly.matchesMetadata(in: record))
+        XCTAssertFalse(namesOnly.matchesMetadata(in: record))
+        record["chapterIDs"] = [""] as NSArray
+        record["chapterRecordNames"] = [""] as NSArray
+        XCTAssertFalse(invalidPair.matchesMetadata(in: record))
+    }
+
+    @MainActor
+    func testTerminationFlushCoordinatorRepliesExactlyOnceAfterSuccessfulFlush() async {
+        let coordinator = TerminationFlushCoordinator(timeout: .seconds(1))
+        let replied = expectation(description: "termination reply")
+        var replies: [Bool] = []
+
+        XCTAssertTrue(coordinator.begin(
+            flush: { true },
+            reply: {
+                replies.append($0)
+                replied.fulfill()
+            }
+        ))
+        XCTAssertFalse(coordinator.begin(flush: { false }, reply: { _ in
+            XCTFail("a duplicate termination request must not install another reply")
+        }))
+
+        await fulfillment(of: [replied], timeout: 1)
+        try? await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(replies, [true])
+        XCTAssertFalse(coordinator.isRunning)
+    }
+
+    @MainActor
+    func testTerminationFlushCoordinatorTimesOutAndIgnoresLateCompletion() async {
+        let coordinator = TerminationFlushCoordinator(timeout: .milliseconds(20))
+        let replied = expectation(description: "timeout reply")
+        var replies: [Bool] = []
+
+        XCTAssertTrue(coordinator.begin(
+            flush: {
+                do {
+                    try await Task.sleep(for: .seconds(1))
+                } catch {
+                    // Simulate a flush implementation that observes cancellation
+                    // but still returns after the timeout reply has won the race.
+                }
+                return true
+            },
+            reply: {
+                replies.append($0)
+                replied.fulfill()
+            }
+        ))
+
+        await fulfillment(of: [replied], timeout: 1)
+        try? await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(replies, [false])
+        XCTAssertFalse(coordinator.isRunning)
+    }
+
     func testIndexedCloudKitReaderRejectsMissingRevisionPayload() throws {
         let index = CKRecord(
             recordType: "ProjectSnapshot",
@@ -992,6 +1960,997 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(merged.first?.updatedAtDate, remoteChapter.savedAtDate)
     }
 
+    @MainActor
+    func testCloudMergeResolvesMillisecondDeletionAndNewerEditWithoutResurrection() {
+        let projectTime = Date(timeIntervalSince1970: 1_710_000_000.121)
+        let deletionTime = Date(timeIntervalSince1970: 1_710_000_000.124)
+        let deletedProject = makeProject(
+            id: "project-a",
+            title: "待删除项目",
+            updatedAt: projectTime
+        )
+        let tombstone = ProjectDeletionTombstone(
+            projectID: deletedProject.id,
+            deletedAt: deletionTime
+        )
+
+        let deletionWins = AppState.mergeCloudProjectState(
+            local: [deletedProject],
+            localDeletedProjects: [],
+            remote: [],
+            remoteDeletedProjects: [tombstone]
+        )
+        XCTAssertTrue(deletionWins.projects.isEmpty)
+        XCTAssertEqual(deletionWins.deletedProjects, [tombstone])
+
+        let newerProject = makeProject(
+            id: deletedProject.id,
+            title: "删除后恢复编辑",
+            updatedAt: Date(timeIntervalSince1970: 1_710_000_000.127)
+        )
+        let editWins = AppState.mergeCloudProjectState(
+            local: [newerProject],
+            localDeletedProjects: [],
+            remote: [],
+            remoteDeletedProjects: [tombstone]
+        )
+        XCTAssertEqual(editWins.projects.map(\.id), [newerProject.id])
+        XCTAssertTrue(editWins.deletedProjects.isEmpty)
+    }
+
+    @MainActor
+    func testCloudMergePreservesIndependentOutlineMemoryAndReviewUpdates() throws {
+        var local = makeProject(
+            id: "field-merge",
+            title: "字段合并",
+            updatedAt: Date(timeIntervalSince1970: 1_710_000_010)
+        )
+        local.outlineText = "本机新增的大纲"
+        var localMemory = GlobalMemorySnapshot.empty
+        localMemory.characterRelations = "本机更新人物关系"
+        local.globalMemorySnapshot = localMemory
+        let localReport = QualityReviewReport(
+            chapterNumber: 1,
+            chapterTitle: "第一章",
+            dimensionResults: [],
+            overallSummary: "本机审查"
+        )
+        local.qualityReviewReports = [localReport]
+
+        var remote = makeProject(
+            id: local.id,
+            title: "字段合并",
+            updatedAt: Date(timeIntervalSince1970: 1_710_000_020)
+        )
+        remote.structureNotes = "远端新增的章节骨架"
+        var remoteMemory = GlobalMemorySnapshot.empty
+        remoteMemory.worldState = "远端更新世界状态"
+        remote.globalMemorySnapshot = remoteMemory
+        let remoteReport = QualityReviewReport(
+            chapterNumber: 2,
+            chapterTitle: "第二章",
+            dimensionResults: [],
+            overallSummary: "远端审查"
+        )
+        remote.qualityReviewReports = [remoteReport]
+
+        let merged = try XCTUnwrap(
+            AppState.mergeCloudProjectState(
+                local: [local],
+                localDeletedProjects: [],
+                remote: [remote],
+                remoteDeletedProjects: []
+            ).projects.first
+        )
+
+        XCTAssertEqual(merged.outlineText, local.outlineText)
+        XCTAssertEqual(merged.structureNotes, remote.structureNotes)
+        XCTAssertEqual(
+            merged.globalMemorySnapshot.characterRelations,
+            localMemory.characterRelations
+        )
+        XCTAssertEqual(
+            merged.globalMemorySnapshot.worldState,
+            remoteMemory.worldState
+        )
+        XCTAssertEqual(
+            Set(merged.qualityReviewReports.map(\.id)),
+            Set([localReport.id, remoteReport.id])
+        )
+    }
+
+    @MainActor
+    func testCloudMergeMakesConflictingOutlineVersionsExplicitAndIdempotent() throws {
+        var local = makeProject(
+            id: "outline-conflict",
+            title: "大纲冲突",
+            updatedAt: Date(timeIntervalSince1970: 1_710_000_010)
+        )
+        local.outlineText = "版本甲：主角留在城内"
+        var remote = makeProject(
+            id: local.id,
+            title: "大纲冲突",
+            updatedAt: Date(timeIntervalSince1970: 1_710_000_020)
+        )
+        remote.outlineText = "版本乙：主角离开城池"
+
+        let firstMerge = try XCTUnwrap(
+            AppState.mergeCloudProjectState(
+                local: [local],
+                localDeletedProjects: [],
+                remote: [remote],
+                remoteDeletedProjects: []
+            ).projects.first
+        )
+        XCTAssertTrue(firstMerge.outlineText.contains("同步冲突"))
+        XCTAssertTrue(firstMerge.outlineText.contains(local.outlineText))
+        XCTAssertTrue(firstMerge.outlineText.contains(remote.outlineText))
+
+        let repeatedMerge = try XCTUnwrap(
+            AppState.mergeCloudProjectState(
+                local: [firstMerge],
+                localDeletedProjects: [],
+                remote: [local],
+                remoteDeletedProjects: []
+            ).projects.first
+        )
+        XCTAssertEqual(repeatedMerge.outlineText, firstMerge.outlineText)
+    }
+
+    @MainActor
+    func testCloudMergeIsCommutativeAndPreservesIndependentStructuredFields() throws {
+        let timestamp = Date(timeIntervalSince1970: 1_710_100_000)
+        let itemTimestamp = Date(timeIntervalSince1970: 1_710_090_000)
+        var local = makeProject(
+            id: "commutative-fields",
+            title: "交换律",
+            updatedAt: timestamp
+        )
+        local.draftText = "本机草稿"
+        local.referenceContextText = "本机参考上下文"
+        local.specialRequirements = "本机特殊要求"
+        var localDocument = ReferenceDocument(
+            id: "document-local",
+            title: "本机资料",
+            content: "本机资料正文",
+            importedAt: "2024-03-10T00:00:00.000Z"
+        )
+        localDocument.importedAtDate = itemTimestamp
+        local.referenceDocuments = [localDocument]
+        local.foreshadowList = ForeshadowList(entries: [
+            ForeshadowEntry(
+                id: "foreshadow-local",
+                title: "旧钥匙",
+                firstChapter: 1,
+                createdAt: itemTimestamp,
+                updatedAt: itemTimestamp
+            )
+        ])
+        local.plotThreadList = PlotThreadList(threads: [
+            PlotThread(
+                id: "thread-local",
+                title: "追查旧案",
+                createdAt: itemTimestamp,
+                updatedAt: itemTimestamp
+            )
+        ])
+        var localMemory = MemoryBuckets.empty
+        localMemory.characterState = [
+            MemoryItem(
+                id: "memory-local",
+                category: .characterState,
+                subject: "林照",
+                field: "位置",
+                value: "旧城",
+                sourceChapter: 1,
+                updatedAt: itemTimestamp
+            )
+        ]
+        local.persistedMemoryBuckets = localMemory
+        local.persistedStrandWeaveState = StrandWeaveState(
+            entries: [
+                StrandWeaveState.Entry(
+                    chapterNumber: 1,
+                    dominant: .quest,
+                    recordedAt: itemTimestamp
+                )
+            ],
+            questTarget: 0.60,
+            fireTarget: 0.20,
+            constellationTarget: 0.20,
+            questMaxConsecutive: 5,
+            fireMaxGap: 10,
+            constellationMaxGap: 15
+        )
+
+        var localChapter = ChapterDraft(
+            id: "same-chapter",
+            chapterNumber: 1,
+            chapterTitle: "本机章名",
+            content: "本机正文"
+        )
+        localChapter.savedAtDate = itemTimestamp
+        var localVersion = ChapterDraftVersion(
+            id: "version-local",
+            chapterTitle: "本机历史",
+            content: "本机历史正文",
+            reason: "自动保存",
+            savedAt: "2024-03-10T00:00:00.000Z"
+        )
+        localVersion.savedAtDate = itemTimestamp.addingTimeInterval(-20)
+        localChapter.versionHistory = [localVersion]
+        local.chapterDrafts = [localChapter]
+
+        var remote = makeProject(
+            id: local.id,
+            title: "交换律",
+            updatedAt: timestamp
+        )
+        remote.draftText = "远端草稿"
+        remote.referenceContextText = "远端参考上下文"
+        remote.specialRequirements = "远端特殊要求"
+        var remoteDocument = ReferenceDocument(
+            id: "document-remote",
+            title: "远端资料",
+            content: "远端资料正文",
+            importedAt: "2024-03-10T00:00:00.000Z"
+        )
+        remoteDocument.importedAtDate = itemTimestamp
+        remote.referenceDocuments = [remoteDocument]
+        remote.foreshadowList = ForeshadowList(entries: [
+            ForeshadowEntry(
+                id: "foreshadow-remote",
+                title: "断剑",
+                firstChapter: 2,
+                createdAt: itemTimestamp,
+                updatedAt: itemTimestamp
+            )
+        ])
+        remote.plotThreadList = PlotThreadList(threads: [
+            PlotThread(
+                id: "thread-remote",
+                title: "寻找断剑",
+                createdAt: itemTimestamp,
+                updatedAt: itemTimestamp
+            )
+        ])
+        var remoteMemory = MemoryBuckets.empty
+        remoteMemory.worldRules = [
+            MemoryItem(
+                id: "memory-remote",
+                category: .worldRule,
+                subject: "旧城",
+                field: "宵禁",
+                value: "子时封门",
+                sourceChapter: 2,
+                updatedAt: itemTimestamp
+            )
+        ]
+        remote.persistedMemoryBuckets = remoteMemory
+        remote.persistedStrandWeaveState = StrandWeaveState(
+            entries: [
+                StrandWeaveState.Entry(
+                    chapterNumber: 2,
+                    dominant: .fire,
+                    recordedAt: itemTimestamp
+                )
+            ],
+            questTarget: 0.50,
+            fireTarget: 0.30,
+            constellationTarget: 0.20,
+            questMaxConsecutive: 6,
+            fireMaxGap: 9,
+            constellationMaxGap: 14
+        )
+
+        var remoteChapter = ChapterDraft(
+            id: localChapter.id,
+            chapterNumber: 1,
+            chapterTitle: "远端章名",
+            content: "远端正文"
+        )
+        remoteChapter.savedAtDate = itemTimestamp
+        var remoteVersion = ChapterDraftVersion(
+            id: "version-remote",
+            chapterTitle: "远端历史",
+            content: "远端历史正文",
+            reason: "自动保存",
+            savedAt: "2024-03-10T00:00:00.000Z"
+        )
+        remoteVersion.savedAtDate = itemTimestamp.addingTimeInterval(-10)
+        remoteChapter.versionHistory = [remoteVersion]
+        remote.chapterDrafts = [remoteChapter]
+
+        let localRemote = try XCTUnwrap(
+            AppState.mergeCloudProjects(local: [local], remote: [remote]).first
+        )
+        let remoteLocal = try XCTUnwrap(
+            AppState.mergeCloudProjects(local: [remote], remote: [local]).first
+        )
+        let encoder = CloudProjectJSONCoding.makeEncoder()
+
+        XCTAssertEqual(
+            try encoder.encode(localRemote),
+            try encoder.encode(remoteLocal)
+        )
+        let absorbedLocal = try XCTUnwrap(
+            AppState.mergeCloudProjects(local: [localRemote], remote: [local]).first
+        )
+        let absorbedRemote = try XCTUnwrap(
+            AppState.mergeCloudProjects(local: [localRemote], remote: [remote]).first
+        )
+        XCTAssertEqual(
+            try encoder.encode(localRemote),
+            try encoder.encode(absorbedLocal)
+        )
+        XCTAssertEqual(
+            try encoder.encode(localRemote),
+            try encoder.encode(absorbedRemote)
+        )
+        XCTAssertTrue(localRemote.referenceContextText.contains(local.referenceContextText))
+        XCTAssertTrue(localRemote.referenceContextText.contains(remote.referenceContextText))
+        XCTAssertTrue(localRemote.specialRequirements.contains(local.specialRequirements))
+        XCTAssertTrue(localRemote.specialRequirements.contains(remote.specialRequirements))
+        XCTAssertEqual(
+            Set(localRemote.referenceDocuments.map(\.id)),
+            Set(["document-local", "document-remote"])
+        )
+        XCTAssertEqual(
+            Set(localRemote.foreshadowList.entries.map(\.id)),
+            Set(["foreshadow-local", "foreshadow-remote"])
+        )
+        XCTAssertEqual(
+            Set(localRemote.plotThreadList.threads.map(\.id)),
+            Set(["thread-local", "thread-remote"])
+        )
+        XCTAssertEqual(
+            Set(
+                MemoryCategory.allCases.flatMap {
+                    localRemote.persistedMemoryBuckets?.bucket(for: $0).map(\.id) ?? []
+                }
+            ),
+            Set(["memory-local", "memory-remote"])
+        )
+        XCTAssertEqual(
+            Set(localRemote.persistedStrandWeaveState?.entries.map(\.chapterNumber) ?? []),
+            Set([1, 2])
+        )
+        XCTAssertEqual(localRemote.chapterDrafts.first?.versionHistory.count, 2)
+    }
+
+    @MainActor
+    func testCloudMergeDefaultsDoNotEraseConfiguredProjectFields() throws {
+        let configuredProfile = OutlineGenerationProfile(
+            storyFlow: "追查失踪案",
+            worldDescription: "临海旧城",
+            protagonistTraits: "谨慎但执着",
+            expectedLength: "12 万字",
+            endingPreference: "真相揭晓",
+            sellingPoints: "双线推理",
+            keyEvents: "灯塔失火",
+            storyPacing: "前缓后急",
+            motivations: "寻找失踪兄长",
+            relationshipMap: "记者与刑警互相试探",
+            antagonistPortrait: "伪装成证人的幕后人",
+            foreshadowingNotes: "旧船票"
+        )
+        let configuredDate = Date(timeIntervalSince1970: 1_710_200_000)
+        let defaultDate = configuredDate.addingTimeInterval(100)
+        var configured = makeProject(
+            id: "default-aware-fields",
+            title: "默认值保护",
+            updatedAt: configuredDate
+        )
+        configured.storyLength = .short
+        configured.outlineGenerationProfile = configuredProfile
+        configured.genreTemplateId = "suspense-detective"
+
+        var defaults = makeProject(
+            id: configured.id,
+            title: configured.title,
+            updatedAt: defaultDate
+        )
+        defaults.genreTemplateId = " \n "
+
+        let configuredDefaults = try XCTUnwrap(
+            AppState.mergeCloudProjects(local: [configured], remote: [defaults]).first
+        )
+        let defaultsConfigured = try XCTUnwrap(
+            AppState.mergeCloudProjects(local: [defaults], remote: [configured]).first
+        )
+        let encoder = CloudProjectJSONCoding.makeEncoder()
+
+        XCTAssertEqual(configuredDefaults.storyLength, .short)
+        XCTAssertEqual(configuredDefaults.outlineGenerationProfile, configuredProfile)
+        XCTAssertEqual(configuredDefaults.genreTemplateId, configured.genreTemplateId)
+        XCTAssertEqual(
+            try encoder.encode(configuredDefaults),
+            try encoder.encode(defaultsConfigured)
+        )
+
+        let absorbedConfigured = try XCTUnwrap(
+            AppState.mergeCloudProjects(
+                local: [configuredDefaults],
+                remote: [configured]
+            ).first
+        )
+        let absorbedDefaults = try XCTUnwrap(
+            AppState.mergeCloudProjects(
+                local: [configuredDefaults],
+                remote: [defaults]
+            ).first
+        )
+        XCTAssertEqual(
+            try encoder.encode(configuredDefaults),
+            try encoder.encode(absorbedConfigured)
+        )
+        XCTAssertEqual(
+            try encoder.encode(configuredDefaults),
+            try encoder.encode(absorbedDefaults)
+        )
+    }
+
+    @MainActor
+    func testCloudMergeConfiguredProjectFieldConflictsUseCanonicalWinner() throws {
+        let timestamp = Date(timeIntervalSince1970: 1_710_210_000)
+        let firstProfile = OutlineGenerationProfile(
+            storyFlow: "版本甲",
+            worldDescription: "甲世界",
+            protagonistTraits: "",
+            expectedLength: "8 万字",
+            endingPreference: "",
+            sellingPoints: "",
+            keyEvents: "",
+            storyPacing: "",
+            motivations: "",
+            relationshipMap: "",
+            antagonistPortrait: "",
+            foreshadowingNotes: ""
+        )
+        let secondProfile = OutlineGenerationProfile(
+            storyFlow: "版本乙",
+            worldDescription: "乙世界",
+            protagonistTraits: "",
+            expectedLength: "18 万字",
+            endingPreference: "",
+            sellingPoints: "",
+            keyEvents: "",
+            storyPacing: "",
+            motivations: "",
+            relationshipMap: "",
+            antagonistPortrait: "",
+            foreshadowingNotes: ""
+        )
+        var first = makeProject(
+            id: "canonical-configured-fields",
+            title: "非默认冲突",
+            updatedAt: timestamp
+        )
+        first.storyLength = .short
+        first.outlineGenerationProfile = firstProfile
+        first.genreTemplateId = "template-alpha"
+
+        var second = makeProject(
+            id: first.id,
+            title: first.title,
+            updatedAt: timestamp
+        )
+        second.storyLength = .medium
+        second.outlineGenerationProfile = secondProfile
+        second.genreTemplateId = "template-omega"
+
+        let firstSecond = try XCTUnwrap(
+            AppState.mergeCloudProjects(local: [first], remote: [second]).first
+        )
+        let secondFirst = try XCTUnwrap(
+            AppState.mergeCloudProjects(local: [second], remote: [first]).first
+        )
+        let encoder = CloudProjectJSONCoding.makeEncoder()
+
+        XCTAssertTrue([NovelLength.short, .medium].contains(firstSecond.storyLength))
+        XCTAssertTrue(
+            [firstProfile, secondProfile].contains(
+                firstSecond.outlineGenerationProfile
+            )
+        )
+        XCTAssertTrue(
+            ["template-alpha", "template-omega"].contains(
+                firstSecond.genreTemplateId
+            )
+        )
+        XCTAssertEqual(
+            try encoder.encode(firstSecond),
+            try encoder.encode(secondFirst)
+        )
+
+        for operand in [first, second] {
+            let absorbed = try XCTUnwrap(
+                AppState.mergeCloudProjects(
+                    local: [firstSecond],
+                    remote: [operand]
+                ).first
+            )
+            XCTAssertEqual(
+                try encoder.encode(firstSecond),
+                try encoder.encode(absorbed)
+            )
+        }
+    }
+
+    @MainActor
+    func testCloudMergeLegacyStrandTrackerIsPositionBasedAndConsistentWithState() throws {
+        let timestamp = Date(timeIntervalSince1970: 1_710_220_000)
+        let localTracker = StrandWeaveTracker()
+        localTracker.recordChapter(try legacyStrandRecord(
+            id: "00000000-0000-0000-0000-000000000001",
+            chapterNumber: 1,
+            dominant: .quest,
+            recordedAt: timestamp
+        ))
+        localTracker.recordChapter(try legacyStrandRecord(
+            id: "00000000-0000-0000-0000-000000000002",
+            chapterNumber: 2,
+            dominant: .fire,
+            recordedAt: timestamp
+        ))
+        localTracker.recordChapter(try legacyStrandRecord(
+            id: "00000000-0000-0000-0000-000000000004",
+            chapterNumber: 4,
+            dominant: .quest,
+            recordedAt: timestamp
+        ))
+        localTracker.recordChapter(try legacyStrandRecord(
+            id: "00000000-0000-0000-0000-000000000005",
+            chapterNumber: 5,
+            dominant: .quest,
+            recordedAt: timestamp
+        ))
+        localTracker.recordChapter(try legacyStrandRecord(
+            id: "00000000-0000-0000-0000-000000000006",
+            chapterNumber: 6,
+            dominant: .quest,
+            recordedAt: timestamp
+        ))
+
+        let remoteTracker = StrandWeaveTracker(
+            idealRatio: [.quest: 0.45, .fire: 0.35, .constellation: 0.20],
+            redLineConfig: RhythmRedLineConfig(
+                maxConsecutiveQuest: 4,
+                maxGapFire: 8,
+                maxGapConstellation: 12
+            )
+        )
+        remoteTracker.recordChapter(try legacyStrandRecord(
+            id: "00000000-0000-0000-0000-000000000011",
+            chapterNumber: 1,
+            dominant: .constellation,
+            recordedAt: timestamp.addingTimeInterval(10)
+        ))
+        remoteTracker.recordChapter(try legacyStrandRecord(
+            id: "00000000-0000-0000-0000-000000000013",
+            chapterNumber: 3,
+            dominant: .quest,
+            recordedAt: timestamp
+        ))
+        remoteTracker.recordChapter(try legacyStrandRecord(
+            id: "00000000-0000-0000-0000-000000000014",
+            chapterNumber: 4,
+            dominant: .fire,
+            recordedAt: timestamp.addingTimeInterval(10)
+        ))
+        remoteTracker.recordChapter(try legacyStrandRecord(
+            id: "00000000-0000-0000-0000-000000000015",
+            chapterNumber: 5,
+            dominant: .fire,
+            recordedAt: timestamp.addingTimeInterval(10)
+        ))
+        remoteTracker.recordChapter(try legacyStrandRecord(
+            id: "00000000-0000-0000-0000-000000000016",
+            chapterNumber: 6,
+            dominant: .fire,
+            recordedAt: timestamp
+        ))
+
+        var local = makeProject(
+            id: "legacy-strand-merge",
+            title: "旧追踪器合并",
+            updatedAt: timestamp
+        )
+        local.strandWeaveTracker = localTracker
+        local.persistedStrandWeaveState = StrandWeaveState(
+            entries: [
+                StrandWeaveState.Entry(
+                    chapterNumber: 1,
+                    dominant: .fire,
+                    recordedAt: timestamp.addingTimeInterval(20)
+                ),
+                StrandWeaveState.Entry(
+                    volumeNumber: 1,
+                    chapterNumber: 5,
+                    dominant: .quest,
+                    recordedAt: timestamp
+                )
+            ],
+            questTarget: 0.60,
+            fireTarget: 0.20,
+            constellationTarget: 0.20,
+            questMaxConsecutive: 5,
+            fireMaxGap: 10,
+            constellationMaxGap: 15
+        )
+
+        var remote = makeProject(
+            id: local.id,
+            title: local.title,
+            updatedAt: timestamp
+        )
+        remote.strandWeaveTracker = remoteTracker
+        remote.persistedStrandWeaveState = StrandWeaveState(
+            entries: [
+                StrandWeaveState.Entry(
+                    chapterNumber: 2,
+                    dominant: .fire,
+                    recordedAt: timestamp
+                ),
+                StrandWeaveState.Entry(
+                    volumeNumber: 2,
+                    chapterNumber: 5,
+                    dominant: .fire,
+                    recordedAt: timestamp
+                )
+            ],
+            questTarget: 0.60,
+            fireTarget: 0.20,
+            constellationTarget: 0.20,
+            questMaxConsecutive: 5,
+            fireMaxGap: 10,
+            constellationMaxGap: 15
+        )
+
+        let localRemote = try XCTUnwrap(
+            AppState.mergeCloudProjects(local: [local], remote: [remote]).first
+        )
+        let remoteLocal = try XCTUnwrap(
+            AppState.mergeCloudProjects(local: [remote], remote: [local]).first
+        )
+        let encoder = CloudProjectJSONCoding.makeEncoder()
+
+        XCTAssertEqual(
+            localRemote.strandWeaveTracker.records.map(\.chapterNumber),
+            [2, 3, 4, 6]
+        )
+        XCTAssertEqual(
+            localRemote.strandWeaveTracker.records.first {
+                $0.chapterNumber == 4
+            }?.primaryStrand,
+            .fire
+        )
+        XCTAssertFalse(
+            localRemote.strandWeaveTracker.records.contains {
+                [1, 5].contains($0.chapterNumber)
+            }
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(localRemote.strandWeaveTracker.idealRatio[.quest]),
+            0.45,
+            accuracy: 0.000_001
+        )
+        XCTAssertEqual(
+            localRemote.strandWeaveTracker.redLineConfig.maxGapFire,
+            8
+        )
+        XCTAssertEqual(localRemote.persistedStrandWeaveState?.questTarget, 0.45)
+        XCTAssertEqual(localRemote.persistedStrandWeaveState?.fireMaxGap, 8)
+        XCTAssertFalse(localRemote.strandWeaveTracker === local.strandWeaveTracker)
+        XCTAssertFalse(localRemote.strandWeaveTracker === remote.strandWeaveTracker)
+        XCTAssertEqual(
+            local.strandWeaveTracker.records.map(\.chapterNumber),
+            [1, 2, 4, 5, 6]
+        )
+        XCTAssertEqual(
+            remote.strandWeaveTracker.records.map(\.chapterNumber),
+            [1, 3, 4, 5, 6]
+        )
+        XCTAssertEqual(
+            try encoder.encode(localRemote),
+            try encoder.encode(remoteLocal)
+        )
+
+        for operand in [local, remote] {
+            let absorbed = try XCTUnwrap(
+                AppState.mergeCloudProjects(
+                    local: [localRemote],
+                    remote: [operand]
+                ).first
+            )
+            XCTAssertEqual(
+                try encoder.encode(localRemote),
+                try encoder.encode(absorbed)
+            )
+        }
+    }
+
+    @MainActor
+    func testCloudMergeUsesCanonicalTieBreakForEqualReviewAndStableProjectOrder() throws {
+        let reportID = "9D08082C-F3D1-43F3-A587-73584C99E0D1"
+        let reviewedAt = "2024-03-10T12:00:00.000Z"
+        func report(summary: String, score: Int) throws -> QualityReviewReport {
+            let data = try JSONSerialization.data(withJSONObject: [
+                "id": reportID,
+                "volumeNumber": 1,
+                "chapterNumber": 1,
+                "chapterTitle": "第一章",
+                "reviewedAt": reviewedAt,
+                "dimensionResults": [],
+                "overallScore": score,
+                "overallSummary": summary
+            ])
+            return try CloudProjectJSONCoding.makeDecoder().decode(
+                QualityReviewReport.self,
+                from: data
+            )
+        }
+
+        let timestamp = Date(timeIntervalSince1970: 1_710_100_000)
+        var first = makeProject(id: "project-b", title: "同名", updatedAt: timestamp)
+        first.qualityReviewReports = [try report(summary: "版本甲", score: 81)]
+        var second = makeProject(id: first.id, title: "同名", updatedAt: timestamp)
+        second.qualityReviewReports = [try report(summary: "版本乙", score: 89)]
+
+        let firstSecond = try XCTUnwrap(
+            AppState.mergeCloudProjects(local: [first], remote: [second]).first
+        )
+        let secondFirst = try XCTUnwrap(
+            AppState.mergeCloudProjects(local: [second], remote: [first]).first
+        )
+        let encoder = CloudProjectJSONCoding.makeEncoder()
+        XCTAssertEqual(
+            try encoder.encode(firstSecond),
+            try encoder.encode(secondFirst)
+        )
+        XCTAssertEqual(firstSecond.qualityReviewReports.count, 1)
+
+        let projectA = makeProject(id: "project-a", title: "同名", updatedAt: timestamp)
+        let ordered = AppState.mergeCloudProjects(
+            local: [first],
+            remote: [projectA]
+        )
+        XCTAssertEqual(ordered.map(\.id), ["project-a", "project-b"])
+    }
+
+    @MainActor
+    func testCloudMergePreservesOlderDraftAndRuntimeWhenNewerBaseIsEmpty() throws {
+        var newer = makeProject(
+            id: "nonloss-base",
+            title: "非丢失合并",
+            updatedAt: Date(timeIntervalSince1970: 1_710_200_200)
+        )
+        newer.draftText = ""
+        newer.persistedLongformRuntimeState = nil
+        newer.persistedLastReviewResult = nil
+
+        var older = makeProject(
+            id: newer.id,
+            title: "非丢失合并",
+            updatedAt: Date(timeIntervalSince1970: 1_710_200_100)
+        )
+        older.draftText = "需要保留的旧端草稿"
+        older.persistedLongformRuntimeState = .empty
+        older.persistedLastReviewResult = ChapterReviewResult(
+            overallScore: 88,
+            dimensionScores: [:],
+            issues: [],
+            hasBlockingIssues: false,
+            antiPatterns: [],
+            overallSummary: "需要保留的审查"
+        )
+
+        let merged = try XCTUnwrap(
+            AppState.mergeCloudProjects(local: [newer], remote: [older]).first
+        )
+
+        XCTAssertEqual(merged.draftText, older.draftText)
+        XCTAssertNotNil(merged.persistedLongformRuntimeState)
+        XCTAssertEqual(
+            merged.persistedLastReviewResult?.overallSummary,
+            "需要保留的审查"
+        )
+    }
+
+    @MainActor
+    func testCloudMergeKeepsOneLongformCommitWinnerPerChapterPosition() throws {
+        func commit(
+            id: String,
+            status: LongformCommitStatus,
+            createdAt: Date
+        ) -> LongformChapterCommit {
+            LongformChapterCommit(
+                id: id,
+                chapterNumber: 3,
+                volumeNumber: 1,
+                chapterTitle: "雨夜追查",
+                status: status,
+                createdAt: createdAt,
+                plannedNodes: [],
+                coveredNodes: [],
+                missedNodes: [],
+                rejectionReasons: status == .rejected ? ["审查未通过"] : [],
+                revisionHints: [],
+                acceptedEvents: [],
+                extractedMemoryItems: [],
+                dominantThreadType: .quest,
+                reviewStatus: .completed,
+                reviewSummary: "已审查",
+                projectionStatus: [:]
+            )
+        }
+
+        let projectTimestamp = Date(timeIntervalSince1970: 1_710_400_000)
+        let accepted = commit(
+            id: "accepted-old",
+            status: .accepted,
+            createdAt: projectTimestamp.addingTimeInterval(-10)
+        )
+        let rejected = commit(
+            id: "rejected-new",
+            status: .rejected,
+            createdAt: projectTimestamp
+        )
+        var first = makeProject(
+            id: "runtime-position",
+            title: "运行态位置",
+            updatedAt: projectTimestamp
+        )
+        first.persistedLongformRuntimeState = LongformStoryRuntimeState(
+            latestContract: nil,
+            latestCommit: accepted,
+            latestWriteGate: nil,
+            acceptedCommits: [accepted],
+            rejectedCommits: []
+        )
+        var second = makeProject(
+            id: first.id,
+            title: "运行态位置",
+            updatedAt: projectTimestamp
+        )
+        second.persistedLongformRuntimeState = LongformStoryRuntimeState(
+            latestContract: nil,
+            latestCommit: rejected,
+            latestWriteGate: nil,
+            acceptedCommits: [],
+            rejectedCommits: [rejected]
+        )
+
+        let firstSecond = try XCTUnwrap(
+            AppState.mergeCloudProjects(local: [first], remote: [second])
+                .first?
+                .persistedLongformRuntimeState
+        )
+        let secondFirst = try XCTUnwrap(
+            AppState.mergeCloudProjects(local: [second], remote: [first])
+                .first?
+                .persistedLongformRuntimeState
+        )
+
+        XCTAssertTrue(firstSecond.acceptedCommits.isEmpty)
+        XCTAssertEqual(firstSecond.rejectedCommits.map(\.id), [rejected.id])
+        XCTAssertEqual(firstSecond.latestCommit?.id, rejected.id)
+        XCTAssertEqual(
+            try CloudProjectJSONCoding.makeEncoder().encode(firstSecond),
+            try CloudProjectJSONCoding.makeEncoder().encode(secondFirst)
+        )
+    }
+
+    @MainActor
+    func testCloudMergeCoalescesDuplicateProjectIDsWithoutTrap() throws {
+        let timestamp = Date(timeIntervalSince1970: 1_710_300_000)
+        var first = makeProject(
+            id: "duplicate-project",
+            title: "重复项目",
+            updatedAt: timestamp
+        )
+        first.outlineText = "重复项版本甲"
+        var second = makeProject(
+            id: first.id,
+            title: "重复项目",
+            updatedAt: timestamp
+        )
+        second.outlineText = "重复项版本乙"
+
+        let merged = AppState.mergeCloudProjects(
+            local: [first, second],
+            remote: []
+        )
+
+        let project = try XCTUnwrap(merged.first)
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertTrue(project.outlineText.contains(first.outlineText))
+        XCTAssertTrue(project.outlineText.contains(second.outlineText))
+    }
+
+    func testDeletionDateRoundsNewestDateUpToCrossPlatformMilliseconds() {
+        let projectUpdatedAt = Date(timeIntervalSince1970: 1_710_000_000.125_4)
+        let earlierNow = Date(timeIntervalSince1970: 1_710_000_000.124)
+        let laterNow = Date(timeIntervalSince1970: 1_710_000_000.129_2)
+
+        XCTAssertEqual(
+            ProjectDeletionTombstone.deletionDate(
+                now: earlierNow,
+                projectUpdatedAt: projectUpdatedAt
+            ).timeIntervalSince1970,
+            1_710_000_000.126,
+            accuracy: 0.000_001
+        )
+        XCTAssertEqual(
+            ProjectDeletionTombstone.deletionDate(
+                now: laterNow,
+                projectUpdatedAt: projectUpdatedAt
+            ).timeIntervalSince1970,
+            1_710_000_000.130,
+            accuracy: 0.000_001
+        )
+    }
+
+    func testCloudSaveCompletionRequiresMatchingGenerationAndScope() {
+        XCTAssertTrue(AppState.cloudSaveCompletionIsCurrent(
+            saveGeneration: 7,
+            currentGeneration: 7,
+            scope: "account-a",
+            currentScope: "account-a"
+        ))
+        XCTAssertFalse(AppState.cloudSaveCompletionIsCurrent(
+            saveGeneration: 7,
+            currentGeneration: 8,
+            scope: "account-a",
+            currentScope: "account-a"
+        ))
+        XCTAssertFalse(AppState.cloudSaveCompletionIsCurrent(
+            saveGeneration: 7,
+            currentGeneration: 7,
+            scope: "account-a",
+            currentScope: "account-b"
+        ))
+    }
+
+    func testCloudSaveCompletionTimestampNeverRollsBackNewerLocalMutation() {
+        let savedSnapshotDate = Date(timeIntervalSince1970: 1_710_000_000)
+
+        XCTAssertEqual(
+            AppState.reconciledCloudSnapshotTimestamp(
+                current: 1_710_000_100,
+                savedSnapshotDate: savedSnapshotDate
+            ),
+            1_710_000_100
+        )
+        XCTAssertEqual(
+            AppState.reconciledCloudSnapshotTimestamp(
+                current: 1_709_999_900,
+                savedSnapshotDate: savedSnapshotDate
+            ),
+            1_710_000_000
+        )
+    }
+
+    @MainActor
+    func testConcurrentCloudSyncQueuesLatestAccountScope() async {
+        let appState = AppState(
+            userDefaults: makeIsolatedUserDefaults(),
+            projectStore: makeIsolatedProjectStore(),
+            credentialStore: makeCredentialStore()
+        )
+        appState.activeAccount = AppleAccountProfile(
+            userID: "account-new",
+            email: "",
+            fullName: ""
+        )
+        appState.isCloudSynchronizationInProgress = true
+
+        await appState.synchronizeWithICloud(forcePull: true)
+
+        XCTAssertEqual(appState.pendingCloudSynchronizationScope, "account-new")
+        XCTAssertTrue(appState.pendingCloudSynchronizationForcePull)
+    }
+
     private func makeIsolatedUserDefaults() -> UserDefaults {
         let suiteName = "OpenWritingTests.\(UUID().uuidString)"
         let userDefaults = UserDefaults(suiteName: suiteName)!
@@ -1002,7 +2961,9 @@ final class DomainModelsTests: XCTestCase {
         return userDefaults
     }
 
-    private func makeIsolatedProjectStore() -> ProjectFileStore {
+    private func makeIsolatedProjectStore(
+        testHooks: ProjectFileStore.TestHooks = .none
+    ) -> ProjectFileStore {
         let baseDirectoryName = "OpenWritingTests-\(UUID().uuidString)"
         let baseDirectoryURL = FileManager.default.temporaryDirectory
         addTeardownBlock {
@@ -1012,12 +2973,29 @@ final class DomainModelsTests: XCTestCase {
         }
         return ProjectFileStore(
             baseDirectoryURL: baseDirectoryURL,
-            baseDirectoryName: baseDirectoryName
+            baseDirectoryName: baseDirectoryName,
+            testHooks: testHooks
         )
     }
 
     private func makeCredentialStore() -> InMemoryCredentialStore {
         InMemoryCredentialStore()
+    }
+
+    private func legacyStrandRecord(
+        id: String,
+        chapterNumber: Int,
+        dominant: StrandType,
+        recordedAt: Date
+    ) throws -> ChapterStrandRecord {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "id": id,
+            "chapterNumber": chapterNumber,
+            "primaryStrand": dominant.rawValue,
+            "confidence": 0.8,
+            "recordedAt": recordedAt.timeIntervalSinceReferenceDate
+        ])
+        return try JSONDecoder().decode(ChapterStrandRecord.self, from: data)
     }
 
     private func makeProject(
@@ -1645,6 +3623,160 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertFalse(entities.isEmpty)
     }
 
+    func testRankedContextBudgetIsStableBoundedAndKeepsPinnedDraftFirst() {
+        let sections = [
+            ContextSection(
+                label: "草稿箱当前正文",
+                content: String(repeating: "甲", count: 20_000),
+                category: .currentDraft
+            ),
+            ContextSection(
+                label: "低优先级参考",
+                content: String(repeating: "乙", count: 20_000),
+                category: .manualReference
+            )
+        ]
+
+        let first = RankedContextBudget.render(sections)
+        let second = RankedContextBudget.render(sections)
+
+        XCTAssertEqual(first, second)
+        XCTAssertLessThanOrEqual(first.count, RankedContextBudget.maximumCharacters)
+        XCTAssertTrue(first.hasPrefix("\n\n草稿箱当前正文：\n"))
+        XCTAssertTrue(first.contains("[本节上下文已截断]"))
+        XCTAssertFalse(first.contains("低优先级参考"))
+    }
+
+    func testLegacyLongformRuntimeHealthIssueDecodesControlledKindWithoutKindField() throws {
+        let expectedKinds: [(String, LongformRuntimeHealthIssueKind)] = [
+            ("写前门禁未通过", .prewriteGate),
+            ("分卷目录存在断卷", .missingVolumeSequence),
+            ("章节目录存在断章", .missingChapterSequence),
+            ("保存章节未进入提交链", .uncommittedSavedChapter),
+            ("章节内容与提交链不一致", .staleSavedChapterCommit),
+            ("最新章节提交被拒", .latestCommitRejected),
+            ("旧版未知问题", .other)
+        ]
+
+        for (title, expectedKind) in expectedKinds {
+            let data = try JSONSerialization.data(withJSONObject: [
+                "id": "legacy-\(title)",
+                "status": "blocked",
+                "title": title,
+                "detail": "旧版详情",
+                "repairHint": "旧版修复提示"
+            ])
+            let issue = try JSONDecoder().decode(LongformRuntimeHealthIssue.self, from: data)
+
+            XCTAssertEqual(issue.kind, expectedKind, "Unexpected kind for \(title)")
+        }
+    }
+
+    func testLegacyLongformCommitReviewStatusMigrationIsFailClosed() throws {
+        func legacyDecodedCommit(
+            summary: String,
+            rejectionReasons: [String]
+        ) throws -> LongformChapterCommit {
+            let commit = LongformChapterCommit(
+                id: "legacy-review-status",
+                chapterNumber: 3,
+                volumeNumber: 1,
+                chapterTitle: "雨夜追查",
+                status: rejectionReasons.isEmpty ? .accepted : .rejected,
+                createdAt: Date(timeIntervalSince1970: 1_710_000_000),
+                plannedNodes: [],
+                coveredNodes: [],
+                missedNodes: [],
+                rejectionReasons: rejectionReasons,
+                revisionHints: [],
+                acceptedEvents: [],
+                extractedMemoryItems: [],
+                dominantThreadType: .quest,
+                reviewStatus: .completed,
+                reviewSummary: summary,
+                projectionStatus: [:]
+            )
+            let encoded = try JSONEncoder().encode(commit)
+            var object = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+            )
+            object.removeValue(forKey: "reviewStatus")
+            return try JSONDecoder().decode(
+                LongformChapterCommit.self,
+                from: JSONSerialization.data(withJSONObject: object)
+            )
+        }
+
+        XCTAssertEqual(
+            try legacyDecodedCommit(
+                summary: "暂无写后审查结果。",
+                rejectionReasons: []
+            ).reviewStatus,
+            .missing
+        )
+        XCTAssertEqual(
+            try legacyDecodedCommit(
+                summary: "暂无写后审查结果。",
+                rejectionReasons: ["当前章审查失败：响应格式错误"]
+            ).reviewStatus,
+            .failed
+        )
+        XCTAssertEqual(
+            try legacyDecodedCommit(
+                summary: "存在阻断项",
+                rejectionReasons: ["写后审查存在阻断问题"]
+            ).reviewStatus,
+            .completed
+        )
+
+        let unknown = try legacyDecodedCommit(
+            summary: "旧版自由文本摘要",
+            rejectionReasons: []
+        )
+        XCTAssertEqual(unknown.reviewStatus, .unknown)
+        XCTAssertEqual(unknown.reviewSummary, "旧版自由文本摘要")
+    }
+
+    func testWriteGateUsesTypedReviewStatusInsteadOfDisplaySummary() throws {
+        var project = NovelProject(
+            title: "长篇审查状态",
+            genre: "悬疑",
+            summary: "追查旧案。",
+            storyLength: .long
+        )
+        project.currentChapterNumber = 3
+        var contract = LongformStorySystem.buildRuntimeContract(for: project)
+        contract.review.requiresPostwriteReview = true
+        let commit = LongformChapterCommit(
+            id: "typed-review-status",
+            chapterNumber: 3,
+            volumeNumber: 1,
+            chapterTitle: "雨夜追查",
+            status: .accepted,
+            createdAt: Date(timeIntervalSince1970: 1_710_000_000),
+            plannedNodes: [],
+            coveredNodes: [],
+            missedNodes: [],
+            rejectionReasons: [],
+            revisionHints: [],
+            acceptedEvents: [],
+            extractedMemoryItems: [],
+            dominantThreadType: .quest,
+            reviewStatus: .completed,
+            reviewSummary: "暂无写后审查结果。",
+            projectionStatus: [:]
+        )
+
+        let report = LongformStorySystem.buildWriteGateReport(
+            commit: commit,
+            contract: contract
+        )
+        let reviewCheck = try XCTUnwrap(report.checks.first { $0.stage == .review })
+
+        XCTAssertEqual(reviewCheck.status, .passed)
+        XCTAssertEqual(reviewCheck.message, "写后审查通过")
+    }
+
     func testAIMemoryProjectionFailureBecomesActionableWarning() throws {
         let commit = LongformChapterCommit(
             id: "commit-ai-memory-warning",
@@ -1661,6 +3793,7 @@ final class DomainModelsTests: XCTestCase {
             acceptedEvents: [],
             extractedMemoryItems: [],
             dominantThreadType: .quest,
+            reviewStatus: .completed,
             reviewSummary: "可用。",
             projectionStatus: [
                 "memory": "done",
@@ -1765,6 +3898,343 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertNotNil(defaults.object(forKey: key))
     }
 
+    func testCloudProjectPayloadCodecReadsIOSPayloadWithIncompatibleMemorySchemas() throws {
+        let fixture = try Data(contentsOf: cloudProjectPayloadFixtureURL())
+        let iosPayload = try XCTUnwrap(
+            CloudProjectPayloadCodec.platformPayload(named: .iOS, in: fixture)
+        )
+
+        let project = try CloudProjectPayloadCodec.decodeMacProject(from: iosPayload)
+
+        XCTAssertEqual(project.id, "cross-platform-project")
+        XCTAssertEqual(project.title, "iOS 原始标题")
+        XCTAssertEqual(project.currentChapterNumber, 8)
+        XCTAssertNil(project.persistedMemoryBuckets)
+        XCTAssertNil(project.persistedStrandWeaveState)
+    }
+
+    func testCloudProjectPayloadCodecAppliesCommonFieldsOverMacPayload() throws {
+        let fixture = try Data(contentsOf: cloudProjectPayloadFixtureURL())
+
+        let project = try CloudProjectPayloadCodec.decodeMacProject(from: fixture)
+
+        XCTAssertEqual(project.title, "跨端封套作品")
+        XCTAssertEqual(project.summary, "共同摘要")
+        XCTAssertEqual(project.currentVolumeNumber, 2)
+        XCTAssertEqual(project.genreTemplateId, "mac-only-template")
+    }
+
+    func testIOSStyleEnvelopeRewritePreservesMacPlatformPayloadExactly() throws {
+        let fixture = try Data(contentsOf: cloudProjectPayloadFixtureURL())
+        let originalMacPayload = try XCTUnwrap(
+            CloudProjectPayloadCodec.platformPayload(named: .macOS, in: fixture)
+        )
+        let iosPayload = try XCTUnwrap(
+            CloudProjectPayloadCodec.platformPayload(named: .iOS, in: fixture)
+        )
+
+        let rewritten = try CloudProjectPayloadCodec.encodeEnvelope(
+            platformPayload: iosPayload,
+            platform: .iOS,
+            preserving: fixture
+        )
+
+        XCTAssertEqual(
+            try CloudProjectPayloadCodec.platformPayload(named: .macOS, in: rewritten),
+            originalMacPayload
+        )
+    }
+
+    func testMacEnvelopeRewritePreservesIOSPlatformPayloadExactly() throws {
+        let fixture = try Data(contentsOf: cloudProjectPayloadFixtureURL())
+        let originalIOSPayload = try XCTUnwrap(
+            CloudProjectPayloadCodec.platformPayload(named: .iOS, in: fixture)
+        )
+        var project = try CloudProjectPayloadCodec.decodeMacProject(from: fixture)
+        project.draftText = "macOS 更新后的草稿"
+        let memoryItem = MemoryItem(
+            id: "mac-memory-1",
+            category: .characterState,
+            subject: "主角",
+            field: "状态",
+            value: "macOS 富状态",
+            sourceVolumeNumber: 2,
+            sourceChapter: 8,
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        project.persistedMemoryBuckets = MemoryBuckets(
+            characterState: [memoryItem],
+            relationships: [],
+            worldRules: [],
+            storyFacts: [],
+            timeline: [],
+            openLoops: [],
+            readerPromises: [],
+            lastCompactedAtChapter: 8
+        )
+        project.persistedStrandWeaveState = StrandWeaveState(
+            entries: [
+                StrandWeaveState.Entry(
+                    volumeNumber: 2,
+                    chapterNumber: 8,
+                    dominant: .quest,
+                    recordedAt: Date(timeIntervalSince1970: 1_772_000_100)
+                )
+            ],
+            questTarget: 0.5,
+            fireTarget: 0.3,
+            constellationTarget: 0.2,
+            questMaxConsecutive: 4,
+            fireMaxGap: 5,
+            constellationMaxGap: 7
+        )
+
+        let rewritten = try CloudProjectPayloadCodec.encodeMacProject(project, preserving: fixture)
+        let decoded = try CloudProjectPayloadCodec.decodeMacProject(from: rewritten)
+
+        XCTAssertEqual(
+            try CloudProjectPayloadCodec.platformPayload(named: .iOS, in: rewritten),
+            originalIOSPayload
+        )
+        XCTAssertEqual(decoded.draftText, "macOS 更新后的草稿")
+        XCTAssertEqual(decoded.persistedMemoryBuckets?.characterState, [memoryItem])
+        XCTAssertEqual(decoded.persistedStrandWeaveState, project.persistedStrandWeaveState)
+    }
+
+    func testCloudPayloadHashSkipsExistingIdenticalRecordAndUsesStableRevision() {
+        let projectPayload = Data("project".utf8)
+        let chapterPayload = Data("chapter".utf8)
+        let hash = CloudProjectPayloadCodec.payloadHash(for: projectPayload)
+        let firstRevision = CloudProjectPayloadCodec.revisionIdentifier(
+            projectPayloads: [(id: "project-1", data: projectPayload)],
+            chapterPayloads: [(projectID: "project-1", chapterID: "chapter-1", data: chapterPayload)]
+        )
+        let secondRevision = CloudProjectPayloadCodec.revisionIdentifier(
+            projectPayloads: [(id: "project-1", data: projectPayload)],
+            chapterPayloads: [(projectID: "project-1", chapterID: "chapter-1", data: chapterPayload)]
+        )
+
+        XCTAssertEqual(firstRevision, secondRevision)
+        XCTAssertFalse(
+            CloudProjectPayloadCodec.payloadNeedsUpload(
+                projectPayload,
+                existingHash: hash,
+                existingData: nil
+            )
+        )
+        XCTAssertTrue(
+            CloudProjectPayloadCodec.payloadNeedsUpload(
+                Data("changed".utf8),
+                existingHash: hash,
+                existingData: projectPayload
+            )
+        )
+    }
+
+    func testCrossPlatformContentAddressedRevisionGoldenVector() throws {
+        let fixtureData = try Data(contentsOf: cloudProjectPayloadFixtureURL())
+        let fixtureObject = try JSONSerialization.jsonObject(with: fixtureData)
+        let canonicalFixtureData = try JSONSerialization.data(
+            withJSONObject: fixtureObject,
+            options: [.sortedKeys]
+        )
+        let fixtureHash = CloudProjectPayloadCodec.payloadHash(for: canonicalFixtureData)
+        XCTAssertEqual(
+            fixtureHash,
+            "f12d32596bfc7deca0efec3d7b5123f14288ebe3d313a96ed0b6903cf94af723"
+        )
+        XCTAssertEqual(
+            CloudProjectPayloadCodec.contentRevision(components: [fixtureHash]),
+            "sha256-32a35f84d5e61ec0c4feb6ad13bc3244"
+        )
+
+        let vectorData = Data(#"{"a":1,"b":"跨端"}"#.utf8)
+        let vectorHash = CloudProjectPayloadCodec.payloadHash(for: vectorData)
+        let chapterRevision = CloudProjectPayloadCodec.chapterRevision(payloadHash: vectorHash)
+        let chapterRecordName = ICloudProjectStore.chapterRecordName(
+            for: "chapter-1",
+            projectID: "project-1",
+            scope: "scope",
+            revision: chapterRevision
+        )
+        let projectRevision = CloudProjectPayloadCodec.projectRevision(
+            payloadHash: vectorHash,
+            chapterReferences: [(chapterID: "chapter-1", recordName: chapterRecordName)]
+        )
+        let projectRecordName = ICloudProjectStore.projectRecordName(
+            for: "project-1",
+            scope: "scope",
+            revision: projectRevision
+        )
+        let manifestRevision = CloudProjectPayloadCodec.manifestRevision(
+            projectReferences: [(projectID: "project-1", recordName: projectRecordName)]
+        )
+
+        XCTAssertEqual(
+            projectRecordName,
+            "project_scope_sha256-ed386434a6b7641cd1db416323b07ace_project-1"
+        )
+        XCTAssertEqual(
+            manifestRevision,
+            "sha256-6c1dd97b207db714434b9c7fe8a95578"
+        )
+        let reversedChapterRevision = CloudProjectPayloadCodec.projectRevision(
+            payloadHash: "0123456789abcdef",
+            chapterReferences: [
+                (chapterID: "chapter-b", recordName: "record-b"),
+                (chapterID: "chapter-a", recordName: "record-a")
+            ]
+        )
+        XCTAssertEqual(
+            reversedChapterRevision,
+            "sha256-617026b5b86b6c63d3badf3eaa668069"
+        )
+        XCTAssertEqual(
+            reversedChapterRevision,
+            CloudProjectPayloadCodec.projectRevision(
+                payloadHash: "0123456789abcdef",
+                chapterReferences: [
+                    (chapterID: "chapter-a", recordName: "record-a"),
+                    (chapterID: "chapter-b", recordName: "record-b")
+                ]
+            )
+        )
+
+        let deletion = ProjectDeletionTombstone(
+            projectID: "project-old",
+            deletedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        XCTAssertEqual(
+            CloudProjectPayloadCodec.deletionTombstoneRevisionComponent(deletion),
+            "deleted:project-old:1772000000.000"
+        )
+        XCTAssertEqual(
+            CloudProjectPayloadCodec.manifestRevision(
+                projectReferences: [(projectID: "project-1", recordName: projectRecordName)],
+                deletedProjects: [deletion]
+            ),
+            "sha256-d91d3b255b13408a465b6b171c10aa12"
+        )
+    }
+
+    func testCloudProjectPayloadCodecMigratesLegacyPlatformWithoutMislabeling() throws {
+        let currentMacPayload = Data(
+            #"{"genre":"科幻","id":"legacy-project","schemaVersion":2,"summary":"","title":"新版","storyLength":"long"}"#.utf8
+        )
+        let legacyMacPayload = Data(
+            #"{"genre":"科幻","id":"legacy-project","macLegacyOnly":"keep","schemaVersion":1,"summary":"","title":"旧版","storyLength":"long"}"#.utf8
+        )
+        let migratedMac = try CloudProjectPayloadCodec.encodeEnvelope(
+            platformPayload: currentMacPayload,
+            platform: .macOS,
+            preserving: legacyMacPayload
+        )
+        XCTAssertNil(
+            try CloudProjectPayloadCodec.platformPayload(named: .iOS, in: migratedMac)
+        )
+        let migratedMacPayload = try XCTUnwrap(
+            CloudProjectPayloadCodec.platformPayload(named: .macOS, in: migratedMac)
+        )
+        let migratedMacObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: migratedMacPayload) as? [String: Any]
+        )
+        XCTAssertEqual(migratedMacObject["macLegacyOnly"] as? String, "keep")
+        XCTAssertEqual(migratedMacObject["title"] as? String, "新版")
+
+        let legacyIOSPayload = Data(
+            #"{"genre":"科幻","id":"legacy-project","referenceContextItems":[],"summary":"","title":"iOS 旧版","storyLength":"long"}"#.utf8
+        )
+        let migratedIOS = try CloudProjectPayloadCodec.encodeEnvelope(
+            platformPayload: currentMacPayload,
+            platform: .macOS,
+            preserving: legacyIOSPayload
+        )
+        XCTAssertEqual(
+            try CloudProjectPayloadCodec.platformPayload(named: .iOS, in: migratedIOS),
+            try JSONSerialization.data(
+                withJSONObject: JSONSerialization.jsonObject(with: legacyIOSPayload),
+                options: [.sortedKeys]
+            )
+        )
+    }
+
+    func testCloudProjectPayloadCodecRejectsFutureEnvelopeVersion() throws {
+        let futureEnvelope = Data(
+            #"{"_cloudProjectPayloadVersion":2,"_common":{},"_platforms":{"iOS":{}}}"#.utf8
+        )
+        let currentMacPayload = Data(
+            #"{"genre":"科幻","id":"future-project","schemaVersion":2,"summary":"","title":"新版","storyLength":"long"}"#.utf8
+        )
+
+        XCTAssertThrowsError(try CloudProjectPayloadCodec.decodeMacProject(from: futureEnvelope))
+        XCTAssertThrowsError(
+            try CloudProjectPayloadCodec.encodeEnvelope(
+                platformPayload: currentMacPayload,
+                platform: .macOS,
+                preserving: futureEnvelope
+            )
+        )
+    }
+
+    func testCloudProjectPayloadCodecRejectsCorruptPreviousEnvelopeAndCrossProjectPlatforms() throws {
+        let currentMacPayload = Data(
+            #"{"genre":"科幻","id":"project-1","schemaVersion":2,"summary":"","title":"新版","storyLength":"long"}"#.utf8
+        )
+        XCTAssertThrowsError(
+            try CloudProjectPayloadCodec.encodeEnvelope(
+                platformPayload: currentMacPayload,
+                platform: .macOS,
+                preserving: Data("{ invalid".utf8)
+            )
+        )
+
+        let mismatchedEnvelope = Data(
+            #"{"_cloudProjectPayloadVersion":1,"_common":{"id":"project-1"},"_platforms":{"iOS":{"id":"project-2"}}}"#.utf8
+        )
+        XCTAssertThrowsError(
+            try CloudProjectPayloadCodec.decodeMacProject(from: mismatchedEnvelope)
+        )
+    }
+
+    func testChapterDraftWritesCurrentSchemaAndRejectsFutureSchema() throws {
+        let chapter = ChapterDraft(
+            id: "chapter-1",
+            volumeNumber: 1,
+            chapterNumber: 1,
+            chapterTitle: "第一章",
+            content: "正文",
+            savedAt: "2026-07-17T12:00:00Z"
+        )
+        let encoded = try JSONEncoder().encode(chapter)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        XCTAssertEqual(
+            (object["schemaVersion"] as? NSNumber)?.intValue,
+            ChapterDraft.currentSchemaVersion
+        )
+
+        let legacy = try JSONDecoder().decode(
+            ChapterDraft.self,
+            from: Data(
+                #"{"id":"legacy","chapterNumber":1,"chapterTitle":"旧章","content":"正文"}"#.utf8
+            )
+        )
+        XCTAssertEqual(legacy.schemaVersion, ChapterDraft.currentSchemaVersion)
+
+        let future = Data(
+            #"{"schemaVersion":3,"id":"future","chapterNumber":1,"chapterTitle":"未来章","content":"正文"}"#.utf8
+        )
+        XCTAssertThrowsError(try JSONDecoder().decode(ChapterDraft.self, from: future))
+    }
+
+    private func cloudProjectPayloadFixtureURL() -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/cloud-project-payload-envelope-v1.json")
+    }
+
     private func completeReviewDimensionScores() -> [String: Int] {
         [
             "setting": 90,
@@ -1810,7 +4280,9 @@ private struct MockAIWritingService: AIWritingServicing {
     }
 
     func validateConnection(configuration: AIConnectionConfiguration) async throws -> String {
-        configuration.modelName
+        await MainActor.run {
+            configuration.modelName
+        }
     }
 
     func generateStoryOutline(

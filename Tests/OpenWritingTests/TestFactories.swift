@@ -3,6 +3,8 @@ import Foundation
 
 nonisolated final class InMemoryCredentialStore: CredentialStoring {
     private var values: [String: String] = [:]
+    private(set) var storeCallCount = 0
+    private(set) var removeCallCount = 0
 
     func value(service: String, account: String) -> String? {
         values[key(service: service, account: account)]
@@ -10,11 +12,13 @@ nonisolated final class InMemoryCredentialStore: CredentialStoring {
 
     @discardableResult
     func store(_ value: String, service: String, account: String) -> Bool {
+        storeCallCount += 1
         values[key(service: service, account: account)] = value
         return true
     }
 
     func remove(service: String, account: String) {
+        removeCallCount += 1
         values.removeValue(forKey: key(service: service, account: account))
     }
 

@@ -15,8 +15,14 @@ DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-/tmp/OpenWritingHostedXCTestGuardDerived
 XCODEBUILD="$DEVELOPER_DIR/usr/bin/xcodebuild"
 HOST_ARCH="$(uname -m)"
 MACOS_DESTINATION="platform=macOS,arch=$HOST_ARCH"
-MACOS_DEPLOYMENT_TARGET="${MACOS_DEPLOYMENT_TARGET:-$(sw_vers -productVersion)}"
+EXPECTED_MACOSX_DEPLOYMENT_TARGET="14.0"
+MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-$EXPECTED_MACOSX_DEPLOYMENT_TARGET}"
 ONLY_TESTING="OpenWritingTests/HostedXCTestLaunchGuardTests/testOpenWritingTestsLaunchInsideAppHost"
+
+if [[ "$MACOSX_DEPLOYMENT_TARGET" != "$EXPECTED_MACOSX_DEPLOYMENT_TARGET" ]]; then
+    echo "error: MACOSX_DEPLOYMENT_TARGET must be $EXPECTED_MACOSX_DEPLOYMENT_TARGET, got $MACOSX_DEPLOYMENT_TARGET" >&2
+    exit 1
+fi
 
 if [[ ! -d "$DEVELOPER_DIR" ]]; then
     echo "error: Xcode developer directory not found: $DEVELOPER_DIR" >&2
@@ -33,7 +39,7 @@ echo "Project: $PROJECT_PATH"
 echo "Developer dir: $DEVELOPER_DIR"
 echo "DerivedData: $DERIVED_DATA_PATH"
 echo "Destination: $MACOS_DESTINATION"
-echo "Deployment target: $MACOS_DEPLOYMENT_TARGET"
+echo "Deployment target: $MACOSX_DEPLOYMENT_TARGET"
 echo "Only testing: $ONLY_TESTING"
 
 exec "$XCODEBUILD" \
@@ -44,7 +50,7 @@ exec "$XCODEBUILD" \
     -derivedDataPath "$DERIVED_DATA_PATH" \
     -parallel-testing-enabled NO \
     "-only-testing:$ONLY_TESTING" \
-    MACOSX_DEPLOYMENT_TARGET="$MACOS_DEPLOYMENT_TARGET" \
+    MACOSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
     CODE_SIGNING_ALLOWED=YES \
     CODE_SIGN_STYLE=Manual \
     CODE_SIGN_IDENTITY="-" \

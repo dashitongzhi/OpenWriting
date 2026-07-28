@@ -1,0 +1,124 @@
+{
+  "_cloudProjectPayloadVersion": 1,
+  "_common": {
+    "id": "cross-platform-project",
+    "title": "跨端封套作品",
+    "genre": "科幻",
+    "summary": "共同摘要",
+    "storyLength": "long",
+    "updatedAt": "2026-07-27T12:34:56Z",
+    "currentChapterTitle": "共同章节",
+    "currentVolumeNumber": 2,
+    "currentChapterNumber": 8,
+    "writtenChapters": 7,
+    "chapterFocus": "共同章节目标",
+    "draftText": "共同草稿",
+    "outlineText": "共同大纲",
+    "structureNotes": "共同结构",
+    "sceneProgressNotes": "共同场景",
+    "characterArcNotes": "共同角色弧",
+    "foreshadowNotes": "共同伏笔",
+    "continuityNotes": "共同连续性",
+    "specialRequirements": "共同要求",
+    "wordTargetText": "3000",
+    "volumePlanNotes": "共同分卷",
+    "activeThreadsNotes": "共同线索",
+    "outlineSummary": "共同总结",
+    "referenceContextText": "共同参考"
+  },
+  "_platforms": {
+    "iOS": {
+      "id": "cross-platform-project",
+      "title": "iOS 原始标题",
+      "genre": "科幻",
+      "summary": "iOS 原始摘要",
+      "storyLength": "long",
+      "updatedAt": 1772000000,
+      "currentChapterTitle": "iOS 章节",
+      "currentVolumeNumber": 2,
+      "currentChapterNumber": 8,
+      "writtenChapters": 7,
+      "chapterFocus": "iOS 目标",
+      "draftText": "iOS 草稿",
+      "outlineText": "iOS 大纲",
+      "structureNotes": "iOS 结构",
+      "sceneProgressNotes": "iOS 场景",
+      "characterArcNotes": "iOS 角色弧",
+      "foreshadowNotes": "iOS 伏笔",
+      "continuityNotes": "iOS 连续性",
+      "specialRequirements": "iOS 要求",
+      "wordTargetText": "3000",
+      "volumePlanNotes": "iOS 分卷",
+      "activeThreadsNotes": "iOS 线索",
+      "outlineSummary": "iOS 总结",
+      "referenceContextText": "iOS 参考",
+      "persistedMemoryBuckets": {
+        "items": [
+          {
+            "id": "ios-memory-1",
+            "category": "characterState",
+            "subject": "主角",
+            "field": "状态",
+            "value": "iOS 结构化记忆",
+            "volumeNumber": 2,
+            "chapterNumber": 8,
+            "createdAt": "2026-07-27T12:30:00Z",
+            "isActive": true
+          }
+        ]
+      },
+      "persistedStrandWeaveState": {
+        "entries": [
+          {
+            "id": "ios-strand-1",
+            "volumeNumber": 2,
+            "chapterNumber": 8,
+            "dominant": "quest",
+            "createdAt": "2026-07-27T12:31:00Z",
+            "evidence": "iOS evidence"
+          }
+        ],
+        "questTarget": 0.45,
+        "fireTarget": 0.35,
+        "constellationTarget": 0.2,
+        "questMaxConsecutive": 3,
+        "fireMaxGap": 4,
+        "constellationMaxGap": 6
+      }
+    },
+    "macOS": {
+      "id": "cross-platform-project",
+      "schemaVersion": 2,
+      "title": "macOS 原始标题",
+      "genre": "科幻",
+      "summary": "macOS 原始摘要",
+      "storyLength": "long",
+      "updatedAt": "2026-07-27T12:00:00Z",
+      "currentChapterTitle": "macOS 章节",
+      "currentVolumeNumber": 1,
+      "currentChapterNumber": 3,
+      "writtenChapters": 2,
+      "chapterFocus": "macOS 目标",
+      "draftText": "macOS 草稿",
+      "outlineText": "macOS 大纲",
+      "structureNotes": "macOS 结构",
+      "sceneProgressNotes": "macOS 场景",
+      "characterArcNotes": "macOS 角色弧",
+      "foreshadowNotes": "macOS 伏笔",
+      "continuityNotes": "macOS 连续性",
+      "specialRequirements": "macOS 要求",
+      "wordTargetText": "2500",
+      "volumePlanNotes": "macOS 分卷",
+      "activeThreadsNotes": "macOS 线索",
+      "outlineSummary": "macOS 总结",
+      "referenceContextText": "macOS 参考",
+      "genreTemplateId": "mac-only-template",
+      "macOnlyMarker": {
+        "nested": [
+          "must",
+          "survive"
+        ]
+      }
+    }
+  }
+}

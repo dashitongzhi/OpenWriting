@@ -240,7 +240,7 @@ enum NovelLength: String, CaseIterable, Codable, Identifiable {
 
     var id: Self { self }
 
-    var title: String {
+    nonisolated var title: String {
         switch self {
         case .short:
             return "短篇"
@@ -329,11 +329,11 @@ enum NovelLength: String, CaseIterable, Codable, Identifiable {
         }
     }
 
-    var supportsThreadTracking: Bool {
+    nonisolated var supportsThreadTracking: Bool {
         self != .short
     }
 
-    var supportsVolumePlanning: Bool {
+    nonisolated var supportsVolumePlanning: Bool {
         self == .long
     }
 }
@@ -347,7 +347,7 @@ enum ModelProvider: String, CaseIterable, Identifiable {
 
     static let visibleCases: [ModelProvider] = [.openAICompatible, .custom]
 
-    var title: String {
+    nonisolated var title: String {
         switch self {
         case .openAICompatible:
             return "OpenWriting"
@@ -544,6 +544,9 @@ nonisolated struct ChapterDraftVersion: Identifiable, Codable, Hashable {
 }
 
 nonisolated struct ChapterDraft: Identifiable, Codable, Hashable {
+    static let currentSchemaVersion = 2
+
+    let schemaVersion: Int
     let id: String
     var volumeNumber: Int
     var chapterNumber: Int
@@ -553,6 +556,7 @@ nonisolated struct ChapterDraft: Identifiable, Codable, Hashable {
     var versionHistory: [ChapterDraftVersion]
 
     enum CodingKeys: String, CodingKey {
+        case schemaVersion
         case id
         case volumeNumber
         case chapterNumber
@@ -581,6 +585,7 @@ nonisolated struct ChapterDraft: Identifiable, Codable, Hashable {
         savedAt: String,
         versionHistory: [ChapterDraftVersion] = []
     ) {
+        self.schemaVersion = Self.currentSchemaVersion
         self.id = id
         self.volumeNumber = max(volumeNumber, 1)
         self.chapterNumber = chapterNumber
@@ -592,6 +597,15 @@ nonisolated struct ChapterDraft: Identifiable, Codable, Hashable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let sourceVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        guard (1...Self.currentSchemaVersion).contains(sourceVersion) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .schemaVersion,
+                in: container,
+                debugDescription: "Unsupported chapter draft schema version \(sourceVersion)."
+            )
+        }
+        schemaVersion = Self.currentSchemaVersion
         id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
         volumeNumber = try container.decodeIfPresent(Int.self, forKey: .volumeNumber) ?? 1
         chapterNumber = try container.decode(Int.self, forKey: .chapterNumber)
@@ -603,6 +617,7 @@ nonisolated struct ChapterDraft: Identifiable, Codable, Hashable {
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(Self.currentSchemaVersion, forKey: .schemaVersion)
         try container.encode(id, forKey: .id)
         try container.encode(volumeNumber, forKey: .volumeNumber)
         try container.encode(chapterNumber, forKey: .chapterNumber)
@@ -1614,7 +1629,7 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
     let genre: String
     let summary: String
     var storyLength: NovelLength
-    private var updatedAtTimestamp: Date
+    nonisolated(unsafe) private var updatedAtTimestamp: Date
     var currentChapterTitle: String
     var currentVolumeNumber: Int
     var currentChapterNumber: Int
@@ -1630,13 +1645,13 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
     var volumePlanNotes: String
     var activeThreadsNotes: String
     var outlineSummary: String
-    private var outlineSummaryUpdatedAtTimestamp: Date?
+    nonisolated(unsafe) private var outlineSummaryUpdatedAtTimestamp: Date?
     var referenceContextText: String
     var specialRequirements: String
     var wordTargetText: String
     var continuityNotes: String
     var globalMemorySnapshot: GlobalMemorySnapshot
-    private var globalMemoryUpdatedAtTimestamp: Date?
+    nonisolated(unsafe) private var globalMemoryUpdatedAtTimestamp: Date?
     var referenceDocuments: [ReferenceDocument]
     var chapterDrafts: [ChapterDraft]
     var chapterCatalog: [ChapterDraftMetadata]
@@ -1929,27 +1944,27 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
         set { updatedAtTimestamp = PersistedTimestampCodec.parse(newValue) ?? PersistedTimestampCodec.now() }
     }
 
-    var updatedAtDate: Date {
+    nonisolated var updatedAtDate: Date {
         get { updatedAtTimestamp }
         set { updatedAtTimestamp = newValue }
     }
 
-    var outlineSummaryUpdatedAt: String {
+    nonisolated var outlineSummaryUpdatedAt: String {
         get { PersistedTimestampCodec.displayLabel(for: outlineSummaryUpdatedAtTimestamp, style: .project) }
         set { outlineSummaryUpdatedAtTimestamp = PersistedTimestampCodec.parseOptional(newValue) }
     }
 
-    var outlineSummaryUpdatedAtDate: Date? {
+    nonisolated var outlineSummaryUpdatedAtDate: Date? {
         get { outlineSummaryUpdatedAtTimestamp }
         set { outlineSummaryUpdatedAtTimestamp = newValue }
     }
 
-    var globalMemoryUpdatedAt: String {
+    nonisolated var globalMemoryUpdatedAt: String {
         get { PersistedTimestampCodec.displayLabel(for: globalMemoryUpdatedAtTimestamp, style: .project) }
         set { globalMemoryUpdatedAtTimestamp = PersistedTimestampCodec.parseOptional(newValue) }
     }
 
-    var globalMemoryUpdatedAtDate: Date? {
+    nonisolated var globalMemoryUpdatedAtDate: Date? {
         get { globalMemoryUpdatedAtTimestamp }
         set { globalMemoryUpdatedAtTimestamp = newValue }
     }
@@ -2026,39 +2041,39 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
         !outlineText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    var hasStructureNotes: Bool {
+    nonisolated var hasStructureNotes: Bool {
         !structureNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    var hasSceneProgressNotes: Bool {
+    nonisolated var hasSceneProgressNotes: Bool {
         !sceneProgressNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    var hasCharacterArcNotes: Bool {
+    nonisolated var hasCharacterArcNotes: Bool {
         !characterArcNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    var hasForeshadowNotes: Bool {
+    nonisolated var hasForeshadowNotes: Bool {
         !foreshadowNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    var hasVolumePlanNotes: Bool {
+    nonisolated var hasVolumePlanNotes: Bool {
         !volumePlanNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    var hasActiveThreadsNotes: Bool {
+    nonisolated var hasActiveThreadsNotes: Bool {
         !activeThreadsNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    var hasContinuityNotes: Bool {
+    nonisolated var hasContinuityNotes: Bool {
         !continuityNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    var hasGlobalMemory: Bool {
+    nonisolated var hasGlobalMemory: Bool {
         hasContinuityNotes || globalMemorySnapshot.hasStructuredContent
     }
 
-    var hasOutlineSummary: Bool {
+    nonisolated var hasOutlineSummary: Bool {
         !outlineSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -2066,19 +2081,19 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
         hasOutline ? "已导入" : "待补充"
     }
 
-    var structureStatusLabel: String {
+    nonisolated var structureStatusLabel: String {
         hasStructureNotes ? "\(structureNodeCount) 节点" : "待拆分"
     }
 
-    var sceneProgressStatusLabel: String {
+    nonisolated var sceneProgressStatusLabel: String {
         hasSceneProgressNotes ? "\(sceneProgressNodeCount) 场景" : "待拆分"
     }
 
-    var characterArcStatusLabel: String {
+    nonisolated var characterArcStatusLabel: String {
         hasCharacterArcNotes ? "\(characterArcNodeCount) 条" : "待补充"
     }
 
-    var foreshadowStatusLabel: String {
+    nonisolated var foreshadowStatusLabel: String {
         hasForeshadowNotes ? "\(foreshadowNodeCount) 条" : "待标记"
     }
 
@@ -2108,12 +2123,12 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
         "\(foreshadowList.activeCount) 活跃 / \(foreshadowList.resolvedCount) 已回收"
     }
 
-    var volumePlanStatusLabel: String {
+    nonisolated var volumePlanStatusLabel: String {
         guard storyLength.supportsVolumePlanning else { return "非分卷模式" }
         return hasVolumePlanNotes ? "\(volumePlanNodeCount) 节点" : "待规划"
     }
 
-    var activeThreadsStatusLabel: String {
+    nonisolated var activeThreadsStatusLabel: String {
         guard storyLength.supportsThreadTracking else { return "单篇闭环" }
         if !plotThreadList.threads.isEmpty {
             return "\(plotThreadList.activeCount) 活跃 / \(plotThreadList.totalCount) 总计"
@@ -2143,11 +2158,11 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
         hasGlobalMemory ? "已记录" : "待补充"
     }
 
-    var globalMemoryStatusLabel: String {
+    nonisolated var globalMemoryStatusLabel: String {
         hasGlobalMemory ? (globalMemoryUpdatedAt.isEmpty ? "已更新" : globalMemoryUpdatedAt) : "待生成"
     }
 
-    var outlineSummaryStatusLabel: String {
+    nonisolated var outlineSummaryStatusLabel: String {
         hasOutlineSummary ? (outlineSummaryUpdatedAt.isEmpty ? "已生成" : outlineSummaryUpdatedAt) : "待生成"
     }
 
@@ -2155,27 +2170,27 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
         referenceDocuments.isEmpty ? "未导入" : "\(referenceDocuments.count) 份"
     }
 
-    var structureNodeCount: Int {
+    nonisolated var structureNodeCount: Int {
         Self.outlineNodeCount(in: hasStructureNotes ? structureNotes : outlineText)
     }
 
-    var sceneProgressNodeCount: Int {
+    nonisolated var sceneProgressNodeCount: Int {
         Self.outlineNodeCount(in: sceneProgressNotes)
     }
 
-    var characterArcNodeCount: Int {
+    nonisolated var characterArcNodeCount: Int {
         Self.outlineNodeCount(in: characterArcNotes)
     }
 
-    var foreshadowNodeCount: Int {
+    nonisolated var foreshadowNodeCount: Int {
         Self.outlineNodeCount(in: foreshadowNotes)
     }
 
-    var volumePlanNodeCount: Int {
+    nonisolated var volumePlanNodeCount: Int {
         Self.outlineNodeCount(in: volumePlanNotes)
     }
 
-    var activeThreadNodeCount: Int {
+    nonisolated var activeThreadNodeCount: Int {
         Self.outlineNodeCount(in: activeThreadsNotes)
     }
 
@@ -2247,7 +2262,7 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
         }
     }
 
-    private static func outlineNodeCount(in text: String) -> Int {
+    nonisolated private static func outlineNodeCount(in text: String) -> Int {
         text
             .components(separatedBy: CharacterSet.newlines)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -2333,7 +2348,7 @@ extension NovelProject {
     }
 
     func importedBackupCopy(id newID: String, title newTitle: String, updatedAt: String) -> NovelProject {
-        var copy = NovelProject(
+        let copy = NovelProject(
             id: newID,
             title: newTitle,
             genre: genre,
@@ -2438,7 +2453,7 @@ struct ReferenceDocument: Identifiable, Codable, Hashable {
         try container.encode(category, forKey: .category)
     }
 
-    var wordCount: Int {
+    nonisolated var wordCount: Int {
         content
             .unicodeScalars
             .filter { !$0.properties.isWhitespace }
@@ -2463,7 +2478,7 @@ enum ReferenceMaterialCategory: String, CaseIterable, Codable, Identifiable {
 
     var id: Self { self }
 
-    var title: String {
+    nonisolated var title: String {
         switch self {
         case .character:
             return "人物"

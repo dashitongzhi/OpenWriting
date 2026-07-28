@@ -112,6 +112,14 @@ struct AppRootView: View {
 
     private var sidebarFooter: some View {
         VStack(alignment: .leading, spacing: 12) {
+            if let warningMessage = appState.projectLoadWarningMessage {
+                Label(warningMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(warningMessage)
+            }
+
             Divider()
 
             Button {

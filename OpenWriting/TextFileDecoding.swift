@@ -58,16 +58,19 @@ enum TextFileDecoding {
     private nonisolated static var candidateEncodings: [String.Encoding] {
         let encodings: [String.Encoding] = [
             .utf8,
+            // BOM-less GB18030/GBK byte streams are often even-length and
+            // Foundation can accept them as UTF-16 gibberish. Try the
+            // explicit Chinese encodings before any BOM-less UTF family.
+            .gb18030,
+            .gbk,
+            .big5,
             .unicode,
             .utf16,
             .utf16LittleEndian,
             .utf16BigEndian,
             .utf32,
             .utf32LittleEndian,
-            .utf32BigEndian,
-            .gb18030,
-            .gbk,
-            .big5
+            .utf32BigEndian
         ]
 
         var seenRawValues = Set<UInt>()

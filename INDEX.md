@@ -30,6 +30,7 @@
 | `OpenWriting/AppState+WritingSkills.swift` | 写作技能启用、禁用、导入和项目注入。 |
 | `OpenWriting/AppState+iCloudSync.swift` | iCloud 可用性、快照推拉、云端状态和云端/本地合并。 |
 | `OpenWriting/AccountSync.swift` | Apple ID profile、CloudKit 快照索引、payload 分片和 fallback 读取。 |
+| `OpenWriting/CloudProjectPayloadCodec.swift` | macOS/iOS 共用 CloudKit 项目 envelope、平台载荷合并与规范化 JSON 编码。 |
 | `OpenWriting/CommerceEntitlements.swift` | 商业化权益模型、产品描述和延后 StoreKit 接入 provider。 |
 | `OpenWriting/ModelConnectionConfigurationStore.swift` | 模型连接配置、托管 OpenWriting endpoint、Keychain API key 存储。 |
 

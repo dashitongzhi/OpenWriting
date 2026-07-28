@@ -4,6 +4,8 @@ enum UserFacingError {
     static func aiMessage(for error: Error, fallbackAction: String = "请稍后重试。") -> String {
         if let aiError = error as? AIWritingError {
             switch aiError {
+            case .authenticationRequired:
+                return "OpenWriting 官方通道会话缺失或已过期，当前正文没有被改动。请重新登录。"
             case .invalidResponse:
                 return "模型返回内容格式异常，当前正文没有被改动。\(fallbackAction)"
             case let .serverError(message):

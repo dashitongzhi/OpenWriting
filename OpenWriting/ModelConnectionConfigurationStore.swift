@@ -59,6 +59,52 @@ nonisolated struct SecurityKeychainCredentialStore: CredentialStoring {
     }
 }
 
+nonisolated struct OfficialChannelCredential: Codable, Hashable, Sendable {
+    var accessToken: String
+    var refreshToken: String?
+    var expiresAt: Date?
+
+    func validAccessToken(now: Date = Date()) -> String? {
+        let token = accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else { return nil }
+        if let expiresAt, expiresAt <= now.addingTimeInterval(30) {
+            return nil
+        }
+        return token
+    }
+}
+
+nonisolated enum OfficialChannelCredentialStore {
+    static let service = "CHZ.Kral.OpenWriting.official-channel-credential"
+    static let account = "server-issued-session"
+
+    static func load(
+        credentialStore: any CredentialStoring = SecurityKeychainCredentialStore()
+    ) -> OfficialChannelCredential? {
+        guard let encoded = credentialStore.value(service: service, account: account),
+              let data = encoded.data(using: .utf8) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(OfficialChannelCredential.self, from: data)
+    }
+
+    @discardableResult
+    static func save(
+        _ credential: OfficialChannelCredential?,
+        credentialStore: any CredentialStoring = SecurityKeychainCredentialStore()
+    ) -> Bool {
+        guard let credential else {
+            credentialStore.remove(service: service, account: account)
+            return true
+        }
+        guard let data = try? JSONEncoder().encode(credential),
+              let encoded = String(data: data, encoding: .utf8) else {
+            return false
+        }
+        return credentialStore.store(encoded, service: service, account: account)
+    }
+}
+
 enum ModelConnectionConfigurationStore {
     enum StorageKey {
         static let selectedProvider = "OpenWriting.selectedProvider"
@@ -186,10 +232,20 @@ enum ModelConnectionConfigurationStore {
         accountID: String? = nil,
         userDefaults: UserDefaults = .standard
     ) -> [String: String] {
+        serverManagedAdditionalHeaders(
+            accountID: accountID,
+            installationID: loadOrCreateClientInstallationID(userDefaults: userDefaults)
+        )
+    }
+
+    static func serverManagedAdditionalHeaders(
+        accountID: String? = nil,
+        installationID: String
+    ) -> [String: String] {
         var headers = [
             "X-OpenWriting-App-Version": appVersionHeaderValue(),
             "X-OpenWriting-Client": "macOS",
-            "X-OpenWriting-Installation-ID": loadOrCreateClientInstallationID(userDefaults: userDefaults)
+            "X-OpenWriting-Installation-ID": installationID
         ]
 
         if let accountHeader = sanitizedHeaderValue(accountID) {
@@ -215,8 +271,17 @@ enum ModelConnectionConfigurationStore {
     static func normalizedBaseURLString(from rawValue: String) -> String? {
         let trimmedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedValue.isEmpty,
-              var components = URLComponents(string: trimmedValue)
+              var components = URLComponents(string: trimmedValue),
+              let scheme = components.scheme?.lowercased(),
+              let host = components.host?.lowercased(),
+              !host.isEmpty
         else { return nil }
+        let normalizedHost = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        let localHTTPHosts: Set<String> = ["localhost", "127.0.0.1", "::1"]
+        guard scheme == "https" || (scheme == "http" && localHTTPHosts.contains(normalizedHost)) else {
+            return nil
+        }
+        components.scheme = scheme
 
         let trimmedPath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         if trimmedPath.isEmpty {
@@ -370,7 +435,13 @@ enum ModelConnectionConfigurationStore {
             apiFormat: provider.apiFormat,
             additionalHeaders: provider == .openAICompatible
                 ? serverManagedAdditionalHeaders(userDefaults: userDefaults)
-                : [:]
+                : [:],
+            officialBearerToken: provider == .openAICompatible
+                ? OfficialChannelCredentialStore.load(
+                    credentialStore: credentialStore
+                )?.validAccessToken()
+                : nil,
+            requiresOfficialAuthentication: provider == .openAICompatible
         )
     }
 }

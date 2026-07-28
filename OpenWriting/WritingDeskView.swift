@@ -105,6 +105,11 @@ struct WritingDeskView: View {
         .task(id: activeProject.map { writingSessionKey(for: $0) }) {
             resetSessionState()
         }
+        .task(id: activeProject?.id) {
+            if let projectID = activeProject?.id {
+                await appState.refreshStorageHealthReport(for: projectID)
+            }
+        }
         .fileImporter(
             isPresented: $isImportingReferences,
             allowedContentTypes: supportedImportTypes,
@@ -2194,7 +2199,7 @@ struct WritingDeskView: View {
         guard project.storyLength.supportsVolumePlanning else { return [] }
 
         return project.longformRuntimeHealth.blockingIssues
-            .filter { $0.title != "写前门禁未通过" }
+            .filter { $0.kind != .prewriteGate }
             .filter { issue in
                 !canRepairCurrentChapter(issue, project: project, allowsCurrentChapterRepair: allowsCurrentChapterRepair)
             }
@@ -2213,8 +2218,8 @@ struct WritingDeskView: View {
     ) -> Bool {
         guard allowsCurrentChapterRepair else { return false }
 
-        switch issue.title {
-        case "保存章节未进入提交链", "章节内容与提交链不一致":
+        switch issue.kind {
+        case .uncommittedSavedChapter, .staleSavedChapterCommit:
             let affectedChapters = issue.detail
                 .components(separatedBy: "；")
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -2222,7 +2227,7 @@ struct WritingDeskView: View {
             return !affectedChapters.isEmpty && affectedChapters.allSatisfy {
                 textReferencesCurrentChapterPosition($0, project: project)
             }
-        case "章节目录存在断章":
+        case .missingChapterSequence:
             let missingChapters = issue.detail
                 .components(separatedBy: "；")
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -2230,18 +2235,18 @@ struct WritingDeskView: View {
             return missingChapters.contains {
                 textReferencesCurrentChapterPosition($0, project: project)
             }
-        case "分卷目录存在断卷":
+        case .missingVolumeSequence:
             let missingVolumes = issue.detail
                 .components(separatedBy: "；")
                 .compactMap { parsedVolumeNumber(in: $0) }
             return missingVolumes.contains(max(project.currentVolumeNumber, 1))
                 && max(project.currentChapterNumber, 1) == 1
-        case "最新章节提交被拒":
+        case .latestCommitRejected:
             guard let latestCommit = project.longformRuntimeState.latestCommit else { return false }
             return latestCommit.status == .rejected
                 && latestCommit.volumeNumber == max(project.currentVolumeNumber, 1)
                 && latestCommit.chapterNumber == project.currentChapterNumber
-        default:
+        case .prewriteGate, .other:
             return false
         }
     }

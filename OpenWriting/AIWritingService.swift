@@ -12,19 +12,25 @@ struct AIConnectionConfiguration: Sendable {
     let modelName: String
     let apiFormat: ModelAPIFormat
     let additionalHeaders: [String: String]
+    let officialBearerToken: String?
+    let requiresOfficialAuthentication: Bool
 
     init(
         baseURL: URL,
         apiKey: String,
         modelName: String,
         apiFormat: ModelAPIFormat = .openAIChatCompletions,
-        additionalHeaders: [String: String] = [:]
+        additionalHeaders: [String: String] = [:],
+        officialBearerToken: String? = nil,
+        requiresOfficialAuthentication: Bool = false
     ) {
         self.baseURL = baseURL
         self.apiKey = apiKey
         self.modelName = modelName
         self.apiFormat = apiFormat
         self.additionalHeaders = additionalHeaders
+        self.officialBearerToken = officialBearerToken
+        self.requiresOfficialAuthentication = requiresOfficialAuthentication
     }
 }
 
@@ -384,19 +390,36 @@ enum AIWritingService {
         throw lastError ?? AIWritingError.emptyResult
     }
 
-    private static func completeOpenAIText(
+    typealias HTTPDataLoader = @Sendable (URLRequest) async throws -> (Data, URLResponse)
+
+    static func completeOpenAIText(
         configuration: AIConnectionConfiguration,
         systemPrompt: String,
         userPrompt: String,
         temperature: Double,
-        maxTokens: Int
+        maxTokens: Int,
+        loader: HTTPDataLoader = { request in
+            try await URLSession.shared.data(for: request)
+        }
     ) async throws -> String {
         let endpoint = configuration.baseURL.appendingPathComponent("chat/completions")
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !configuration.apiKey.isEmpty {
-            request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
+        let bearerToken: String?
+        if configuration.requiresOfficialAuthentication {
+            bearerToken = configuration.officialBearerToken?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let bearerToken, !bearerToken.isEmpty else {
+                throw AIWritingError.authenticationRequired
+            }
+        } else {
+            let trimmedAPIKey = configuration.apiKey
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            bearerToken = trimmedAPIKey.isEmpty ? nil : trimmedAPIKey
+        }
+        if let bearerToken {
+            request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
         }
         applyAdditionalHeaders(from: configuration, to: &request)
         request.timeoutInterval = 120
@@ -413,7 +436,7 @@ enum AIWritingService {
 
         request.httpBody = try JSONEncoder().encode(payload)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await loader(request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AIWritingError.invalidResponse
         }
@@ -505,7 +528,7 @@ enum AIWritingService {
             switch aiError {
             case .rateLimited, .transientServerError:
                 return true
-            case .invalidResponse, .serverError, .emptyResult:
+            case .authenticationRequired, .invalidResponse, .serverError, .emptyResult:
                 return false
             }
         }
@@ -941,6 +964,7 @@ enum AIWritingService {
 // MARK: - Prompts moved to AIWritingService+Prompts.swift
 
 enum AIWritingError: LocalizedError {
+    case authenticationRequired
     case invalidResponse
     case serverError(String)
     case rateLimited(String)
@@ -949,6 +973,8 @@ enum AIWritingError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .authenticationRequired:
+            return "OpenWriting 官方通道会话缺失或已过期，请重新登录。"
         case .invalidResponse:
             return "AI 服务返回了无效响应。"
         case let .serverError(message):

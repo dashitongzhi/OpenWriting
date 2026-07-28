@@ -27,6 +27,49 @@ struct ContextSection {
     }
 }
 
+nonisolated enum RankedContextBudget {
+    static let maximumCharacters = 16_000
+    private static let truncationMarker = "\n[本节上下文已截断]"
+    private static let omissionMarker = "\n\n[其余低优先级上下文因总预算已省略]"
+
+    static func render(
+        _ sections: [ContextSection],
+        maximumCharacters: Int = maximumCharacters
+    ) -> String {
+        guard maximumCharacters > 0 else { return "" }
+        var rendered = ""
+
+        for (index, section) in sections.enumerated() {
+            let header = "\n\n\(section.label)：\n"
+            let remainingBeforeHeader = maximumCharacters - rendered.count
+            guard remainingBeforeHeader >= header.count else {
+                appendMarker(omissionMarker, to: &rendered, limit: maximumCharacters)
+                break
+            }
+            rendered += header
+
+            let remainingForContent = maximumCharacters - rendered.count
+            guard section.content.count <= remainingForContent else {
+                let contentBudget = max(0, remainingForContent - truncationMarker.count)
+                rendered += String(section.content.prefix(contentBudget))
+                appendMarker(truncationMarker, to: &rendered, limit: maximumCharacters)
+                if index < sections.index(before: sections.endIndex) {
+                    appendMarker(omissionMarker, to: &rendered, limit: maximumCharacters)
+                }
+                break
+            }
+            rendered += section.content
+        }
+
+        return rendered
+    }
+
+    private static func appendMarker(_ marker: String, to text: inout String, limit: Int) {
+        let remaining = max(0, limit - text.count)
+        text += String(marker.prefix(remaining))
+    }
+}
+
 // MARK: - Context Ranker
 
 /// Scores and reorders context sections by relevance before they are

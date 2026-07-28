@@ -129,6 +129,16 @@ extension AppState {
         )
     }
 
+    static func serverManagedAdditionalHeaders(
+        accountID: String? = nil,
+        installationID: String
+    ) -> [String: String] {
+        ModelConnectionConfigurationStore.serverManagedAdditionalHeaders(
+            accountID: accountID,
+            installationID: installationID
+        )
+    }
+
     static func normalizedBaseURLString(from rawValue: String) -> String? {
         ModelConnectionConfigurationStore.normalizedBaseURLString(from: rawValue)
     }
@@ -222,6 +232,8 @@ extension AppState {
     }
 
     func persistConnectionSettings(for provider: ModelProvider) {
+        apiKeyPersistTask?.cancel()
+        apiKeyPersistTask = nil
         userDefaults.set(modelName, forKey: Self.modelNameStorageKey(for: provider))
         userDefaults.set(baseURL, forKey: Self.baseURLStorageKey(for: provider))
 
@@ -239,6 +251,8 @@ extension AppState {
     }
 
     func loadConnectionSettings(for provider: ModelProvider) {
+        apiKeyPersistTask?.cancel()
+        apiKeyPersistTask = nil
         isApplyingProviderConfiguration = true
         modelName = Self.loadModelName(for: provider, userDefaults: userDefaults)
         baseURL = Self.loadBaseURL(for: provider, userDefaults: userDefaults)
@@ -273,45 +287,115 @@ extension AppState {
     @discardableResult
     func flushProjectPersistence() async -> Bool {
         lastProjectPersistenceErrorMessage = nil
+        lastEmergencySnapshotURL = nil
         let scope = currentStorageScope
         let storageKey = Self.recentProjectsStorageKey(for: scope)
         recentProjectsPersistTasks[storageKey]?.cancel()
         recentProjectsPersistTasks.removeValue(forKey: storageKey)
         let snapshot = recentProjects.map { $0.detachedPersistenceSnapshot() }
+        let deletedProjects = ProjectDeletionTombstone.normalized(
+            projectDeletionTombstones
+        )
 
         do {
-            try await projectPersistence.saveNow(snapshot, for: scope)
+            try await projectPersistence.saveNow(
+                snapshot,
+                deletedProjects: deletedProjects,
+                for: scope
+            )
             Self.clearLegacyRecentProjectsFromUserDefaults(for: scope, userDefaults: userDefaults)
             invalidateStorageHealthCache()
             return true
         } catch {
-            lastProjectPersistenceErrorMessage = error.localizedDescription
+            let emergencyURL = await preserveEmergencyProjectSnapshot(
+                snapshot,
+                deletedProjects: deletedProjects,
+                for: scope,
+                failureReason: error.localizedDescription
+            )
+            lastEmergencySnapshotURL = emergencyURL
+            lastProjectPersistenceErrorMessage = persistenceFailureMessage(
+                error: error,
+                emergencyURL: emergencyURL
+            )
             AppLogger.persistence.error("Final project flush failed: \(error.localizedDescription, privacy: .public)")
             return false
         }
     }
 
-    func scheduleRecentProjectsPersistence(snapshot: [NovelProject], for scope: String?) {
+    func scheduleRecentProjectsPersistence(
+        snapshot: [NovelProject],
+        deletedProjects: [ProjectDeletionTombstone],
+        for scope: String?
+    ) {
         let storageKey = Self.recentProjectsStorageKey(for: scope)
         let persistenceSnapshot = snapshot.map { $0.detachedPersistenceSnapshot() }
+        let deletionSnapshot = ProjectDeletionTombstone.normalized(deletedProjects)
         recentProjectsPersistTasks[storageKey]?.cancel()
         recentProjectsPersistTasks[storageKey] = Task { [weak self] in
             guard let self else { return }
             do {
-                let didSave = try await projectPersistence.saveAfterDelay(persistenceSnapshot, for: scope)
+                let didSave = try await projectPersistence.saveAfterDelay(
+                    persistenceSnapshot,
+                    deletedProjects: deletionSnapshot,
+                    for: scope
+                )
                 guard didSave else { return }
                 Self.clearLegacyRecentProjectsFromUserDefaults(for: scope, userDefaults: userDefaults)
                 invalidateStorageHealthCache()
             } catch is CancellationError {
                 return
             } catch {
+                let emergencyURL = await preserveEmergencyProjectSnapshot(
+                    persistenceSnapshot,
+                    deletedProjects: deletionSnapshot,
+                    for: scope,
+                    failureReason: error.localizedDescription
+                )
+                lastEmergencySnapshotURL = emergencyURL
+                lastProjectPersistenceErrorMessage = persistenceFailureMessage(
+                    error: error,
+                    emergencyURL: emergencyURL
+                )
                 setCloudSyncStatus(
                     title: "保存失败",
                     symbolName: "exclamationmark.triangle",
-                    message: error.localizedDescription
+                    message: lastProjectPersistenceErrorMessage
+                        ?? error.localizedDescription
                 )
             }
         }
+    }
+
+    private func preserveEmergencyProjectSnapshot(
+        _ projects: [NovelProject],
+        deletedProjects: [ProjectDeletionTombstone],
+        for scope: String?,
+        failureReason: String
+    ) async -> URL? {
+        do {
+            return try await projectPersistence.saveEmergencySnapshot(
+                projects,
+                deletedProjects: deletedProjects,
+                for: scope,
+                failureReason: failureReason
+            )
+        } catch {
+            AppLogger.persistence.error(
+                "Emergency project snapshot failed: \(error.localizedDescription, privacy: .public)"
+            )
+            return nil
+        }
+    }
+
+    private func persistenceFailureMessage(
+        error: Error,
+        emergencyURL: URL?
+    ) -> String {
+        guard let emergencyURL else {
+            return "\(error.localizedDescription)；退出已暂停，可重试保存。"
+        }
+        return "\(error.localizedDescription)；应急副本已保存到 \(emergencyURL.path)。"
     }
 
     func cancelPendingProjectPersistence(for scope: String?) {
@@ -335,6 +419,39 @@ extension AppState {
             return
         }
         Self.saveAPIKeyToKeychain(trimmedKey, for: selectedProvider, credentialStore: credentialStore)
+    }
+
+    func scheduleAPIKeyPersistence(delay: Duration = .milliseconds(700)) {
+        apiKeyPersistTask?.cancel()
+        apiKeyPersistTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: delay)
+            } catch {
+                return
+            }
+            guard let self, !Task.isCancelled else { return }
+            apiKeyPersistTask = nil
+            persistAPIKey()
+        }
+    }
+
+    func flushAPIKeyPersistence() {
+        apiKeyPersistTask?.cancel()
+        apiKeyPersistTask = nil
+        persistAPIKey()
+    }
+
+    @discardableResult
+    func updateOfficialChannelCredential(_ credential: OfficialChannelCredential?) -> Bool {
+        guard OfficialChannelCredentialStore.save(
+            credential,
+            credentialStore: credentialStore
+        ) else {
+            return false
+        }
+        officialChannelCredential = credential
+        refreshIdleValidationMessage()
+        return true
     }
 
     func persistActiveAccountProfile() {
@@ -458,7 +575,13 @@ extension AppState {
                 from: userDefaults,
                 projectStore: projectStore
            ) {
-            try? projectStore.saveProjects(recentProjects, for: targetScope)
+            try? projectStore.saveProjects(
+                recentProjects,
+                deletedProjects: projectStore.loadProjectDeletionTombstones(
+                    for: sourceScope
+                ),
+                for: targetScope
+            )
         }
 
         let sourceActiveProjectKey = activeProjectIDStorageKey(for: sourceScope)

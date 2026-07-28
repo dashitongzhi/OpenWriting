@@ -69,21 +69,32 @@ extension NovelProject {
 
     /// Append new anti-patterns from a review result, deduplicating.
     mutating func appendAntiPatterns(from review: ChapterReviewResult) {
-        var existing = Set(accumulatedAntiPatterns)
-        for pattern in review.antiPatterns {
-            existing.insert(pattern)
-        }
-        // Keep max 50 anti-patterns
-        accumulatedAntiPatterns = Array(existing.prefix(50))
+        accumulatedAntiPatterns = Self.mergedAntiPatterns(
+            existing: accumulatedAntiPatterns,
+            incoming: review.antiPatterns
+        )
     }
 
     /// Append anti-patterns from a raw string array (e.g., local quick-check results).
     mutating func appendAntiPatterns(from patterns: [String]) {
-        var existing = Set(accumulatedAntiPatterns)
-        for pattern in patterns {
-            existing.insert(pattern)
-        }
-        accumulatedAntiPatterns = Array(existing.prefix(50))
+        accumulatedAntiPatterns = Self.mergedAntiPatterns(
+            existing: accumulatedAntiPatterns,
+            incoming: patterns
+        )
+    }
+
+    static func mergedAntiPatterns(
+        existing: [String],
+        incoming: [String],
+        limit: Int = 50
+    ) -> [String] {
+        guard limit > 0 else { return [] }
+        var seen = Set<String>()
+        return (incoming + existing)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
+            .prefix(limit)
+            .map { $0 }
     }
 
     // MARK: - Genre Template

@@ -169,11 +169,13 @@ struct WritingDeskDraftEditor: NSViewRepresentable {
         guard let textView = context.coordinator.textView else { return }
         context.coordinator.parent = self
         applyTypography(to: textView)
+        var shouldRefreshSelection = false
 
         if textView.string != text {
             context.coordinator.isApplyingProgrammaticChange = true
             textView.string = text
             context.coordinator.isApplyingProgrammaticChange = false
+            shouldRefreshSelection = true
         }
 
         let safeRange = context.coordinator.safeSelectionRange(selection.range, in: textView.string as NSString)
@@ -181,6 +183,7 @@ struct WritingDeskDraftEditor: NSViewRepresentable {
             context.coordinator.isApplyingProgrammaticSelection = true
             textView.setSelectedRange(safeRange)
             context.coordinator.isApplyingProgrammaticSelection = false
+            shouldRefreshSelection = true
         }
 
         let resolvedActionPoint = context.coordinator.selectionActionPoint(for: safeRange)
@@ -195,7 +198,9 @@ struct WritingDeskDraftEditor: NSViewRepresentable {
             }
         }
 
-        context.coordinator.applySelectionUpdate(from: textView)
+        if shouldRefreshSelection {
+            context.coordinator.applySelectionUpdate(from: textView)
+        }
     }
 
     private func applyTypography(to textView: NSTextView) {
@@ -216,7 +221,7 @@ struct WritingDeskDraftEditor: NSViewRepresentable {
         var isApplyingProgrammaticChange = false
         var isApplyingProgrammaticSelection = false
         var lastFocusToken: UUID?
-        private var boundsObserver: NSObjectProtocol?
+        nonisolated(unsafe) private var boundsObserver: NSObjectProtocol?
 
         init(parent: WritingDeskDraftEditor) {
             self.parent = parent
@@ -236,7 +241,9 @@ struct WritingDeskDraftEditor: NSViewRepresentable {
                 object: scrollView.contentView,
                 queue: .main
             ) { [weak self] _ in
-                self?.refreshSelectionActionPoint()
+                MainActor.assumeIsolated {
+                    self?.refreshSelectionActionPoint()
+                }
             }
         }
 
@@ -301,7 +308,7 @@ struct WritingDeskDraftEditor: NSViewRepresentable {
                   let textContainer = textView.textContainer
             else { return nil }
 
-            layoutManager.ensureLayout(for: textContainer)
+            layoutManager.ensureLayout(forCharacterRange: range)
             let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             guard glyphRange.length > 0 else { return nil }
 

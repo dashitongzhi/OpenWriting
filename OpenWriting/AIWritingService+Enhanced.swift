@@ -534,10 +534,8 @@ extension AIWritingService {
         \(writingExecutionContractPrompt(project: project))
         """
 
-        // Append ranked context sections
-        for section in rankedSections {
-            prompt += "\n\n\(section.label)：\n\(section.content)"
-        }
+        // Append ranked context sections under one deterministic total budget.
+        prompt += RankedContextBudget.render(rankedSections)
 
         // Append fixed suffix (always at end)
         prompt += """

@@ -18,18 +18,29 @@ final class AppState {
     @ObservationIgnored let projectPersistence: ProjectPersistenceActor
     @ObservationIgnored let aiService: any AIWritingServicing
     @ObservationIgnored let credentialStore: any CredentialStoring
+    @ObservationIgnored let appleCredentialStateProvider: any AppleCredentialStateProviding
+    @ObservationIgnored let clientInstallationID: String
+    @ObservationIgnored var officialChannelCredential: OfficialChannelCredential?
     @ObservationIgnored let writingSkillCatalog: any WritingSkillCatalogProviding
     @ObservationIgnored private let commerceProvider: any CommerceEntitlementProviding
     @ObservationIgnored let cloudStore = ICloudProjectStore()
     @ObservationIgnored var cloudSaveTask: Task<Void, Never>?
     @ObservationIgnored var cloudSaveGeneration: UInt64 = 0
     @ObservationIgnored var isCloudSynchronizationInProgress = false
+    @ObservationIgnored var pendingCloudSynchronizationScope: String?
+    @ObservationIgnored var pendingCloudSynchronizationForcePull = false
     @ObservationIgnored var recentProjectsPersistTasks: [String: Task<Void, Never>] = [:]
-    @ObservationIgnored var storageHealthCache: [String: CachedStorageHealthReport] = [:]
+    @ObservationIgnored var projectDeletionTombstones: [ProjectDeletionTombstone]
+    var storageHealthCache: [String: CachedStorageHealthReport] = [:]
+    @ObservationIgnored var storageHealthRefreshTasks: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored var storageHealthRefreshTokens: [String: UUID] = [:]
+    @ObservationIgnored var storageHealthRefreshDebounceTasks: [String: Task<Void, Never>] = [:]
     @ObservationIgnored var lastProjectPersistenceErrorMessage: String?
+    @ObservationIgnored var lastEmergencySnapshotURL: URL?
     @ObservationIgnored var isHydratingAccountScopedData = false
     @ObservationIgnored var isApplyingProviderConfiguration = false
     @ObservationIgnored var validationTask: Task<Void, Never>?
+    @ObservationIgnored var apiKeyPersistTask: Task<Void, Never>?
 
     var selectedProvider: ModelProvider {
         willSet {
@@ -51,7 +62,7 @@ final class AppState {
     var apiKey: String {
         didSet {
             guard !isApplyingProviderConfiguration else { return }
-            persistAPIKey()
+            scheduleAPIKeyPersistence()
             markConfigurationAsEdited()
         }
     }
@@ -128,9 +139,15 @@ final class AppState {
         }
     }
 
+    var projectLoadIssues: [ProjectLoadIssue]
+
     var recentProjects: [NovelProject] {
         didSet {
-            scheduleRecentProjectsPersistence(snapshot: recentProjects, for: currentStorageScope)
+            scheduleRecentProjectsPersistence(
+                snapshot: recentProjects,
+                deletedProjects: projectDeletionTombstones,
+                for: currentStorageScope
+            )
             guard !isHydratingAccountScopedData else { return }
             noteLocalProjectMutation()
             scheduleCloudSnapshotSave()
@@ -182,7 +199,9 @@ final class AppState {
         aiService: any AIWritingServicing = DefaultAIWritingService(),
         credentialStore: any CredentialStoring = SecurityKeychainCredentialStore(),
         writingSkillCatalog: (any WritingSkillCatalogProviding)? = nil,
-        commerceProvider: any CommerceEntitlementProviding = DeferredAppleCommerceProvider()
+        commerceProvider: any CommerceEntitlementProviding = DeferredAppleCommerceProvider(),
+        appleCredentialStateProvider: any AppleCredentialStateProviding =
+            SystemAppleCredentialStateProvider()
     ) {
         let projectStore = projectStore ?? ProjectFileStore()
         Self.migrateLegacyUserDefaultsIfNeeded(userDefaults, projectStore: projectStore)
@@ -190,16 +209,29 @@ final class AppState {
         ModelConnectionConfigurationStore.clearBundledCustomDefaultsIfNeeded(userDefaults)
         Self.migrateLegacyEmailScopeIfNeeded(userDefaults, projectStore: projectStore)
         Self.migrateAPIKeysToKeychainIfNeeded(userDefaults, credentialStore: credentialStore)
+        let resolvedClientInstallationID =
+            ModelConnectionConfigurationStore.loadOrCreateClientInstallationID(userDefaults: userDefaults)
+        let resolvedOfficialChannelCredential = OfficialChannelCredentialStore.load(
+            credentialStore: credentialStore
+        )
         self.userDefaults = userDefaults
         self.projectStore = projectStore
         self.projectPersistence = ProjectPersistenceActor(store: projectStore.independentCopy())
         self.aiService = aiService
         self.credentialStore = credentialStore
+        self.appleCredentialStateProvider = appleCredentialStateProvider
+        self.clientInstallationID = resolvedClientInstallationID
+        self.officialChannelCredential = resolvedOfficialChannelCredential
         self.writingSkillCatalog = writingSkillCatalog ?? BundledWritingSkillCatalog()
         self.commerceProvider = commerceProvider
         let resolvedActiveAccount = Self.loadActiveAppleAccount(from: userDefaults)
         let resolvedStorageScope = resolvedActiveAccount?.userID
         let resolvedProvider = ModelConnectionConfigurationStore.loadSelectedProvider(userDefaults: userDefaults)
+        let resolvedProjectLoad = Self.loadRecentProjectsReport(
+            for: resolvedStorageScope,
+            from: userDefaults,
+            projectStore: projectStore
+        )
         self.activeAccount = resolvedActiveAccount
         self.selectedProvider = resolvedProvider
         self.modelName = Self.loadModelName(for: resolvedProvider, userDefaults: userDefaults)
@@ -244,11 +276,11 @@ final class AppState {
             forKey: Self.projectSnapshotTimestampStorageKey(for: resolvedStorageScope),
             userDefaults: userDefaults
         ) ?? 0
-        self.recentProjects = Self.loadRecentProjects(
-            for: resolvedStorageScope,
-            from: userDefaults,
-            projectStore: projectStore
-        ) ?? Self.defaultRecentProjects
+        self.projectDeletionTombstones = projectStore.loadProjectDeletionTombstones(
+            for: resolvedStorageScope
+        )
+        self.projectLoadIssues = resolvedProjectLoad.issues
+        self.recentProjects = resolvedProjectLoad.projects ?? Self.defaultRecentProjects
         self.writingSkills = Self.loadWritingSkills(from: userDefaults) ?? []
         self.publishedWritingSkills = Self.loadPublishedWritingSkills(from: userDefaults) ?? []
         self.connectionStatus = .idle
@@ -358,10 +390,15 @@ final class AppState {
 
     func validateConfiguration() {
         validationTask?.cancel()
+        flushAPIKeyPersistence()
 
-        guard let configuration = resolvedAIConfiguration else {
+        let resolution = resolveAIConfiguration()
+        guard let configuration = resolution.configuration else {
+            connectionStatus = .needsAttention
+            validationMessage = resolution.failureMessage ?? Self.emptyConfigurationMessage
             return
         }
+        applyResolvedBaseURLIfNeeded(resolution.normalizedBaseURLString)
 
         connectionStatus = .checking
         validationMessage = "正在验证 \(selectedProvider.title) 连接..."
@@ -510,8 +547,19 @@ final class AppState {
     }
 
     func deleteProject(_ projectID: NovelProject.ID) {
-        guard recentProjects.contains(where: { $0.id == projectID }) else { return }
+        guard let project = recentProjects.first(where: { $0.id == projectID }) else { return }
 
+        projectDeletionTombstones = ProjectDeletionTombstone.normalized(
+            projectDeletionTombstones + [
+                ProjectDeletionTombstone(
+                    projectID: projectID,
+                    deletedAt: ProjectDeletionTombstone.deletionDate(
+                        now: Date(),
+                        projectUpdatedAt: project.updatedAtDate
+                    )
+                )
+            ]
+        )
         recentProjects.removeAll { $0.id == projectID }
 
         if projectSpaceScrollTarget == projectID {
@@ -812,8 +860,10 @@ final class AppState {
         updateProject(projectID) { project in
             if let context {
                 project.strandWeaveState = context.strandState
-                let mergedAntiPatterns = Set(project.accumulatedAntiPatterns).union(context.antiPatterns)
-                project.accumulatedAntiPatterns = Array(mergedAntiPatterns.prefix(50))
+                project.accumulatedAntiPatterns = NovelProject.mergedAntiPatterns(
+                    existing: project.accumulatedAntiPatterns,
+                    incoming: context.antiPatterns
+                )
             }
 
             if let review {
@@ -999,53 +1049,130 @@ final class AppState {
     }
 
     func storageHealthReport(for projectID: NovelProject.ID) -> StorageHealthReport {
-        let cacheKey = [
+        let cacheKey = storageHealthCacheKey(for: projectID)
+        if let cached = storageHealthCache[cacheKey] {
+            return cached.report
+        }
+
+        return StorageHealthReport(
+            id: "storage-health-pending-\(projectID)",
+            projectID: projectID,
+            scopeName: currentStorageScope ?? "local",
+            checkedAt: .distantPast,
+            status: .passed,
+            summary: "正在后台检查项目存储。",
+            nextAction: "检查完成后会自动刷新。",
+            issues: [],
+            metrics: [:]
+        )
+    }
+
+    func refreshStorageHealthReport(for projectID: NovelProject.ID) async {
+        let scope = currentStorageScope
+        let cacheKey = storageHealthCacheKey(for: projectID)
+        storageHealthRefreshDebounceTasks[cacheKey]?.cancel()
+        storageHealthRefreshDebounceTasks.removeValue(forKey: cacheKey)
+        storageHealthRefreshTasks[cacheKey]?.cancel()
+        let refreshToken = UUID()
+        storageHealthRefreshTokens[cacheKey] = refreshToken
+        let store = projectStore
+        let refreshTask = Task.detached(priority: .utility) {
+            store.storageHealthReport(for: projectID, scope: scope)
+        }
+        storageHealthRefreshTasks[cacheKey] = Task { @MainActor in
+            var report = await refreshTask.value
+            guard storageHealthRefreshTokens[cacheKey] == refreshToken,
+                  !Task.isCancelled,
+                  scope == currentStorageScope,
+                  recentProjects.contains(where: { $0.id == projectID })
+            else {
+                if storageHealthRefreshTokens[cacheKey] == refreshToken {
+                    storageHealthRefreshTasks.removeValue(forKey: cacheKey)
+                    storageHealthRefreshTokens.removeValue(forKey: cacheKey)
+                }
+                return
+            }
+
+            if let activeProjectID,
+               activeProjectID != projectID {
+                let conflictIssue = ProjectStorageIssue(
+                    id: "cloud-selection-\(projectID)",
+                    kind: .cloudSelectionConflict,
+                    status: .warning,
+                    projectID: projectID,
+                    chapterID: nil,
+                    title: "当前项目选择与本地活跃项不同",
+                    detail: "iCloud 或本机选择仍指向另一个项目。同步前建议确认是否要切换活跃项目。",
+                    recoveryActions: [.exportDiagnostics, .markCloudConflict]
+                )
+                report.issues.append(conflictIssue)
+                if report.status == .passed {
+                    report.status = .warning
+                    report.summary = "存储文件健康，但项目选择存在同步提醒。"
+                    report.nextAction = "确认活跃项目后再继续同步或写作。"
+                }
+            }
+
+            storageHealthCache[cacheKey] = CachedStorageHealthReport(report: report, checkedAt: Date())
+            storageHealthRefreshTasks.removeValue(forKey: cacheKey)
+            storageHealthRefreshTokens.removeValue(forKey: cacheKey)
+        }
+        await storageHealthRefreshTasks[cacheKey]?.value
+    }
+
+    private func storageHealthCacheKey(for projectID: NovelProject.ID) -> String {
+        [
             currentStorageScope ?? "local",
             projectID,
             activeProjectID ?? "none"
         ].joined(separator: "::")
-        if let cached = storageHealthCache[cacheKey],
-           Date().timeIntervalSince(cached.checkedAt) < 3 {
-            return cached.report
-        }
+    }
 
-        var report = projectStore.storageHealthReport(
-            for: projectID,
-            scope: currentStorageScope
-        )
-
-        if let activeProjectID,
-           activeProjectID != projectID,
-           recentProjects.contains(where: { $0.id == projectID }) {
-            let conflictIssue = ProjectStorageIssue(
-                id: "cloud-selection-\(projectID)",
-                kind: .cloudSelectionConflict,
-                status: .warning,
-                projectID: projectID,
-                chapterID: nil,
-                title: "当前项目选择与本地活跃项不同",
-                detail: "iCloud 或本机选择仍指向另一个项目。同步前建议确认是否要切换活跃项目。",
-                recoveryActions: [.exportDiagnostics, .markCloudConflict]
-            )
-            report.issues.append(conflictIssue)
-            if report.status == .passed {
-                report.status = .warning
-                report.summary = "存储文件健康，但项目选择存在同步提醒。"
-                report.nextAction = "确认活跃项目后再继续同步或写作。"
+    private func scheduleStorageHealthRefresh(for projectID: NovelProject.ID) {
+        let cacheKey = storageHealthCacheKey(for: projectID)
+        storageHealthRefreshDebounceTasks[cacheKey]?.cancel()
+        storageHealthRefreshDebounceTasks[cacheKey] = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(700))
+            } catch {
+                return
             }
+            guard let self, !Task.isCancelled else { return }
+            storageHealthRefreshDebounceTasks.removeValue(forKey: cacheKey)
+            await refreshStorageHealthReport(for: projectID)
         }
-
-        storageHealthCache[cacheKey] = CachedStorageHealthReport(report: report, checkedAt: Date())
-        return report
     }
 
     func invalidateStorageHealthCache(for projectID: NovelProject.ID? = nil) {
-        guard let projectID else {
+        let projectIDsToRefresh: [NovelProject.ID]
+        if let projectID {
+            projectIDsToRefresh = [projectID]
+            storageHealthCache = storageHealthCache.filter { key, _ in
+                !key.contains("::\(projectID)::")
+            }
+            let matchingKeys = Set(
+                storageHealthRefreshTasks.keys.filter { $0.contains("::\(projectID)::") }
+                    + storageHealthRefreshDebounceTasks.keys.filter { $0.contains("::\(projectID)::") }
+            )
+            for key in matchingKeys {
+                storageHealthRefreshTasks[key]?.cancel()
+                storageHealthRefreshTasks.removeValue(forKey: key)
+                storageHealthRefreshTokens.removeValue(forKey: key)
+                storageHealthRefreshDebounceTasks[key]?.cancel()
+                storageHealthRefreshDebounceTasks.removeValue(forKey: key)
+            }
+        } else {
+            projectIDsToRefresh = activeProjectID.map { [$0] } ?? []
+            storageHealthRefreshTasks.values.forEach { $0.cancel() }
+            storageHealthRefreshTasks.removeAll()
+            storageHealthRefreshTokens.removeAll()
+            storageHealthRefreshDebounceTasks.values.forEach { $0.cancel() }
+            storageHealthRefreshDebounceTasks.removeAll()
             storageHealthCache.removeAll()
-            return
         }
-        storageHealthCache = storageHealthCache.filter { key, _ in
-            !key.contains("::\(projectID)::")
+
+        for projectID in projectIDsToRefresh where recentProjects.contains(where: { $0.id == projectID }) {
+            scheduleStorageHealthRefresh(for: projectID)
         }
     }
 
@@ -1127,40 +1254,6 @@ final class AppState {
             .previousChapterDraftsForContinuation
             .prefix(max(limit, 0))
             .map { $0 } ?? []
-    }
-
-    func hydratedProjectsForPersistenceSnapshot(_ projects: [NovelProject]) -> [NovelProject] {
-        projects.map { project in
-            var hydratedProject = project
-            let storedDraftReport = projectStore.loadChapterDraftReport(
-                for: project.id,
-                scope: currentStorageScope
-            )
-
-            var draftByID = Dictionary(uniqueKeysWithValues: storedDraftReport.drafts.map { ($0.id, $0) })
-            for chapterDraft in project.chapterDrafts {
-                draftByID[chapterDraft.id] = chapterDraft
-            }
-
-            if !project.chapterCatalog.isEmpty {
-                let retainedChapterIDs = Set(project.chapterCatalog.map(\.id))
-                    .union(project.chapterDrafts.map(\.id))
-                draftByID = draftByID.filter { retainedChapterIDs.contains($0.key) }
-            }
-
-            hydratedProject.chapterDrafts = draftByID.values.sorted(by: ChapterDraft.sortDescending)
-            let hydratedChapterIDs = Set(hydratedProject.chapterDrafts.map(\.id))
-            let catalogChapterIDs = Set(project.chapterCatalog.map(\.id))
-            if !hydratedProject.chapterDrafts.isEmpty,
-               catalogChapterIDs.isSubset(of: hydratedChapterIDs) {
-                hydratedProject.chapterCatalog = hydratedProject.chapterDrafts
-                    .map(ChapterDraftMetadata.init)
-                    .sorted(by: ChapterDraftMetadata.sortDescending)
-            } else if !storedDraftReport.isComplete, !project.chapterCatalog.isEmpty {
-                hydratedProject.chapterCatalog = project.chapterCatalog
-            }
-            return hydratedProject
-        }
     }
 
     func saveCurrentChapterDraft(for projectID: NovelProject.ID) async -> ChapterDraftSaveResult? {
@@ -1442,7 +1535,29 @@ final class AppState {
     }
 
     func searchLongformProject(_ query: String, in projectID: NovelProject.ID, limit: Int = 60) -> [LongformSearchResult] {
-        guard let project = hydratedProjectForFullText(projectID) else { return [] }
+        guard let project = project(for: projectID) else { return [] }
+        return Self.searchLongformProject(query, in: project, limit: limit)
+    }
+
+    func searchLongformProjectFromDisk(
+        _ query: String,
+        in projectID: NovelProject.ID,
+        limit: Int = 60
+    ) async -> [LongformSearchResult] {
+        guard var project = project(for: projectID) else { return [] }
+        let scope = currentStorageScope
+        let store = projectStore
+        return await Task.detached(priority: .userInitiated) {
+            project.chapterDrafts = store.loadChapterDrafts(for: projectID, scope: scope)
+            return Self.searchLongformProject(query, in: project, limit: limit)
+        }.value
+    }
+
+    nonisolated static func searchLongformProject(
+        _ query: String,
+        in project: NovelProject,
+        limit: Int = 60
+    ) -> [LongformSearchResult] {
         let tokens = Self.searchTokens(from: query)
         guard !tokens.isEmpty else { return [] }
 
@@ -1540,12 +1655,7 @@ final class AppState {
     }
 
     private var hasValidBaseURL: Bool {
-        guard let components = URLComponents(string: normalizedBaseURLString ?? baseURL.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-            return false
-        }
-
-        let scheme = components.scheme?.lowercased()
-        return (scheme == "http" || scheme == "https") && components.host != nil
+        normalizedBaseURLString != nil
     }
 
     private var hasEnteredConnectionInfo: Bool {
@@ -1601,10 +1711,22 @@ final class AppState {
     }
 
     private var resolvedAIConfiguration: AIConnectionConfiguration? {
+        resolveAIConfiguration().configuration
+    }
+
+    private struct AIConfigurationResolution {
+        var configuration: AIConnectionConfiguration?
+        var normalizedBaseURLString: String?
+        var failureMessage: String?
+    }
+
+    private func resolveAIConfiguration() -> AIConfigurationResolution {
         guard hasAcceptedAIDataTransfer else {
-            connectionStatus = .needsAttention
-            validationMessage = "启用 AI 功能前需要先同意数据使用告知。"
-            return nil
+            return AIConfigurationResolution(
+                configuration: nil,
+                normalizedBaseURLString: nil,
+                failureMessage: "启用 AI 功能前需要先同意数据使用告知。"
+            )
         }
 
         let trimmedKey = selectedProvider.requiresAPIKey
@@ -1613,51 +1735,82 @@ final class AppState {
         let trimmedModelName = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard hasValidBaseURL else {
-            connectionStatus = .needsAttention
-            validationMessage = "Base URL 需要是完整的 http 或 https 地址。"
-            return nil
+            return AIConfigurationResolution(
+                configuration: nil,
+                normalizedBaseURLString: nil,
+                failureMessage: "Base URL 需要是完整的 http 或 https 地址。"
+            )
         }
 
         guard !selectedProvider.requiresAPIKey || !trimmedKey.isEmpty else {
-            connectionStatus = .needsAttention
-            validationMessage = "API Key 不能为空。"
-            return nil
+            return AIConfigurationResolution(
+                configuration: nil,
+                normalizedBaseURLString: nil,
+                failureMessage: "API Key 不能为空。"
+            )
         }
 
         guard !trimmedModelName.isEmpty else {
-            connectionStatus = .needsAttention
-            validationMessage = "模型 ID 不能为空。"
-            return nil
+            return AIConfigurationResolution(
+                configuration: nil,
+                normalizedBaseURLString: nil,
+                failureMessage: "模型 ID 不能为空。"
+            )
+        }
+
+        if selectedProvider == .openAICompatible,
+           officialChannelCredential?.validAccessToken() == nil {
+            return AIConfigurationResolution(
+                configuration: nil,
+                normalizedBaseURLString: normalizedBaseURLString,
+                failureMessage: "OpenWriting 官方通道会话缺失或已过期，请重新登录。"
+            )
         }
 
         guard
             let normalizedBaseURLString,
             let resolvedBaseURL = URL(string: normalizedBaseURLString)
         else {
-            connectionStatus = .needsAttention
-            validationMessage = "Base URL 需要是完整的 http 或 https 地址。"
-            return nil
+            return AIConfigurationResolution(
+                configuration: nil,
+                normalizedBaseURLString: nil,
+                failureMessage: "Base URL 需要是完整的 http 或 https 地址。"
+            )
         }
 
-        if normalizedBaseURLString != baseURL.trimmingCharacters(in: .whitespacesAndNewlines) {
-            isApplyingProviderConfiguration = true
-            baseURL = normalizedBaseURLString
-            isApplyingProviderConfiguration = false
-            persistBaseURL()
-        }
-
-        return AIConnectionConfiguration(
-            baseURL: resolvedBaseURL,
-            apiKey: trimmedKey,
-            modelName: trimmedModelName,
-            apiFormat: selectedProvider.apiFormat,
-            additionalHeaders: selectedProvider == .openAICompatible
-                ? Self.serverManagedAdditionalHeaders(
-                    accountID: activeAccount?.userID,
-                    userDefaults: userDefaults
-                )
-                : [:]
+        return AIConfigurationResolution(
+            configuration: AIConnectionConfiguration(
+                baseURL: resolvedBaseURL,
+                apiKey: trimmedKey,
+                modelName: trimmedModelName,
+                apiFormat: selectedProvider.apiFormat,
+                additionalHeaders: selectedProvider == .openAICompatible
+                    ? Self.serverManagedAdditionalHeaders(
+                        accountID: activeAccount?.userID,
+                        installationID: clientInstallationID
+                    )
+                    : [:],
+                officialBearerToken: selectedProvider == .openAICompatible
+                    ? officialChannelCredential?.validAccessToken()
+                    : nil,
+                requiresOfficialAuthentication: selectedProvider == .openAICompatible
+            ),
+            normalizedBaseURLString: normalizedBaseURLString,
+            failureMessage: nil
         )
+    }
+
+    private func applyResolvedBaseURLIfNeeded(_ normalizedBaseURLString: String?) {
+        guard let normalizedBaseURLString,
+              normalizedBaseURLString != baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        else {
+            return
+        }
+
+        isApplyingProviderConfiguration = true
+        baseURL = normalizedBaseURLString
+        isApplyingProviderConfiguration = false
+        persistBaseURL()
     }
 
     func updateProject(_ projectID: NovelProject.ID, mutate: (inout NovelProject) -> Void) {

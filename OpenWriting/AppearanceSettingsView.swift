@@ -242,15 +242,13 @@ private struct WindowAppearanceSyncView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        let applyAppearance = {
-            guard let window = nsView.window else { return }
-            window.appearance = appearance.nsAppearance
-        }
-
         if nsView.window == nil {
-            DispatchQueue.main.async(execute: applyAppearance)
+            DispatchQueue.main.async { [weak nsView] in
+                guard let window = nsView?.window else { return }
+                window.appearance = appearance.nsAppearance
+            }
         } else {
-            applyAppearance()
+            nsView.window?.appearance = appearance.nsAppearance
         }
     }
 }

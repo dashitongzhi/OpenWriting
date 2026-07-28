@@ -5,6 +5,13 @@ enum LongformCommitStatus: String, Codable, Hashable {
     case rejected
 }
 
+enum LongformChapterReviewStatus: String, Codable, Hashable {
+    case missing
+    case completed
+    case failed
+    case unknown
+}
+
 enum LongformWriteGateStage: String, Codable, Hashable {
     case prewrite
     case review
@@ -100,12 +107,75 @@ struct LongformProjectionStatusMessage: Hashable, Identifiable {
     }
 }
 
+enum LongformRuntimeHealthIssueKind: String, Codable, Hashable {
+    case prewriteGate
+    case missingVolumeSequence
+    case missingChapterSequence
+    case uncommittedSavedChapter
+    case staleSavedChapterCommit
+    case latestCommitRejected
+    case other
+}
+
 struct LongformRuntimeHealthIssue: Codable, Hashable, Identifiable {
     var id: String
+    var kind: LongformRuntimeHealthIssueKind
     var status: LongformWriteGateStatus
     var title: String
     var detail: String
     var repairHint: String
+
+    init(
+        id: String,
+        kind: LongformRuntimeHealthIssueKind = .other,
+        status: LongformWriteGateStatus,
+        title: String,
+        detail: String,
+        repairHint: String
+    ) {
+        self.id = id
+        self.kind = kind
+        self.status = status
+        self.title = title
+        self.detail = detail
+        self.repairHint = repairHint
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case kind
+        case status
+        case title
+        case detail
+        case repairHint
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        status = try container.decode(LongformWriteGateStatus.self, forKey: .status)
+        title = try container.decode(String.self, forKey: .title)
+        detail = try container.decode(String.self, forKey: .detail)
+        repairHint = try container.decode(String.self, forKey: .repairHint)
+        kind = try container.decodeIfPresent(
+            LongformRuntimeHealthIssueKind.self,
+            forKey: .kind
+        ) ?? Self.legacyKind(for: title)
+    }
+
+    private static func legacyKind(
+        for title: String
+    ) -> LongformRuntimeHealthIssueKind {
+        switch title {
+        case "写前门禁未通过": return .prewriteGate
+        case "分卷目录存在断卷": return .missingVolumeSequence
+        case "章节目录存在断章": return .missingChapterSequence
+        case "保存章节未进入提交链": return .uncommittedSavedChapter
+        case "章节内容与提交链不一致": return .staleSavedChapterCommit
+        case "最新章节提交被拒": return .latestCommitRejected
+        default: return .other
+        }
+    }
 }
 
 struct LongformRuntimeHealthReport: Codable, Hashable, Identifiable {
@@ -332,8 +402,47 @@ struct LongformChapterCommit: Codable, Hashable, Identifiable {
     var acceptedEvents: [LongformStoryEvent]
     var extractedMemoryItems: [MemoryItem]
     var dominantThreadType: ThreadType
+    var reviewStatus: LongformChapterReviewStatus
     var reviewSummary: String
     var projectionStatus: [String: String]
+
+    init(
+        id: String,
+        chapterNumber: Int,
+        volumeNumber: Int,
+        chapterTitle: String,
+        status: LongformCommitStatus,
+        createdAt: Date,
+        plannedNodes: [String],
+        coveredNodes: [String],
+        missedNodes: [String],
+        rejectionReasons: [String]?,
+        revisionHints: [String]? = nil,
+        acceptedEvents: [LongformStoryEvent],
+        extractedMemoryItems: [MemoryItem],
+        dominantThreadType: ThreadType,
+        reviewStatus: LongformChapterReviewStatus,
+        reviewSummary: String,
+        projectionStatus: [String: String]
+    ) {
+        self.id = id
+        self.chapterNumber = chapterNumber
+        self.volumeNumber = volumeNumber
+        self.chapterTitle = chapterTitle
+        self.status = status
+        self.createdAt = createdAt
+        self.plannedNodes = plannedNodes
+        self.coveredNodes = coveredNodes
+        self.missedNodes = missedNodes
+        self.rejectionReasons = rejectionReasons
+        self.revisionHints = revisionHints
+        self.acceptedEvents = acceptedEvents
+        self.extractedMemoryItems = extractedMemoryItems
+        self.dominantThreadType = dominantThreadType
+        self.reviewStatus = reviewStatus
+        self.reviewSummary = reviewSummary
+        self.projectionStatus = projectionStatus
+    }
 
     var isAccepted: Bool {
         status == .accepted
@@ -341,6 +450,73 @@ struct LongformChapterCommit: Codable, Hashable, Identifiable {
 
     func matchesPosition(of other: LongformChapterCommit) -> Bool {
         volumeNumber == other.volumeNumber && chapterNumber == other.chapterNumber
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case chapterNumber
+        case volumeNumber
+        case chapterTitle
+        case status
+        case createdAt
+        case plannedNodes
+        case coveredNodes
+        case missedNodes
+        case rejectionReasons
+        case revisionHints
+        case acceptedEvents
+        case extractedMemoryItems
+        case dominantThreadType
+        case reviewStatus
+        case reviewSummary
+        case projectionStatus
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        chapterNumber = try container.decode(Int.self, forKey: .chapterNumber)
+        volumeNumber = try container.decode(Int.self, forKey: .volumeNumber)
+        chapterTitle = try container.decode(String.self, forKey: .chapterTitle)
+        status = try container.decode(LongformCommitStatus.self, forKey: .status)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        plannedNodes = try container.decode([String].self, forKey: .plannedNodes)
+        coveredNodes = try container.decode([String].self, forKey: .coveredNodes)
+        missedNodes = try container.decode([String].self, forKey: .missedNodes)
+        rejectionReasons = try container.decodeIfPresent([String].self, forKey: .rejectionReasons)
+        revisionHints = try container.decodeIfPresent([String].self, forKey: .revisionHints)
+        acceptedEvents = try container.decode([LongformStoryEvent].self, forKey: .acceptedEvents)
+        extractedMemoryItems = try container.decode([MemoryItem].self, forKey: .extractedMemoryItems)
+        dominantThreadType = try container.decode(ThreadType.self, forKey: .dominantThreadType)
+        reviewSummary = try container.decode(String.self, forKey: .reviewSummary)
+        projectionStatus = try container.decode([String: String].self, forKey: .projectionStatus)
+        reviewStatus = try container.decodeIfPresent(
+            LongformChapterReviewStatus.self,
+            forKey: .reviewStatus
+        ) ?? Self.legacyReviewStatus(
+            reviewSummary: reviewSummary,
+            rejectionReasons: rejectionReasons
+        )
+    }
+
+    private static func legacyReviewStatus(
+        reviewSummary: String,
+        rejectionReasons: [String]?
+    ) -> LongformChapterReviewStatus {
+        let reasons = rejectionReasons ?? []
+        if reasons.contains(where: { $0.contains("当前章审查失败") }) {
+            return .failed
+        }
+        if reviewSummary == "暂无写后审查结果。" {
+            return .missing
+        }
+        if reasons.contains(where: {
+            $0.contains("写后审查存在阻断问题")
+                || $0.contains("审查分数低于最低通过线")
+        }) {
+            return .completed
+        }
+        return .unknown
     }
 }
 
@@ -608,6 +784,14 @@ enum LongformStorySystem {
             )
         }
         let dominantThread = dominantThreadType(from: chapterDraft.content, fallback: project.strandWeaveState.entries.last?.dominant ?? .quest)
+        let reviewStatus: LongformChapterReviewStatus
+        if reviewFailureReason != nil {
+            reviewStatus = .failed
+        } else if review != nil {
+            reviewStatus = .completed
+        } else {
+            reviewStatus = .missing
+        }
         return LongformChapterCommit(
             id: stableID(parts: ["commit", project.id, String(chapterDraft.volumeNumber), String(chapterDraft.chapterNumber), chapterDraft.content]),
             chapterNumber: chapterDraft.chapterNumber,
@@ -623,6 +807,7 @@ enum LongformStorySystem {
             acceptedEvents: status == .accepted ? events : [],
             extractedMemoryItems: status == .accepted ? extractedMemoryItems : [],
             dominantThreadType: dominantThread,
+            reviewStatus: reviewStatus,
             reviewSummary: review?.summary ?? "暂无写后审查结果。",
             projectionStatus: [
                 "memory": status == .accepted ? "pending" : "skipped",
@@ -687,18 +872,24 @@ enum LongformStorySystem {
         let reviewStatus: LongformWriteGateStatus
         let reviewMessage: String
         let reviewDetail: String?
-        if !reviewReasons.isEmpty {
+        if commit.reviewStatus == .failed || !reviewReasons.isEmpty {
             reviewStatus = .blocked
             reviewMessage = "写后审查未通过"
-            reviewDetail = reviewReasons.prefix(4).joined(separator: "；")
-        } else if requiresReview && commit.reviewSummary == "暂无写后审查结果。" {
+            reviewDetail = reviewReasons.isEmpty
+                ? commit.reviewSummary
+                : reviewReasons.prefix(4).joined(separator: "；")
+        } else if requiresReview && commit.reviewStatus == .missing {
             reviewStatus = .blocked
             reviewMessage = "缺少写后审查"
             reviewDetail = "长篇章节必须有可解析的写后审查结果。"
-        } else if commit.reviewSummary == "暂无写后审查结果。" {
+        } else if commit.reviewStatus == .missing {
             reviewStatus = .warning
             reviewMessage = "未记录写后审查"
             reviewDetail = "当前规模允许继续，但建议完成审查后再沉淀记忆。"
+        } else if commit.reviewStatus == .unknown {
+            reviewStatus = requiresReview ? .blocked : .warning
+            reviewMessage = "写后审查状态待迁移"
+            reviewDetail = commit.reviewSummary
         } else {
             reviewStatus = .passed
             reviewMessage = "写后审查通过"
@@ -905,6 +1096,7 @@ enum LongformStorySystem {
         var issues: [LongformRuntimeHealthIssue] = []
 
         func appendIssue(
+            kind: LongformRuntimeHealthIssueKind = .other,
             status: LongformWriteGateStatus,
             title: String,
             detail: String,
@@ -912,6 +1104,7 @@ enum LongformStorySystem {
         ) {
             issues.append(LongformRuntimeHealthIssue(
                 id: stableID(parts: ["health", project.id, title, detail]),
+                kind: kind,
                 status: status,
                 title: title,
                 detail: detail,
@@ -921,6 +1114,7 @@ enum LongformStorySystem {
 
         if !prewrite.isReady {
             appendIssue(
+                kind: .prewriteGate,
                 status: .blocked,
                 title: "写前门禁未通过",
                 detail: prewrite.blockingReasons.prefix(3).joined(separator: "；"),
@@ -974,6 +1168,7 @@ enum LongformStorySystem {
             if latestCommit.status == .rejected {
                 let reasons = latestCommit.rejectionReasons ?? []
                 appendIssue(
+                    kind: .latestCommitRejected,
                     status: .blocked,
                     title: "最新章节提交被拒",
                     detail: reasons.prefix(3).joined(separator: "；"),
@@ -1033,6 +1228,7 @@ enum LongformStorySystem {
             }
             if !missingSavedVolumeLabels.isEmpty {
                 appendIssue(
+                    kind: .missingVolumeSequence,
                     status: .blocked,
                     title: "分卷目录存在断卷",
                     detail: missingSavedVolumeLabels
@@ -1044,6 +1240,7 @@ enum LongformStorySystem {
 
             if !missingSavedChapterLabels.isEmpty {
                 appendIssue(
+                    kind: .missingChapterSequence,
                     status: .blocked,
                     title: "章节目录存在断章",
                     detail: missingSavedChapterLabels
@@ -1080,6 +1277,7 @@ enum LongformStorySystem {
 
             if !uncommittedSavedChapters.isEmpty {
                 appendIssue(
+                    kind: .uncommittedSavedChapter,
                     status: .blocked,
                     title: "保存章节未进入提交链",
                     detail: uncommittedSavedChapters
@@ -1092,6 +1290,7 @@ enum LongformStorySystem {
 
             if !staleCommitChapters.isEmpty {
                 appendIssue(
+                    kind: .staleSavedChapterCommit,
                     status: .blocked,
                     title: "章节内容与提交链不一致",
                     detail: staleCommitChapters

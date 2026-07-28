@@ -134,6 +134,54 @@ final class ProjectExportServiceTests: XCTestCase {
         XCTAssertEqual(firstContent, "application/epub+zip")
     }
 
+    func testClassicZIPIntegerBoundariesThrowExplicitErrors() throws {
+        XCTAssertEqual(
+            try ZipArchiveBuilder.checkedUInt16(
+                Int(UInt16.max),
+                field: "entry count"
+            ),
+            UInt16.max
+        )
+        XCTAssertEqual(
+            try ZipArchiveBuilder.checkedUInt32(
+                Int(UInt32.max),
+                field: "entry size"
+            ),
+            UInt32.max
+        )
+
+        XCTAssertThrowsError(
+            try ZipArchiveBuilder.checkedUInt16(
+                Int(UInt16.max) + 1,
+                field: "entry count"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ZipArchiveError,
+                .classicZIPLimitExceeded(
+                    field: "entry count",
+                    value: UInt64(UInt16.max) + 1,
+                    maximum: UInt64(UInt16.max)
+                )
+            )
+        }
+        XCTAssertThrowsError(
+            try ZipArchiveBuilder.checkedUInt32(
+                Int(UInt32.max) + 1,
+                field: "entry size"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ZipArchiveError,
+                .classicZIPLimitExceeded(
+                    field: "entry size",
+                    value: UInt64(UInt32.max) + 1,
+                    maximum: UInt64(UInt32.max)
+                )
+            )
+        }
+    }
+
     private func littleEndianUInt16(in data: Data, at offset: Int) -> UInt16 {
         UInt16(data[offset]) | (UInt16(data[offset + 1]) << 8)
     }

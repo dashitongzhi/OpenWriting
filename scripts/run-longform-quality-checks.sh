@@ -19,6 +19,7 @@ MEMORY_BUCKETS="$REPO_ROOT/OpenWriting/WritingMemoryBuckets.swift"
 SAVED_CHAPTERS_SHEET="$REPO_ROOT/OpenWriting/ProjectSavedChaptersSheet.swift"
 APP_STATE="$REPO_ROOT/OpenWriting/AppState.swift"
 APP_STATE_ICLOUD="$REPO_ROOT/OpenWriting/AppState+iCloudSync.swift"
+PROJECT_PERSISTENCE_ACTOR="$REPO_ROOT/OpenWriting/ProjectPersistenceActor.swift"
 PROJECT_STORE="$REPO_ROOT/OpenWriting/ProjectFileStore.swift"
 ENTITLEMENTS="$REPO_ROOT/OpenWriting/OpenWriting.entitlements"
 PROJECT_FILE="$REPO_ROOT/OpenWriting.xcodeproj/project.pbxproj"
@@ -177,15 +178,15 @@ require_text "$WRITING_DESK" "LongformStorySystem.missingMandatoryNodes" \
     "longform save and candidate acceptance must check mandatory nodes"
 require_text "$WRITING_DESK" "allowsCurrentChapterRepair: true" \
     "writing generation must allow repair candidates for the currently rejected chapter"
-require_text "$WRITING_DESK" "case \"最新章节提交被拒\":" \
+require_text "$WRITING_DESK" "case .latestCommitRejected:" \
     "current rejected chapter must be recognized as repairable"
-require_text "$WRITING_DESK" "case \"章节目录存在断章\":" \
+require_text "$WRITING_DESK" "case .missingChapterSequence:" \
     "missing saved chapter blockers must allow repairing the current missing chapter"
 require_text "$WRITING_DESK" "textReferencesCurrentChapterPosition" \
     "current missing chapter repair must compare parsed volume and chapter positions"
 require_text "$WRITING_DESK" '第\s*(\d+)\s*卷.*?第\s*(\d+)\s*章' \
     "current missing chapter repair must parse multi-volume chapter labels"
-require_text "$WRITING_DESK" "case \"分卷目录存在断卷\":" \
+require_text "$WRITING_DESK" "case .missingVolumeSequence:" \
     "missing saved volume blockers must allow repairing the current missing volume start"
 require_text "$WRITING_DESK" "parsedVolumeNumber(in:" \
     "missing saved volume repair must parse volume numbers"
@@ -228,12 +229,14 @@ require_text "$APP_STATE" "nextExistingChapterMetadata(after: chapterDraft, in: 
     "beginNextChapter must detect existing cross-volume successor chapters"
 require_text "$APP_STATE" "nextExistingChapterDraft(after: chapterDraft, in: project.chapterDrafts)" \
     "beginNextChapter must load existing successor chapter drafts before creating a new chapter"
-require_text "$APP_STATE" "loadChapterDraftReport" \
+require_text "$PROJECT_PERSISTENCE_ACTOR" "loadChapterDraftReport" \
     "persistence snapshots must inspect chapter load completeness"
-require_text "$APP_STATE" "catalogChapterIDs.isSubset(of: hydratedChapterIDs)" \
+require_text "$PROJECT_PERSISTENCE_ACTOR" "catalogChapterIDs.isSubset(of: hydratedChapterIDs)" \
     "persistence snapshots must not rebuild chapter catalogs from partial draft loads"
-require_text "$APP_STATE" "persistRecentProjects(recentProjects, for: currentStorageScope)" \
-    "chapter save must synchronously persist the local project store before reporting success"
+require_text "$APP_STATE" "func saveCurrentChapterDraft(" \
+    "AppState must expose the explicit chapter save production path"
+require_text "$APP_STATE" "guard await flushProjectPersistence() else { return nil }" \
+    "chapter save must await the final local project flush before reporting success"
 require_text "$APP_STATE" "storageHealthReport(for projectID: NovelProject.ID)" \
     "AppState must expose project storage health"
 require_text "$APP_STATE" "recoverStorageIssue" \
@@ -308,16 +311,22 @@ require_text "$RUN_HOSTED_XCTEST_GUARD" "REGISTER_APP_GROUPS=NO" \
     "hosted XCTest guard must disable app-group registration"
 require_text "$RUN_HOSTED_XCTEST_GUARD" "-parallel-testing-enabled NO" \
     "hosted XCTest guard must run serially"
+require_text "$RUN_HOSTED_XCTEST_GUARD" 'EXPECTED_MACOSX_DEPLOYMENT_TARGET="14.0"' \
+    "hosted XCTest guard must pin the supported macOS deployment target"
+require_text "$RUN_HOSTED_XCTEST_GUARD" 'MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-$EXPECTED_MACOSX_DEPLOYMENT_TARGET}"' \
+    "hosted XCTest guard must read the CI deployment target variable"
 require_text "$RUN_TESTS" "verify-xctest-membership.sh" \
     "full XCTest entry must verify target membership before execution"
 require_text "$RUN_TESTS" "build-for-testing" \
     "full XCTest entry must build the test bundle once"
 require_text "$RUN_TESTS" "test-without-building" \
     "full XCTest entry must execute discovered classes without rebuilding"
-require_text "$RUN_TESTS" 'MACOS_DEPLOYMENT_TARGET="${MACOS_DEPLOYMENT_TARGET:-$(sw_vers -productVersion)}"' \
-    "full XCTest entry must target the current macOS test host"
-require_text "$RUN_TESTS" 'MACOSX_DEPLOYMENT_TARGET="$MACOS_DEPLOYMENT_TARGET"' \
-    "full XCTest build and execution must share the host deployment target"
+require_text "$RUN_TESTS" 'EXPECTED_MACOSX_DEPLOYMENT_TARGET="14.0"' \
+    "full XCTest entry must pin the supported macOS deployment target"
+require_text "$RUN_TESTS" 'MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-$EXPECTED_MACOSX_DEPLOYMENT_TARGET}"' \
+    "full XCTest entry must read the CI deployment target variable"
+require_text "$RUN_TESTS" 'MACOSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET"' \
+    "full XCTest build and execution must share the asserted deployment target"
 require_text "$RUN_TESTS" "Tests/OpenWritingTests" \
     "full XCTest entry must discover tests from the OpenWritingTests directory"
 require_text "$RUN_TESTS" "XCTestCase" \

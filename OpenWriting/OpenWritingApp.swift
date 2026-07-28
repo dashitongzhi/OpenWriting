@@ -21,7 +21,9 @@ struct OpenWritingApp: App {
 
 @MainActor
 final class OpenWritingAppDelegate: NSObject, NSApplicationDelegate {
-    private var isFlushingBeforeTermination = false
+    private let terminationFlushCoordinator = TerminationFlushCoordinator(
+        timeout: .seconds(8)
+    )
     private static var isRunningUnitTests: Bool {
         let environment = ProcessInfo.processInfo.environment
 
@@ -67,13 +69,81 @@ final class OpenWritingAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !Self.isRunningUnitTests else { return .terminateNow }
-        guard !isFlushingBeforeTermination else { return .terminateLater }
-        isFlushingBeforeTermination = true
-
-        Task { @MainActor in
-            _ = await AppRuntime.shared.appState.flushProjectPersistence()
-            sender.reply(toApplicationShouldTerminate: true)
-        }
+        _ = terminationFlushCoordinator.begin(
+            flush: {
+                AppRuntime.shared.appState.flushAPIKeyPersistence()
+                return await AppRuntime.shared.appState.flushProjectPersistence()
+            },
+            reply: { [weak sender] didFlush in
+                sender?.reply(toApplicationShouldTerminate: didFlush)
+            }
+        )
         return .terminateLater
+    }
+}
+
+@MainActor
+final class TerminationFlushCoordinator {
+    typealias FlushOperation = @MainActor () async -> Bool
+    typealias ReplyOperation = @MainActor (Bool) -> Void
+
+    private let timeout: Duration
+    private var generation: UInt64 = 0
+    private var flushTask: Task<Void, Never>?
+    private var timeoutTask: Task<Void, Never>?
+
+    private(set) var isRunning = false
+
+    init(timeout: Duration) {
+        self.timeout = timeout
+    }
+
+    @discardableResult
+    func begin(
+        flush: @escaping FlushOperation,
+        reply: @escaping ReplyOperation
+    ) -> Bool {
+        guard !isRunning else { return false }
+
+        isRunning = true
+        generation &+= 1
+        let activeGeneration = generation
+
+        flushTask = Task { @MainActor [weak self] in
+            let didFlush = await flush()
+            self?.finish(
+                generation: activeGeneration,
+                didFlush: didFlush,
+                reply: reply
+            )
+        }
+        timeoutTask = Task { @MainActor [weak self, timeout] in
+            do {
+                try await Task.sleep(for: timeout)
+            } catch {
+                return
+            }
+            self?.finish(
+                generation: activeGeneration,
+                didFlush: false,
+                reply: reply
+            )
+        }
+        return true
+    }
+
+    private func finish(
+        generation activeGeneration: UInt64,
+        didFlush: Bool,
+        reply: ReplyOperation
+    ) {
+        guard isRunning, generation == activeGeneration else { return }
+
+        isRunning = false
+        flushTask?.cancel()
+        timeoutTask?.cancel()
+        flushTask = nil
+        timeoutTask = nil
+        reply(didFlush)
     }
 }

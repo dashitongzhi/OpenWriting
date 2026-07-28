@@ -12,10 +12,16 @@ DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-/tmp/OpenWritingTestsDerivedData-${USER:
 XCODEBUILD="$DEVELOPER_DIR/usr/bin/xcodebuild"
 HOST_ARCH="$(uname -m)"
 DESTINATION="platform=macOS,arch=$HOST_ARCH"
-MACOS_DEPLOYMENT_TARGET="${MACOS_DEPLOYMENT_TARGET:-$(sw_vers -productVersion)}"
+EXPECTED_MACOSX_DEPLOYMENT_TARGET="14.0"
+MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-$EXPECTED_MACOSX_DEPLOYMENT_TARGET}"
 XCTEST_CLASS_PATTERN='^[[:space:]]*(final[[:space:]]+)?class[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:[^{]*XCTestCase'
 
 export DEVELOPER_DIR
+
+if [[ "$MACOSX_DEPLOYMENT_TARGET" != "$EXPECTED_MACOSX_DEPLOYMENT_TARGET" ]]; then
+    echo "error: MACOSX_DEPLOYMENT_TARGET must be $EXPECTED_MACOSX_DEPLOYMENT_TARGET, got $MACOSX_DEPLOYMENT_TARGET" >&2
+    exit 1
+fi
 
 zsh -f "$SCRIPT_DIR/verify-xctest-membership.sh"
 
@@ -35,7 +41,7 @@ fi
     -configuration Debug \
     -destination "$DESTINATION" \
     -derivedDataPath "$DERIVED_DATA_PATH" \
-    MACOSX_DEPLOYMENT_TARGET="$MACOS_DEPLOYMENT_TARGET" \
+    MACOSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
     CODE_SIGNING_ALLOWED=NO
 
 for test_class in "${test_classes[@]}"; do
@@ -49,7 +55,7 @@ for test_class in "${test_classes[@]}"; do
         -derivedDataPath "$DERIVED_DATA_PATH" \
         -parallel-testing-enabled NO \
         "-only-testing:OpenWritingTests/$test_class" \
-        MACOSX_DEPLOYMENT_TARGET="$MACOS_DEPLOYMENT_TARGET" \
+        MACOSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
         CODE_SIGNING_ALLOWED=NO
 done
 

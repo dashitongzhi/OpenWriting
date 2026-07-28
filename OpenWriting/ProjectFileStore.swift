@@ -1,7 +1,74 @@
 import Foundation
 import CryptoKit
+import Darwin
+
+nonisolated struct ProjectEmergencySnapshot: Codable {
+    static let currentSchemaVersion = 1
+
+    var schemaVersion: Int
+    var scope: String?
+    var projects: [NovelProject]
+    var deletedProjects: [ProjectDeletionTombstone]
+    var createdAt: Date
+    var failureReason: String
+
+    init(
+        scope: String?,
+        projects: [NovelProject],
+        deletedProjects: [ProjectDeletionTombstone],
+        createdAt: Date = Date(),
+        failureReason: String
+    ) {
+        self.schemaVersion = Self.currentSchemaVersion
+        self.scope = scope
+        self.projects = projects
+        self.deletedProjects = ProjectDeletionTombstone.normalized(deletedProjects)
+        self.createdAt = createdAt
+        self.failureReason = failureReason
+    }
+}
+
+nonisolated enum ProjectLoadIssueKind: String, Equatable {
+    case unsupportedFutureProjectDocument
+}
+
+nonisolated struct ProjectLoadIssue: Identifiable, Equatable {
+    let id: String
+    let kind: ProjectLoadIssueKind
+    let scope: String?
+    let projectID: NovelProject.ID?
+    let path: String
+    let sourceVersion: Int
+}
+
+nonisolated struct ProjectLoadReport {
+    var projects: [NovelProject]
+    var issues: [ProjectLoadIssue]
+
+    var unsupportedFutureProjectCount: Int {
+        issues.filter { $0.kind == .unsupportedFutureProjectDocument }.count
+    }
+}
 
 nonisolated struct ProjectFileStore: @unchecked Sendable {
+    struct TestHooks: @unchecked Sendable {
+        var beforeAtomicWrite: ((URL) throws -> Void)?
+        var beforeRemoveItem: ((URL) throws -> Void)?
+        var onStorageHealthScan: (() -> Void)?
+
+        init(
+            beforeAtomicWrite: ((URL) throws -> Void)? = nil,
+            beforeRemoveItem: ((URL) throws -> Void)? = nil,
+            onStorageHealthScan: (() -> Void)? = nil
+        ) {
+            self.beforeAtomicWrite = beforeAtomicWrite
+            self.beforeRemoveItem = beforeRemoveItem
+            self.onStorageHealthScan = onStorageHealthScan
+        }
+
+        static let none = TestHooks()
+    }
+
     private let fileManager: FileManager
     private let baseDirectoryURL: URL
     private let encoder: JSONEncoder
@@ -9,16 +76,23 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
     private let projectCodec = ProjectDocumentCodec()
     private let writeCache = ProjectFileWriteCache()
     private let accessLock: NSRecursiveLock
+    private let testHooks: TestHooks
 
     private struct ProjectIndex: Codable {
-        static let currentVersion = 2
+        static let currentVersion = 3
 
         var version: Int
         var projectIDs: [NovelProject.ID]
+        var deletedProjects: [ProjectDeletionTombstone]
 
-        init(version: Int = currentVersion, projectIDs: [NovelProject.ID]) {
+        init(
+            version: Int = currentVersion,
+            projectIDs: [NovelProject.ID],
+            deletedProjects: [ProjectDeletionTombstone] = []
+        ) {
             self.version = version
             self.projectIDs = projectIDs
+            self.deletedProjects = ProjectDeletionTombstone.normalized(deletedProjects)
         }
 
         init(from decoder: Decoder) throws {
@@ -33,6 +107,12 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
             }
             version = Self.currentVersion
             projectIDs = try container.decode([NovelProject.ID].self, forKey: .projectIDs)
+            deletedProjects = ProjectDeletionTombstone.normalized(
+                try container.decodeIfPresent(
+                    [ProjectDeletionTombstone].self,
+                    forKey: .deletedProjects
+                ) ?? []
+            )
         }
     }
 
@@ -72,6 +152,7 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
     private struct ExistingProjectProtection {
         var indexedProjectIDs: [NovelProject.ID]
         var directoryNames: Set<String>
+        var updatedAtByProjectID: [NovelProject.ID: Date]
     }
 
     struct ChapterDraftLoadReport {
@@ -86,23 +167,20 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
     init(
         fileManager: FileManager = .default,
         baseDirectoryURL: URL? = nil,
-        baseDirectoryName: String = "OpenWriting"
+        baseDirectoryName: String = "OpenWriting",
+        testHooks: TestHooks = .none
     ) {
         self.fileManager = fileManager
 
-        let baseURL = baseDirectoryURL ?? (
-            (try? fileManager.url(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask,
-                appropriateFor: nil,
-                create: true
-            )) ?? fileManager.temporaryDirectory
+        let baseURL = baseDirectoryURL ?? Self.defaultApplicationSupportDirectory(
+            fileManager: fileManager
         )
 
         self.baseDirectoryURL = baseURL
             .appendingPathComponent(baseDirectoryName, isDirectory: true)
             .appendingPathComponent("ProjectStore", isDirectory: true)
         self.accessLock = NSRecursiveLock()
+        self.testHooks = testHooks
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -110,14 +188,37 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
         self.decoder = JSONDecoder()
     }
 
+    nonisolated static func defaultApplicationSupportDirectory(
+        fileManager: FileManager = .default
+    ) -> URL {
+        if let resolved = try? fileManager.url(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: true
+            ) {
+            return resolved
+        }
+
+        // Keep persistence on the user-domain Application Support path even if
+        // URL discovery fails. A later write error must surface to the caller;
+        // silently switching user data to a disposable temporary directory is
+        // never an acceptable fallback.
+        return fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Application Support", isDirectory: true)
+    }
+
     private init(
         fileManager: FileManager,
         resolvedBaseDirectoryURL: URL,
-        accessLock: NSRecursiveLock
+        accessLock: NSRecursiveLock,
+        testHooks: TestHooks
     ) {
         self.fileManager = fileManager
         self.baseDirectoryURL = resolvedBaseDirectoryURL
         self.accessLock = accessLock
+        self.testHooks = testHooks
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         self.encoder = encoder
@@ -128,11 +229,13 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
         ProjectFileStore(
             fileManager: fileManager,
             resolvedBaseDirectoryURL: baseDirectoryURL,
-            accessLock: accessLock
+            accessLock: accessLock,
+            testHooks: testHooks
         )
     }
 
     func storageHealthReport(for projectID: NovelProject.ID, scope: String?) -> StorageHealthReport {
+        testHooks.onStorageHealthScan?()
         accessLock.lock()
         defer { accessLock.unlock() }
         var issues: [ProjectStorageIssue] = []
@@ -426,11 +529,11 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
         }
     }
 
-    func loadProjects(for scope: String?) -> [NovelProject]? {
+    func loadProjectsReport(for scope: String?) -> ProjectLoadReport? {
         accessLock.lock()
         defer { accessLock.unlock() }
-        if let projects = loadShardedProjects(for: scope) {
-            return projects
+        if let report = loadShardedProjectsReport(for: scope) {
+            return report
         }
 
         let fileURL = projectsFileURL(for: scope)
@@ -438,13 +541,47 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
             return nil
         }
 
-        return try? decoder.decode([NovelProject].self, from: data)
+        return decodeLegacyProjectsReport(
+            from: data,
+            fileURL: fileURL,
+            scope: scope
+        )
+    }
+
+    func loadProjects(for scope: String?) -> [NovelProject]? {
+        loadProjectsReport(for: scope)?.projects
     }
 
     func saveProjects(_ projects: [NovelProject], for scope: String?) throws {
         accessLock.lock()
         defer { accessLock.unlock() }
-        try saveShardedProjects(projects, for: scope)
+        try saveShardedProjects(
+            projects,
+            deletedProjects: loadProjectDeletionTombstonesWithoutLock(for: scope),
+            for: scope
+        )
+    }
+
+    func saveProjects(
+        _ projects: [NovelProject],
+        deletedProjects: [ProjectDeletionTombstone],
+        for scope: String?
+    ) throws {
+        accessLock.lock()
+        defer { accessLock.unlock() }
+        try saveShardedProjects(
+            projects,
+            deletedProjects: deletedProjects,
+            for: scope
+        )
+    }
+
+    func loadProjectDeletionTombstones(
+        for scope: String?
+    ) -> [ProjectDeletionTombstone] {
+        accessLock.lock()
+        defer { accessLock.unlock() }
+        return loadProjectDeletionTombstonesWithoutLock(for: scope)
     }
 
     func hasProjects(for scope: String?) -> Bool {
@@ -464,29 +601,84 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
         }
     }
 
-    private func loadShardedProjects(for scope: String?) -> [NovelProject]? {
+    @discardableResult
+    func writeEmergencySnapshot(
+        projects: [NovelProject],
+        deletedProjects: [ProjectDeletionTombstone],
+        for scope: String?,
+        failureReason: String
+    ) throws -> URL {
+        accessLock.lock()
+        defer { accessLock.unlock() }
+
+        let directoryURL = baseDirectoryURL.appendingPathComponent(
+            "emergency-snapshots",
+            isDirectory: true
+        )
+        try fileManager.createDirectory(
+            at: directoryURL,
+            withIntermediateDirectories: true
+        )
+        let scopeComponent = sanitizedStorageComponent(
+            normalizedScope(scope) ?? "local"
+        )
+        let fileURL = directoryURL.appendingPathComponent(
+            "\(scopeComponent)-\(Self.diagnosticTimestamp())-\(UUID().uuidString).emergency.json",
+            isDirectory: false
+        )
+        let snapshot = ProjectEmergencySnapshot(
+            scope: normalizedScope(scope),
+            projects: projects,
+            deletedProjects: deletedProjects,
+            failureReason: failureReason
+        )
+        try DurableAtomicFileWriter.write(try encoder.encode(snapshot), to: fileURL)
+        return fileURL
+    }
+
+    private func loadShardedProjectsReport(for scope: String?) -> ProjectLoadReport? {
         let indexURL = projectIndexURL(for: scope)
         guard let indexData = try? Data(contentsOf: indexURL),
               let index = try? decoder.decode(ProjectIndex.self, from: indexData) else {
-            return loadProjectsFromDirectories(for: scope)
+            return loadProjectsFromDirectoriesReport(for: scope)
         }
 
         var projects: [NovelProject] = []
+        var issues: [ProjectLoadIssue] = []
+        let tombstonesByProjectID = Dictionary(
+            uniqueKeysWithValues: index.deletedProjects.map { ($0.projectID, $0) }
+        )
         for projectID in index.projectIDs {
             let projectURL = projectMetadataURL(for: projectID, scope: scope)
-            guard let projectData = try? Data(contentsOf: projectURL),
-                  var project = try? projectCodec.decode(projectData).project
-            else { continue }
+            guard let projectData = try? Data(contentsOf: projectURL) else { continue }
+            var project: NovelProject
+            do {
+                project = try projectCodec.decode(projectData).project
+            } catch ProjectDocumentCodecError.unsupportedFutureVersion(let sourceVersion) {
+                issues.append(futureProjectLoadIssue(
+                    scope: scope,
+                    projectID: projectID,
+                    fileURL: projectURL,
+                    sourceVersion: sourceVersion
+                ))
+                continue
+            } catch {
+                continue
+            }
 
+            if let tombstone = tombstonesByProjectID[projectID],
+               tombstone.deletedAt >= project.updatedAtDate {
+                continue
+            }
             project.chapterCatalog = loadChapterMetadata(for: projectID, scope: scope)
             project.chapterDrafts = []
             projects.append(project)
         }
 
-        return projects
+        return ProjectLoadReport(projects: projects, issues: issues)
     }
 
-    private func loadProjectsFromDirectories(for scope: String?) -> [NovelProject]? {
+    private func loadProjectsFromDirectoriesReport(for scope: String?) -> ProjectLoadReport? {
         let projectsDirectory = scopeDirectoryURL(for: scope)
             .appendingPathComponent("projects", isDirectory: true)
         guard let directories = try? fileManager.contentsOfDirectory(
@@ -496,17 +688,93 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
             return nil
         }
 
-        return directories.compactMap { directory in
+        var projects: [NovelProject] = []
+        var issues: [ProjectLoadIssue] = []
+        for directory in directories {
             let metadataURL = directory.appendingPathComponent("project.json", isDirectory: false)
-            guard let data = try? Data(contentsOf: metadataURL),
-                  var project = try? projectCodec.decode(data).project else {
-                return nil
+            guard let data = try? Data(contentsOf: metadataURL) else { continue }
+            do {
+                var project = try projectCodec.decode(data).project
+                project.chapterCatalog = loadChapterMetadata(for: project.id, scope: scope)
+                project.chapterDrafts = []
+                projects.append(project)
+            } catch ProjectDocumentCodecError.unsupportedFutureVersion(let sourceVersion) {
+                issues.append(futureProjectLoadIssue(
+                    scope: scope,
+                    projectID: projectID(in: data),
+                    fileURL: metadataURL,
+                    sourceVersion: sourceVersion
+                ))
+            } catch {
+                continue
             }
-            project.chapterCatalog = loadChapterMetadata(for: project.id, scope: scope)
-            project.chapterDrafts = []
-            return project
         }
-        .sorted { $0.updatedAtDate > $1.updatedAtDate }
+        projects.sort { $0.updatedAtDate > $1.updatedAtDate }
+        return ProjectLoadReport(projects: projects, issues: issues)
+    }
+
+    private func decodeLegacyProjectsReport(
+        from data: Data,
+        fileURL: URL,
+        scope: String?
+    ) -> ProjectLoadReport? {
+        guard let elements = try? JSONSerialization.jsonObject(with: data) as? [Any] else {
+            return nil
+        }
+        var projects: [NovelProject] = []
+        var issues: [ProjectLoadIssue] = []
+        for (index, element) in elements.enumerated() {
+            guard JSONSerialization.isValidJSONObject(element),
+                  let elementData = try? JSONSerialization.data(
+                    withJSONObject: element,
+                    options: [.sortedKeys]
+                  ) else {
+                continue
+            }
+            do {
+                projects.append(try projectCodec.decode(elementData).project)
+            } catch ProjectDocumentCodecError.unsupportedFutureVersion(let sourceVersion) {
+                issues.append(ProjectLoadIssue(
+                    id: "\(fileURL.path)#\(index)#future-\(sourceVersion)",
+                    kind: .unsupportedFutureProjectDocument,
+                    scope: normalizedScope(scope),
+                    projectID: projectID(in: elementData),
+                    path: fileURL.path,
+                    sourceVersion: sourceVersion
+                ))
+            } catch {
+                continue
+            }
+        }
+        if !elements.isEmpty, projects.isEmpty, issues.isEmpty {
+            return nil
+        }
+        return ProjectLoadReport(projects: projects, issues: issues)
+    }
+
+    private func futureProjectLoadIssue(
+        scope: String?,
+        projectID: NovelProject.ID?,
+        fileURL: URL,
+        sourceVersion: Int
+    ) -> ProjectLoadIssue {
+        ProjectLoadIssue(
+            id: "\(fileURL.path)#future-\(sourceVersion)",
+            kind: .unsupportedFutureProjectDocument,
+            scope: normalizedScope(scope),
+            projectID: projectID,
+            path: fileURL.path,
+            sourceVersion: sourceVersion
+        )
+    }
+
+    private func projectID(in data: Data) -> NovelProject.ID? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let projectID = object["id"] as? String,
+              !projectID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return projectID
     }
 
     func loadChapterDraft(_ chapterID: ChapterDraft.ID, for projectID: NovelProject.ID, scope: String?) -> ChapterDraft? {
@@ -566,24 +834,47 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
             .sorted(by: ChapterDraftMetadata.sortDescending)
     }
 
-    private func saveShardedProjects(_ projects: [NovelProject], for scope: String?) throws {
+    private func saveShardedProjects(
+        _ projects: [NovelProject],
+        deletedProjects: [ProjectDeletionTombstone],
+        for scope: String?
+    ) throws {
         let scopeURL = scopeDirectoryURL(for: scope)
         let projectsDirectory = scopeURL.appendingPathComponent("projects", isDirectory: true)
         try fileManager.createDirectory(at: projectsDirectory, withIntermediateDirectories: true)
 
-        let incomingProjectIDs = Set(projects.map(\.id))
+        let normalizedDeletedProjects = ProjectDeletionTombstone.normalized(deletedProjects)
+        let tombstonesByProjectID = Dictionary(
+            uniqueKeysWithValues: normalizedDeletedProjects.map { ($0.projectID, $0) }
+        )
+        let resolvedProjects = projects.filter { project in
+            guard let tombstone = tombstonesByProjectID[project.id] else { return true }
+            return project.updatedAtDate > tombstone.deletedAt
+        }
+        let incomingProjectIDs = Set(resolvedProjects.map(\.id))
         let protection = existingProjectProtection(
             for: scope,
-            excluding: incomingProjectIDs
+            excluding: incomingProjectIDs,
+            tombstonesByProjectID: tombstonesByProjectID
         )
+        let finalProjectUpdatedAt = Dictionary(
+            uniqueKeysWithValues: resolvedProjects.map { ($0.id, $0.updatedAtDate) }
+        ).merging(protection.updatedAtByProjectID) { incoming, _ in incoming }
+        let resolvedDeletedProjects = normalizedDeletedProjects.filter { tombstone in
+            guard let updatedAt = finalProjectUpdatedAt[tombstone.projectID] else {
+                return true
+            }
+            return tombstone.deletedAt >= updatedAt
+        }
 
-        for project in projects {
+        for project in resolvedProjects {
             try saveProject(project, scope: scope)
         }
 
         let index = ProjectIndex(
-            version: 2,
-            projectIDs: projects.map(\.id) + protection.indexedProjectIDs
+            version: ProjectIndex.currentVersion,
+            projectIDs: resolvedProjects.map(\.id) + protection.indexedProjectIDs,
+            deletedProjects: resolvedDeletedProjects
         )
         try writeIfChanged(try encoder.encode(index), to: projectIndexURL(for: scope))
 
@@ -600,7 +891,8 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
 
     private func existingProjectProtection(
         for scope: String?,
-        excluding incomingProjectIDs: Set<NovelProject.ID>
+        excluding incomingProjectIDs: Set<NovelProject.ID>,
+        tombstonesByProjectID: [NovelProject.ID: ProjectDeletionTombstone]
     ) -> ExistingProjectProtection {
         let projectsDirectory = scopeDirectoryURL(for: scope)
             .appendingPathComponent("projects", isDirectory: true)
@@ -615,20 +907,32 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
         guard let indexData = try? Data(contentsOf: projectIndexURL(for: scope)),
               let index = try? decoder.decode(ProjectIndex.self, from: indexData)
         else {
-            let recoveredProjectIDs = directoryNames.compactMap { directoryName -> NovelProject.ID? in
+            var recoveredProjectIDs: [NovelProject.ID] = []
+            var protectedDirectoryNames = Set<String>()
+            var updatedAtByProjectID: [NovelProject.ID: Date] = [:]
+            for directoryName in directoryNames {
+                guard !incomingDirectoryNames.contains(directoryName) else { continue }
                 let metadataURL = projectsDirectory
                     .appendingPathComponent(directoryName, isDirectory: true)
                     .appendingPathComponent("project.json", isDirectory: false)
                 guard let data = try? Data(contentsOf: metadataURL),
-                      let project = try? projectCodec.decode(data).project,
-                      !incomingProjectIDs.contains(project.id) else {
-                    return nil
+                      let project = try? projectCodec.decode(data).project else {
+                    protectedDirectoryNames.insert(directoryName)
+                    continue
                 }
-                return project.id
+                guard !incomingProjectIDs.contains(project.id) else { continue }
+                if let tombstone = tombstonesByProjectID[project.id],
+                   tombstone.deletedAt >= project.updatedAtDate {
+                    continue
+                }
+                recoveredProjectIDs.append(project.id)
+                protectedDirectoryNames.insert(directoryName)
+                updatedAtByProjectID[project.id] = project.updatedAtDate
             }
             return ExistingProjectProtection(
                 indexedProjectIDs: recoveredProjectIDs,
-                directoryNames: directoryNames.subtracting(incomingDirectoryNames)
+                directoryNames: protectedDirectoryNames,
+                updatedAtByProjectID: updatedAtByProjectID
             )
         }
 
@@ -636,21 +940,30 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
         var protectedDirectoryNames = directoryNames.subtracting(
             Set(index.projectIDs.map(sanitizedStorageComponent))
         )
+        var updatedAtByProjectID: [NovelProject.ID: Date] = [:]
 
         for projectID in index.projectIDs where !incomingProjectIDs.contains(projectID) {
             let metadataURL = projectMetadataURL(for: projectID, scope: scope)
             guard let data = try? Data(contentsOf: metadataURL),
-                  (try? projectCodec.decode(data)) != nil
+                  let project = try? projectCodec.decode(data).project
             else {
                 protectedProjectIDs.append(projectID)
                 protectedDirectoryNames.insert(sanitizedStorageComponent(projectID))
                 continue
             }
+            if let tombstone = tombstonesByProjectID[projectID],
+               tombstone.deletedAt >= project.updatedAtDate {
+                continue
+            }
+            protectedProjectIDs.append(projectID)
+            protectedDirectoryNames.insert(sanitizedStorageComponent(projectID))
+            updatedAtByProjectID[projectID] = project.updatedAtDate
         }
 
         return ExistingProjectProtection(
             indexedProjectIDs: protectedProjectIDs,
-            directoryNames: protectedDirectoryNames
+            directoryNames: protectedDirectoryNames,
+            updatedAtByProjectID: updatedAtByProjectID
         )
     }
 
@@ -659,21 +972,11 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
         try fileManager.createDirectory(at: chaptersDirectory, withIntermediateDirectories: true)
         let chapterIndexWasReadable = loadChapterIndex(for: project.id, scope: scope) != nil
 
-        var metadata = project
-        metadata.chapterDrafts = []
-        try writeIfChanged(try projectCodec.encode(metadata), to: projectMetadataURL(for: project.id, scope: scope))
-
         let chapterCatalog = resolvedChapterCatalog(
             for: project,
             preservingStoredChapters: !chapterIndexWasReadable,
             scope: scope
         )
-        let chapterIndex = ChapterIndex(
-            version: 3,
-            chapterIDs: chapterCatalog.map(\.id),
-            chapters: chapterCatalog
-        )
-        try writeIfChanged(try encoder.encode(chapterIndex), to: chapterIndexURL(for: project.id, scope: scope))
 
         for chapterDraft in project.chapterDrafts {
             let chapterData = try encoder.encode(chapterDraft)
@@ -682,6 +985,17 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
                 to: chapterURL(for: chapterDraft.id, projectID: project.id, scope: scope)
             )
         }
+
+        var metadata = project
+        metadata.chapterDrafts = []
+        try writeIfChanged(try projectCodec.encode(metadata), to: projectMetadataURL(for: project.id, scope: scope))
+
+        let chapterIndex = ChapterIndex(
+            version: 3,
+            chapterIDs: chapterCatalog.map(\.id),
+            chapters: chapterCatalog
+        )
+        try writeIfChanged(try encoder.encode(chapterIndex), to: chapterIndexURL(for: project.id, scope: scope))
 
         if chapterIndexWasReadable {
             try removeDeletedChapterFiles(
@@ -731,8 +1045,20 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
         }
 
         try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: url, options: .atomic)
+        try testHooks.beforeAtomicWrite?(url)
+        try DurableAtomicFileWriter.write(data, to: url)
         writeCache.set(fingerprint, for: url)
+    }
+
+    private func loadProjectDeletionTombstonesWithoutLock(
+        for scope: String?
+    ) -> [ProjectDeletionTombstone] {
+        let indexURL = projectIndexURL(for: scope)
+        guard let indexData = try? Data(contentsOf: indexURL),
+              let index = try? decoder.decode(ProjectIndex.self, from: indexData) else {
+            return []
+        }
+        return ProjectDeletionTombstone.normalized(index.deletedProjects)
     }
 
     /// Deterministic content hash. Data.hashValue is seeded per-process, so it
@@ -776,6 +1102,7 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
 
         let expectedFileNames = Set(chapterIDs.map { "\(sanitizedStorageComponent($0)).json" })
         for url in directoryContents where url.lastPathComponent != "index.json" && !expectedFileNames.contains(url.lastPathComponent) {
+            try testHooks.beforeRemoveItem?(url)
             try fileManager.removeItem(at: url)
             writeCache.remove(url)
         }
@@ -940,12 +1267,17 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
         metadata.chapterDrafts = []
         try writeIfChanged(try projectCodec.encode(metadata), to: projectMetadataURL(for: project.id, scope: scope))
 
-        let existingProjectIDs = (try? Data(contentsOf: projectIndexURL(for: scope)))
-            .flatMap { try? decoder.decode(ProjectIndex.self, from: $0) }?
-            .projectIDs ?? []
+        let existingIndex = (try? Data(contentsOf: projectIndexURL(for: scope)))
+            .flatMap { try? decoder.decode(ProjectIndex.self, from: $0) }
+        let existingProjectIDs = existingIndex?.projectIDs ?? []
         let projectIDs = uniqueIDs(existingProjectIDs + [project.id])
         try writeIfChanged(
-            try encoder.encode(ProjectIndex(version: 2, projectIDs: projectIDs)),
+            try encoder.encode(ProjectIndex(
+                projectIDs: projectIDs,
+                deletedProjects: (existingIndex?.deletedProjects ?? []).filter {
+                    $0.projectID != project.id
+                }
+            )),
             to: projectIndexURL(for: scope)
         )
         try rebuildChapterIndexPreservingFiles(
@@ -1120,6 +1452,116 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
         formatter.formatOptions = [.withInternetDateTime, .withDashSeparatorInDate, .withColonSeparatorInTime, .withFractionalSeconds]
         return formatter.string(from: Date())
             .replacingOccurrences(of: ":", with: "-")
+    }
+}
+
+nonisolated private enum DurableAtomicFileWriter {
+    static func write(_ data: Data, to destinationURL: URL) throws {
+        let directoryURL = destinationURL.deletingLastPathComponent()
+        let temporaryURL = directoryURL.appendingPathComponent(
+            ".\(destinationURL.lastPathComponent).\(UUID().uuidString).tmp",
+            isDirectory: false
+        )
+
+        var descriptor: Int32 = temporaryURL.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else { return -1 }
+            return Darwin.open(
+                path,
+                O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
+                mode_t(S_IRUSR | S_IWUSR)
+            )
+        }
+        guard descriptor >= 0 else {
+            throw posixError("create temporary file", url: temporaryURL)
+        }
+
+        var shouldRemoveTemporaryFile = true
+        defer {
+            if descriptor >= 0 {
+                _ = Darwin.close(descriptor)
+            }
+            if shouldRemoveTemporaryFile {
+                temporaryURL.withUnsafeFileSystemRepresentation { path in
+                    if let path {
+                        _ = Darwin.unlink(path)
+                    }
+                }
+            }
+        }
+
+        try data.withUnsafeBytes { bytes in
+            var offset = 0
+            while offset < bytes.count {
+                guard let baseAddress = bytes.baseAddress else { break }
+                let written = Darwin.write(
+                    descriptor,
+                    baseAddress.advanced(by: offset),
+                    bytes.count - offset
+                )
+                guard written >= 0 else {
+                    if errno == EINTR { continue }
+                    throw posixError("write temporary file", url: temporaryURL)
+                }
+                guard written > 0 else {
+                    throw posixError(
+                        "write temporary file",
+                        url: temporaryURL,
+                        code: EIO
+                    )
+                }
+                offset += written
+            }
+        }
+
+        guard Darwin.fsync(descriptor) == 0 else {
+            throw posixError("fsync temporary file", url: temporaryURL)
+        }
+        // F_FULLFSYNC asks macOS to flush the drive's volatile write cache.
+        // Filesystems that do not implement it still retain the fsync above.
+        _ = Darwin.fcntl(descriptor, F_FULLFSYNC)
+        guard Darwin.close(descriptor) == 0 else {
+            descriptor = -1
+            throw posixError("close temporary file", url: temporaryURL)
+        }
+        descriptor = -1
+
+        let renameResult: Int32 = temporaryURL.withUnsafeFileSystemRepresentation { sourcePath -> Int32 in
+            destinationURL.withUnsafeFileSystemRepresentation { destinationPath -> Int32 in
+                guard let sourcePath, let destinationPath else { return -1 }
+                return Darwin.rename(sourcePath, destinationPath)
+            }
+        }
+        guard renameResult == 0 else {
+            throw posixError("atomically replace destination", url: destinationURL)
+        }
+        shouldRemoveTemporaryFile = false
+
+        let directoryDescriptor: Int32 = directoryURL.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else { return -1 }
+            return Darwin.open(path, O_RDONLY | O_CLOEXEC)
+        }
+        guard directoryDescriptor >= 0 else {
+            throw posixError("open parent directory", url: directoryURL)
+        }
+        defer { _ = Darwin.close(directoryDescriptor) }
+        guard Darwin.fsync(directoryDescriptor) == 0 else {
+            throw posixError("fsync parent directory", url: directoryURL)
+        }
+    }
+
+    private static func posixError(
+        _ operation: String,
+        url: URL,
+        code: Int32 = errno
+    ) -> NSError {
+        NSError(
+            domain: NSPOSIXErrorDomain,
+            code: Int(code),
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Failed to \(operation) at \(url.path): \(String(cString: strerror(code)))"
+            ]
+        )
     }
 }
 
