@@ -1,7 +1,35 @@
+import CloudKit
 import XCTest
 @testable import OpenWriting
 
 final class DomainModelsTests: XCTestCase {
+    func testNovelProjectInitializerCarriesStructuredForeshadowAndPlotThreads() {
+        let foreshadow = ForeshadowEntry(title: "旧钥匙", firstChapter: 1)
+        let thread = PlotThread(title: "追查身世")
+        let project = NovelProject(
+            id: "structured-project",
+            title: "结构化项目",
+            genre: "悬疑",
+            summary: "摘要",
+            updatedAt: "2026-07-27T00:00:00Z",
+            currentChapterTitle: "第一章",
+            currentChapterNumber: 1,
+            writtenChapters: 0,
+            chapterFocus: "",
+            draftText: "",
+            outlineText: "",
+            referenceContextText: "",
+            specialRequirements: "",
+            wordTargetText: "",
+            continuityNotes: "",
+            referenceDocuments: [],
+            foreshadowList: ForeshadowList(entries: [foreshadow]),
+            plotThreadList: PlotThreadList(threads: [thread])
+        )
+
+        XCTAssertEqual(project.foreshadowList.entries.map(\.id), [foreshadow.id])
+        XCTAssertEqual(project.plotThreadList.threads.map(\.id), [thread.id])
+    }
 
     // MARK: - NovelLength Tests
 
@@ -524,7 +552,8 @@ final class DomainModelsTests: XCTestCase {
         appState.activeAccount = account
         appState.recentProjects = [project]
 
-        XCTAssertTrue(appState.logoutAccount(removingLocalData: true))
+        let didLogout = await appState.logoutAccount(removingLocalData: true)
+        XCTAssertTrue(didLogout)
         try await Task.sleep(for: .milliseconds(350))
 
         XCTAssertNil(store.loadProjects(for: account.userID))
@@ -532,6 +561,57 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertNil(userDefaults.object(forKey: AppState.recentProjectsStorageKey(for: account.userID)))
         XCTAssertNil(userDefaults.object(forKey: AppState.projectSnapshotTimestampStorageKey(for: account.userID)))
         XCTAssertNil(appState.activeAccount)
+    }
+
+    @MainActor
+    func testLogoutFlushesPendingAccountProjectsBeforeSwitchingScope() async throws {
+        let store = makeIsolatedProjectStore()
+        let account = AppleAccountProfile(
+            userID: "apple-user-\(UUID().uuidString)",
+            email: "writer@example.com",
+            fullName: "Writer"
+        )
+        let project = makeProject(
+            id: "pending-account-project",
+            title: "退出前保存",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        let appState = AppState(
+            userDefaults: makeIsolatedUserDefaults(),
+            projectStore: store,
+            credentialStore: makeCredentialStore()
+        )
+        appState.activeAccount = account
+        appState.recentProjects = [project]
+
+        let didLogout = await appState.logoutAccount()
+        XCTAssertTrue(didLogout)
+        XCTAssertEqual(store.loadProjects(for: account.userID)?.map(\.id), [project.id])
+    }
+
+    @MainActor
+    func testAccountBindingFlushesLocalProjectsBeforeCopyingScope() async throws {
+        let store = makeIsolatedProjectStore()
+        let project = makeProject(
+            id: "pending-local-project",
+            title: "登录前保存",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        let account = AppleAccountProfile(
+            userID: "apple-user-\(UUID().uuidString)",
+            email: "writer@example.com",
+            fullName: "Writer"
+        )
+        let appState = AppState(
+            userDefaults: makeIsolatedUserDefaults(),
+            projectStore: store,
+            credentialStore: makeCredentialStore()
+        )
+        appState.recentProjects = [project]
+
+        let didBind = await appState.bindAppleAccount(account)
+        XCTAssertTrue(didBind)
+        XCTAssertEqual(store.loadProjects(for: account.userID)?.map(\.id), [project.id])
     }
 
     @MainActor
@@ -553,6 +633,31 @@ final class DomainModelsTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(350))
 
         XCTAssertEqual(store.loadProjects(for: nil)?.map(\.title), ["后台保存项目"])
+    }
+
+    @MainActor
+    func testExplicitChapterSaveReturnsOnlyAfterChapterIsOnDisk() async throws {
+        let store = makeIsolatedProjectStore()
+        let appState = AppState(
+            userDefaults: makeIsolatedUserDefaults(),
+            projectStore: store,
+            credentialStore: makeCredentialStore()
+        )
+        var project = makeProject(
+            id: "explicit-save-project",
+            title: "显式保存",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        project.draftText = "必须在返回成功前写入磁盘。"
+        appState.recentProjects = [project]
+
+        let result = await appState.saveCurrentChapterDraft(for: project.id)
+
+        let savedChapter = try XCTUnwrap(result?.chapterDraft)
+        XCTAssertEqual(
+            store.loadChapterDraft(savedChapter.id, for: project.id, scope: nil)?.content,
+            project.draftText
+        )
     }
 
     @MainActor
@@ -586,7 +691,7 @@ final class DomainModelsTests: XCTestCase {
     }
 
     @MainActor
-    func testLogoutInvalidatesPendingCloudSaveGeneration() {
+    func testLogoutInvalidatesPendingCloudSaveGeneration() async {
         let userDefaults = makeIsolatedUserDefaults()
         let store = makeIsolatedProjectStore()
         let account = AppleAccountProfile(
@@ -602,10 +707,11 @@ final class DomainModelsTests: XCTestCase {
         appState.activeAccount = account
         appState.cloudSaveGeneration = 41
 
-        XCTAssertTrue(appState.logoutAccount())
+        let didLogout = await appState.logoutAccount()
+        XCTAssertTrue(didLogout)
 
         XCTAssertNil(appState.cloudSaveTask)
-        XCTAssertEqual(appState.cloudSaveGeneration, 42)
+        XCTAssertGreaterThan(appState.cloudSaveGeneration, 41)
         XCTAssertNil(appState.activeAccount)
     }
 
@@ -639,6 +745,126 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertNotEqual(firstAccountPlan.snapshotRecordName, secondAccountPlan.snapshotRecordName)
         XCTAssertNotEqual(firstAccountPlan.projectRecordNames, secondAccountPlan.projectRecordNames)
         XCTAssertNotEqual(firstAccountPlan.chapterRecordNames, secondAccountPlan.chapterRecordNames)
+    }
+
+    func testRevisionQualifiedCloudKitRecordNamesMatchIOSContractAndLegacyLayout() {
+        let indexRecord = CKRecord(
+            recordType: "ProjectSnapshot",
+            recordID: CKRecord.ID(recordName: "snapshot_apple_user")
+        )
+        indexRecord["payloadRevision"] = "revision-7" as NSString
+
+        XCTAssertEqual(ICloudProjectStore.payloadRevision(from: indexRecord), "revision-7")
+        XCTAssertEqual(
+            ICloudProjectStore.projectRecordName(
+                for: "project-1",
+                scope: "apple user",
+                revision: "revision-7"
+            ),
+            "project_apple_user_revision-7_project-1"
+        )
+        XCTAssertEqual(
+            ICloudProjectStore.chapterRecordName(
+                for: "chapter-1",
+                projectID: "project-1",
+                scope: "apple user",
+                revision: "revision-7"
+            ),
+            "chapter_apple_user_revision-7_project-1_chapter-1"
+        )
+        XCTAssertEqual(
+            ICloudProjectStore.projectRecordName(for: "project-1", scope: "apple user"),
+            "project_apple_user_project-1"
+        )
+    }
+
+    func testIndexedCloudKitReaderUsesRevisionAndLegacyRecordFixtures() throws {
+        let scope = "apple user"
+        let revisionIndex = CKRecord(
+            recordType: "ProjectSnapshot",
+            recordID: CKRecord.ID(recordName: "snapshot_apple_user")
+        )
+        revisionIndex["projectIDs"] = ["project-1"] as NSArray
+        revisionIndex["payloadRevision"] = "revision-7" as NSString
+        let revisionProjectID = try XCTUnwrap(
+            ICloudProjectStore.indexedProjectRecordIDs(from: revisionIndex, scope: scope)?.first
+        )
+        let revisionProject = CKRecord(recordType: "ProjectPayload", recordID: revisionProjectID)
+        revisionProject["chapterIDs"] = ["chapter-1"] as NSArray
+
+        XCTAssertEqual(revisionProjectID.recordName, "project_apple_user_revision-7_project-1")
+        XCTAssertEqual(
+            try ICloudProjectStore.indexedChapterRecordIDs(
+                from: [revisionProjectID: revisionProject],
+                indexRecord: revisionIndex,
+                scope: scope
+            ).map(\.recordName),
+            ["chapter_apple_user_revision-7_project-1_chapter-1"]
+        )
+
+        let legacyIndex = CKRecord(
+            recordType: "ProjectSnapshot",
+            recordID: CKRecord.ID(recordName: "snapshot_apple_user")
+        )
+        legacyIndex["projectIDs"] = ["project-1"] as NSArray
+        XCTAssertEqual(
+            ICloudProjectStore.indexedProjectRecordIDs(from: legacyIndex, scope: scope)?.map(\.recordName),
+            ["project_apple_user_project-1"]
+        )
+    }
+
+    func testIndexedCloudKitReaderRejectsMissingRevisionPayload() throws {
+        let index = CKRecord(
+            recordType: "ProjectSnapshot",
+            recordID: CKRecord.ID(recordName: "snapshot_scope")
+        )
+        index["projectIDs"] = ["project-1"] as NSArray
+        index["payloadRevision"] = "revision-7" as NSString
+
+        XCTAssertThrowsError(
+            try ICloudProjectStore.indexedChapterRecordIDs(
+                from: [:],
+                indexRecord: index,
+                scope: "scope"
+            )
+        ) { error in
+            guard case ICloudProjectStore.StoreError.missingPayload = error else {
+                return XCTFail("Expected missingPayload, got \(error)")
+            }
+        }
+    }
+
+    func testCloudKitBatchingCapsEveryOperationAtTwoHundredRecords() {
+        let batches = ICloudRecordBatching.batches(Array(0..<401))
+
+        XCTAssertEqual(batches.map(\.count), [200, 200, 1])
+        XCTAssertEqual(batches.flatMap { $0 }, Array(0..<401))
+    }
+
+    func testCrossPlatformProjectAndChapterTimestampFixturesDecodeISOAndEpoch() throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let isoProject = try decoder.decode(
+            NovelProject.self,
+            from: Data(#"{"id":"project-iso","title":"ISO","genre":"科幻","summary":"摘要","updatedAt":"2026-07-27T12:34:56Z"}"#.utf8)
+        )
+        let epochProject = try decoder.decode(
+            NovelProject.self,
+            from: Data(#"{"id":"project-epoch","title":"Epoch","genre":"科幻","summary":"摘要","updatedAt":1772000000}"#.utf8)
+        )
+        let isoChapter = try decoder.decode(
+            ChapterDraft.self,
+            from: Data(#"{"id":"chapter-iso","chapterNumber":1,"chapterTitle":"第一章","content":"正文","savedAt":"2026-07-27T12:34:56Z"}"#.utf8)
+        )
+        let epochChapter = try decoder.decode(
+            ChapterDraft.self,
+            from: Data(#"{"id":"chapter-epoch","chapterNumber":2,"chapterTitle":"第二章","content":"正文","savedAt":1772000000}"#.utf8)
+        )
+
+        XCTAssertEqual(isoProject.updatedAtDate.timeIntervalSince1970, 1_785_155_696, accuracy: 1)
+        XCTAssertEqual(epochProject.updatedAtDate.timeIntervalSince1970, 1_772_000_000, accuracy: 0.001)
+        XCTAssertEqual(isoChapter.savedAtDate, isoProject.updatedAtDate)
+        XCTAssertEqual(epochChapter.savedAtDate.timeIntervalSince1970, 1_772_000_000, accuracy: 0.001)
     }
 
     func testCloudKitRecordPlanDeletesOnlyStaleScopedPayloads() {

@@ -192,9 +192,15 @@ private final class AccountPortalState {
             }
 
             let profile = AppleAccountProfile.from(credential: credential, fallback: appState.activeAccount)
-            appState.bindAppleAccount(profile)
-            errorMessage = ""
-            actionMessage = "已连接 \(appState.accountDisplayName)。"
+            Task { @MainActor in
+                if await appState.bindAppleAccount(profile) {
+                    errorMessage = ""
+                    actionMessage = "已连接 \(appState.accountDisplayName)。"
+                } else {
+                    actionMessage = ""
+                    errorMessage = "连接 Apple ID 前保存本机项目失败，请重试。"
+                }
+            }
         case let .failure(error):
             actionMessage = ""
             errorMessage = "Apple ID 登录失败：\(error.localizedDescription)"
@@ -202,15 +208,21 @@ private final class AccountPortalState {
     }
 
     func logout(removingLocalData: Bool = false) {
-        let didRemoveLocalData = appState.logoutAccount(removingLocalData: removingLocalData)
-        if removingLocalData {
-            actionMessage = didRemoveLocalData
-                ? "已断开当前 Apple 账号，并清理该账号在本机的项目资料。"
-                : "已断开当前 Apple 账号，但本机资料清理失败，请稍后重试。"
-        } else {
-            actionMessage = "已断开当前 Apple 账号，本机资料仍保留在设备上。"
+        Task { @MainActor in
+            let didLogout = await appState.logoutAccount(removingLocalData: removingLocalData)
+            if removingLocalData {
+                actionMessage = didLogout
+                    ? "已断开当前 Apple 账号，并清理该账号在本机的项目资料。"
+                    : "已断开当前 Apple 账号，但本机资料清理失败，请稍后重试。"
+            } else if didLogout {
+                actionMessage = "已断开当前 Apple 账号，本机资料仍保留在设备上。"
+            } else {
+                actionMessage = ""
+                errorMessage = "退出账号前保存项目失败，账号仍保持连接。"
+                return
+            }
+            errorMessage = ""
         }
-        errorMessage = ""
     }
 
     func refreshFromICloud() {

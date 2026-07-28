@@ -2,6 +2,11 @@ import AuthenticationServices
 import Foundation
 import Observation
 
+struct CachedStorageHealthReport {
+    let report: StorageHealthReport
+    let checkedAt: Date
+}
+
 @MainActor
 @Observable
 final class AppState {
@@ -20,6 +25,8 @@ final class AppState {
     @ObservationIgnored var cloudSaveGeneration: UInt64 = 0
     @ObservationIgnored var isCloudSynchronizationInProgress = false
     @ObservationIgnored var recentProjectsPersistTasks: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored var storageHealthCache: [String: CachedStorageHealthReport] = [:]
+    @ObservationIgnored var lastProjectPersistenceErrorMessage: String?
     @ObservationIgnored var isHydratingAccountScopedData = false
     @ObservationIgnored var isApplyingProviderConfiguration = false
     @ObservationIgnored var validationTask: Task<Void, Never>?
@@ -992,6 +999,16 @@ final class AppState {
     }
 
     func storageHealthReport(for projectID: NovelProject.ID) -> StorageHealthReport {
+        let cacheKey = [
+            currentStorageScope ?? "local",
+            projectID,
+            activeProjectID ?? "none"
+        ].joined(separator: "::")
+        if let cached = storageHealthCache[cacheKey],
+           Date().timeIntervalSince(cached.checkedAt) < 3 {
+            return cached.report
+        }
+
         var report = projectStore.storageHealthReport(
             for: projectID,
             scope: currentStorageScope
@@ -1018,7 +1035,18 @@ final class AppState {
             }
         }
 
+        storageHealthCache[cacheKey] = CachedStorageHealthReport(report: report, checkedAt: Date())
         return report
+    }
+
+    func invalidateStorageHealthCache(for projectID: NovelProject.ID? = nil) {
+        guard let projectID else {
+            storageHealthCache.removeAll()
+            return
+        }
+        storageHealthCache = storageHealthCache.filter { key, _ in
+            !key.contains("::\(projectID)::")
+        }
     }
 
     @discardableResult
@@ -1035,6 +1063,7 @@ final class AppState {
             )
 
             if result.didChangeStore {
+                storageHealthCache.removeAll()
                 if let reloadedProjects = Self.loadRecentProjects(
                     for: currentStorageScope,
                     from: userDefaults,
@@ -1134,7 +1163,7 @@ final class AppState {
         }
     }
 
-    func saveCurrentChapterDraft(for projectID: NovelProject.ID) -> ChapterDraftSaveResult? {
+    func saveCurrentChapterDraft(for projectID: NovelProject.ID) async -> ChapterDraftSaveResult? {
         var result: ChapterDraftSaveResult?
 
         if let project = project(for: projectID),
@@ -1196,9 +1225,8 @@ final class AppState {
         }
 
         guard result != nil else { return nil }
-        guard persistRecentProjects(recentProjects, for: currentStorageScope) else {
-            return nil
-        }
+        guard await flushProjectPersistence() else { return nil }
+        invalidateStorageHealthCache(for: projectID)
         return result
     }
 
@@ -1899,22 +1927,8 @@ final class AppState {
         }
     }
 
-    private func makeProjectIdentifier(from title: String) -> String {
-        let slug = title
-            .lowercased()
-            .replacingOccurrences(of: " ", with: "-")
-            .filter { $0.isLetter || $0.isNumber || $0 == "-" }
-
-        let base = slug.isEmpty ? "project" : slug
-        var candidate = base
-        var suffix = 2
-
-        while recentProjects.contains(where: { $0.id == candidate }) {
-            candidate = "\(base)-\(suffix)"
-            suffix += 1
-        }
-
-        return candidate
+    private func makeProjectIdentifier(from _: String) -> String {
+        NovelProject.makeStorageIdentifier()
     }
 
     static let defaultRecentProjects: [NovelProject] = []

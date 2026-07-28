@@ -231,7 +231,9 @@ struct ProjectSavedChaptersSheet: View {
                     },
                     onSaveFirst: {
                         pendingChapterLoad = nil
-                        _ = appState.saveCurrentChapterDraft(for: project.id)
+                        Task { @MainActor in
+                            _ = await appState.saveCurrentChapterDraft(for: project.id)
+                        }
                     },
                     onCancel: {
                         pendingChapterLoad = nil

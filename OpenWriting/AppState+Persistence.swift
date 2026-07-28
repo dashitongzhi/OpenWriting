@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import Security
 
 // MARK: - Storage Keys & Persistence
@@ -270,22 +271,22 @@ extension AppState {
     }
 
     @discardableResult
-    func persistRecentProjects(_ projects: [NovelProject], for scope: String?) -> Bool {
-        cancelPendingProjectPersistence(for: scope)
-        let persistenceSnapshot = projects.map { $0.detachedPersistenceSnapshot() }
+    func flushProjectPersistence() async -> Bool {
+        lastProjectPersistenceErrorMessage = nil
+        let scope = currentStorageScope
+        let storageKey = Self.recentProjectsStorageKey(for: scope)
+        recentProjectsPersistTasks[storageKey]?.cancel()
+        recentProjectsPersistTasks.removeValue(forKey: storageKey)
+        let snapshot = recentProjects.map { $0.detachedPersistenceSnapshot() }
 
         do {
-            try Self.waitForProjectPersistence {
-                try await self.projectPersistence.saveNow(persistenceSnapshot, for: scope)
-            }
+            try await projectPersistence.saveNow(snapshot, for: scope)
             Self.clearLegacyRecentProjectsFromUserDefaults(for: scope, userDefaults: userDefaults)
+            invalidateStorageHealthCache()
             return true
         } catch {
-            setCloudSyncStatus(
-                title: "保存失败",
-                symbolName: "exclamationmark.triangle",
-                message: error.localizedDescription
-            )
+            lastProjectPersistenceErrorMessage = error.localizedDescription
+            AppLogger.persistence.error("Final project flush failed: \(error.localizedDescription, privacy: .public)")
             return false
         }
     }
@@ -300,6 +301,7 @@ extension AppState {
                 let didSave = try await projectPersistence.saveAfterDelay(persistenceSnapshot, for: scope)
                 guard didSave else { return }
                 Self.clearLegacyRecentProjectsFromUserDefaults(for: scope, userDefaults: userDefaults)
+                invalidateStorageHealthCache()
             } catch is CancellationError {
                 return
             } catch {
@@ -316,32 +318,9 @@ extension AppState {
         let storageKey = Self.recentProjectsStorageKey(for: scope)
         recentProjectsPersistTasks[storageKey]?.cancel()
         recentProjectsPersistTasks.removeValue(forKey: storageKey)
-        try? Self.waitForProjectPersistence {
-            await self.projectPersistence.cancel(for: scope)
+        Task {
+            await projectPersistence.cancel(for: scope)
         }
-    }
-
-    nonisolated static func waitForProjectPersistence(
-        _ operation: @escaping @Sendable () async throws -> Void
-    ) throws {
-        let semaphore = DispatchSemaphore(value: 0)
-        let blockingResult = ProjectPersistenceBlockingResult()
-
-        Task.detached {
-            do {
-                try await operation()
-                blockingResult.store(.success(()))
-            } catch {
-                blockingResult.store(.failure(error))
-            }
-            semaphore.signal()
-        }
-
-        semaphore.wait()
-        guard let result = blockingResult.get() else {
-            throw CocoaError(.fileWriteUnknown)
-        }
-        try result.get()
     }
 
     func persistAPIKey() {

@@ -22,10 +22,11 @@ extension AppState {
         return "登录 Apple ID 后，项目会按 Apple 账户隔离，并同步到 iCloud。"
     }
 
-    func bindAppleAccount(_ profile: AppleAccountProfile) {
+    @discardableResult
+    func bindAppleAccount(_ profile: AppleAccountProfile) async -> Bool {
         let normalizedProfile = Self.normalizedAppleAccount(profile)
         let targetScope = normalizedProfile.userID
-        cancelPendingProjectPersistence(for: currentStorageScope)
+        guard await flushProjectPersistence() else { return false }
 
         if Self.loadRecentProjects(for: targetScope, from: userDefaults, projectStore: projectStore) == nil {
             Self.copyAccountScopedProjectData(
@@ -48,10 +49,11 @@ extension AppState {
             await refreshCommerceEntitlements()
             await synchronizeWithICloud(forcePull: false)
         }
+        return true
     }
 
     @discardableResult
-    func logoutAccount(removingLocalData: Bool = false) -> Bool {
+    func logoutAccount(removingLocalData: Bool = false) async -> Bool {
         guard let account = activeAccount else { return true }
         cloudSaveTask?.cancel()
         cloudSaveTask = nil
@@ -61,9 +63,7 @@ extension AppState {
             cancelPendingProjectPersistence(for: account.userID)
 
             do {
-                try Self.waitForProjectPersistence {
-                    try await self.projectPersistence.cancelAndRemove(for: account.userID)
-                }
+                try await projectPersistence.cancelAndRemove(for: account.userID)
                 userDefaults.removeObject(forKey: Self.activeProjectIDStorageKey(for: account.userID))
                 userDefaults.removeObject(forKey: Self.recentProjectsStorageKey(for: account.userID))
                 userDefaults.removeObject(forKey: Self.projectSnapshotTimestampStorageKey(for: account.userID))
@@ -71,6 +71,8 @@ extension AppState {
                 didRemoveLocalData = false
                 AppLogger.persistence.error("Account local data cleanup failed: \(error.localizedDescription, privacy: .public)")
             }
+        } else if !(await flushProjectPersistence()) {
+            return false
         }
         activeAccount = nil
         currentProjectSnapshotTimestamp = Self.doubleValue(
@@ -92,6 +94,7 @@ extension AppState {
 
     func reloadAccountScopedProjects() {
         cancelPendingProjectPersistence(for: currentStorageScope)
+        invalidateStorageHealthCache()
         isHydratingAccountScopedData = true
         recentProjects = Self.loadRecentProjects(
             for: currentStorageScope,

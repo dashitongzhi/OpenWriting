@@ -21,6 +21,7 @@ struct OpenWritingApp: App {
 
 @MainActor
 final class OpenWritingAppDelegate: NSObject, NSApplicationDelegate {
+    private var isFlushingBeforeTermination = false
     private static var isRunningUnitTests: Bool {
         let environment = ProcessInfo.processInfo.environment
 
@@ -62,5 +63,17 @@ final class OpenWritingAppDelegate: NSObject, NSApplicationDelegate {
         }
 
         return true
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !Self.isRunningUnitTests else { return .terminateNow }
+        guard !isFlushingBeforeTermination else { return .terminateLater }
+        isFlushingBeforeTermination = true
+
+        Task { @MainActor in
+            _ = await AppRuntime.shared.appState.flushProjectPersistence()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 }

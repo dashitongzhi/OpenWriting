@@ -36,13 +36,6 @@ extension AppState {
             return
         }
 
-        let snapshotProjects = hydratedProjectsForPersistenceSnapshot(recentProjects)
-        let snapshot = AccountProjectSnapshot(
-            activeProjectID: activeProjectID,
-            recentProjects: snapshotProjects,
-            updatedAt: Date(timeIntervalSince1970: currentProjectSnapshotTimestamp)
-        )
-
         cloudSaveTask = Task { [cloudStore] in
             do {
                 try await Task.sleep(for: .milliseconds(900))
@@ -51,10 +44,18 @@ extension AppState {
                 return
             }
 
-            let shouldSave = await MainActor.run {
-                self.cloudSaveGeneration == saveGeneration && self.currentStorageScope == scope
+            let snapshot = await MainActor.run { () -> AccountProjectSnapshot? in
+                guard self.cloudSaveGeneration == saveGeneration,
+                      self.currentStorageScope == scope else {
+                    return nil
+                }
+                return AccountProjectSnapshot(
+                    activeProjectID: self.activeProjectID,
+                    recentProjects: self.hydratedProjectsForPersistenceSnapshot(self.recentProjects),
+                    updatedAt: Date(timeIntervalSince1970: self.currentProjectSnapshotTimestamp)
+                )
             }
-            guard shouldSave else { return }
+            guard let snapshot else { return }
 
             let availability = await cloudStore.availability()
             do {
@@ -144,7 +145,7 @@ extension AppState {
             case .authorized:
                 return true
             case .revoked, .notFound:
-                logoutAccount()
+                await logoutAccount()
                 setCloudSyncStatus(
                     title: "本机保存",
                     symbolName: "icloud.slash",

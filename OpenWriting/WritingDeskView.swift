@@ -2565,6 +2565,22 @@ struct WritingDeskView: View {
         preSaveReview: ChapterReviewResult? = nil,
         validatedConfiguration: AIConnectionConfiguration? = nil
     ) {
+        Task { @MainActor in
+            await performCurrentChapterDraftSave(
+                for: project,
+                advanceToNextChapter: advanceToNextChapter,
+                preSaveReview: preSaveReview,
+                validatedConfiguration: validatedConfiguration
+            )
+        }
+    }
+
+    private func performCurrentChapterDraftSave(
+        for project: NovelProject,
+        advanceToNextChapter: Bool = false,
+        preSaveReview: ChapterReviewResult? = nil,
+        validatedConfiguration: AIConnectionConfiguration? = nil
+    ) async {
         let latestProject = appState.project(for: project.id) ?? project
         let trimmedDraft = latestProject.draftText.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -2575,7 +2591,7 @@ struct WritingDeskView: View {
 
         if latestProject.storyLength.supportsVolumePlanning, preSaveReview == nil {
             guard let configuration = validatedConfiguration ?? appState.aiConfiguration else {
-                saveLongformChapterWithoutModel(for: latestProject, advanceToNextChapter: advanceToNextChapter)
+                await saveLongformChapterWithoutModel(for: latestProject, advanceToNextChapter: advanceToNextChapter)
                 return
             }
 
@@ -2600,7 +2616,7 @@ struct WritingDeskView: View {
             isSavingChapter = true
             aiStatusMessage = "长篇章节保存前正在运行质量审查，只有通过后才会收录进已保存章节…"
 
-            Task {
+            Task { @MainActor in
                 do {
                     let review = try await ChapterQualityReviewer.reviewChapter(
                         project: reviewProject,
@@ -2609,49 +2625,45 @@ struct WritingDeskView: View {
                         configuration: configuration
                     )
 
-                    await MainActor.run {
-                        guard let currentProject = appState.project(for: project.id),
-                              ChapterWritingSessionPolicy.isCurrent(saveContext, for: currentProject)
-                        else {
-                            isSavingChapter = false
-                            aiStatusMessage = "保存审查期间正文或章节位置已经变化，旧审查结果已丢弃。请按当前内容重新保存。"
-                            revealWritingDeskWindow(for: project.id)
-                            return
-                        }
-
-                        latestChapterReview = review
-                        latestChapterReviewDraftContext = ChapterWritingSessionPolicy.chapterSaveValidationContext(for: currentProject)
-                        appState.applyEnhancedWritingUpdate(
-                            nil,
-                            review: review,
-                            reviewedChapter: ChapterReviewTarget(
-                                volumeNumber: currentProject.currentVolumeNumber,
-                                chapterNumber: currentProject.currentChapterNumber,
-                                chapterTitle: currentProject.currentChapterTitle
-                            ),
-                            for: project.id
-                        )
-
-                        if let blockingMessage = longformChapterSaveBlockingMessage(review: review, project: currentProject) {
-                            isSavingChapter = false
-                            aiStatusMessage = blockingMessage
-                            revealWritingDeskWindow(for: project.id)
-                            return
-                        }
-
-                        saveCurrentChapterDraft(
-                            for: currentProject,
-                            advanceToNextChapter: advanceToNextChapter,
-                            preSaveReview: review,
-                            validatedConfiguration: configuration
-                        )
-                    }
-                } catch {
-                    await MainActor.run {
+                    guard let currentProject = appState.project(for: project.id),
+                          ChapterWritingSessionPolicy.isCurrent(saveContext, for: currentProject)
+                    else {
                         isSavingChapter = false
-                        aiStatusMessage = "长篇章节保存前审查失败，当前章未收录：\(error.localizedDescription)"
+                        aiStatusMessage = "保存审查期间正文或章节位置已经变化，旧审查结果已丢弃。请按当前内容重新保存。"
                         revealWritingDeskWindow(for: project.id)
+                        return
                     }
+
+                    latestChapterReview = review
+                    latestChapterReviewDraftContext = ChapterWritingSessionPolicy.chapterSaveValidationContext(for: currentProject)
+                    appState.applyEnhancedWritingUpdate(
+                        nil,
+                        review: review,
+                        reviewedChapter: ChapterReviewTarget(
+                            volumeNumber: currentProject.currentVolumeNumber,
+                            chapterNumber: currentProject.currentChapterNumber,
+                            chapterTitle: currentProject.currentChapterTitle
+                        ),
+                        for: project.id
+                    )
+
+                    if let blockingMessage = longformChapterSaveBlockingMessage(review: review, project: currentProject) {
+                        isSavingChapter = false
+                        aiStatusMessage = blockingMessage
+                        revealWritingDeskWindow(for: project.id)
+                        return
+                    }
+
+                    await performCurrentChapterDraftSave(
+                        for: currentProject,
+                        advanceToNextChapter: advanceToNextChapter,
+                        preSaveReview: review,
+                        validatedConfiguration: configuration
+                    )
+                } catch {
+                    isSavingChapter = false
+                    aiStatusMessage = "长篇章节保存前审查失败，当前章未收录：\(error.localizedDescription)"
+                    revealWritingDeskWindow(for: project.id)
                 }
             }
             return
@@ -2660,7 +2672,7 @@ struct WritingDeskView: View {
         isSavingChapter = true
 
         if latestProject.hasSavedCurrentChapter {
-            guard let result = completeChapterDraftSave(for: project, statusPrefix: "已按当前标题更新") else {
+            guard let result = await completeChapterDraftSave(for: project, statusPrefix: "已按当前标题更新") else {
                 isSavingChapter = false
                 return
             }
@@ -2706,7 +2718,7 @@ struct WritingDeskView: View {
         guard let configuration = validatedConfiguration ?? appState.aiConfiguration else {
             let fallbackTitle = fallbackChapterTitle(for: latestProject)
             appState.updateCurrentChapterTitle(fallbackTitle, for: project.id)
-            if let result = completeChapterDraftSave(for: project, statusPrefix: "模型未配置，已按当前标题保存") {
+            if let result = await completeChapterDraftSave(for: project, statusPrefix: "模型未配置，已按当前标题保存") {
                 let longformCommit = applyLocalLongformUpdates(after: result, for: project.id)
                 let canAdvance = advanceToNextChapter && (longformCommit?.isAccepted ?? true)
                 if advanceToNextChapter {
@@ -2739,7 +2751,7 @@ struct WritingDeskView: View {
             ChapterWritingSessionPolicy.chapterSaveValidationContext(for: latestProject)
         }
 
-        Task {
+        Task { @MainActor in
             do {
                 let title = try await appState.aiService.suggestChapterTitle(
                     configuration: configuration,
@@ -2747,66 +2759,62 @@ struct WritingDeskView: View {
                     chapterContent: trimmedDraft
                 )
 
-                await MainActor.run {
-                    if let reviewedSaveContext {
-                        guard let currentProject = appState.project(for: project.id),
-                              ChapterWritingSessionPolicy.isCurrent(reviewedSaveContext, for: currentProject)
-                        else {
-                            isSavingChapter = false
-                            aiStatusMessage = "拟标题期间正文、章节位置或长篇上下文已经变化，旧保存审查结果已丢弃。请按当前内容重新保存。"
-                            revealWritingDeskWindow(for: project.id)
-                            return
-                        }
-                    }
-
-                    appState.updateCurrentChapterTitle(title, for: project.id)
-                    if let result = completeChapterDraftSave(for: project, statusPrefix: "AI 已拟好标题并保存") {
-                        refreshProjectContextAfterChapterSave(
-                            for: project,
-                            saveResult: result,
-                            configuration: configuration,
-                            statusPrefix: "AI 已拟好标题并保存",
-                            advanceToNextChapter: advanceToNextChapter,
-                            preSaveReview: preSaveReview
-                        )
-                    } else {
+                if let reviewedSaveContext {
+                    guard let currentProject = appState.project(for: project.id),
+                          ChapterWritingSessionPolicy.isCurrent(reviewedSaveContext, for: currentProject)
+                    else {
                         isSavingChapter = false
+                        aiStatusMessage = "拟标题期间正文、章节位置或长篇上下文已经变化，旧保存审查结果已丢弃。请按当前内容重新保存。"
                         revealWritingDeskWindow(for: project.id)
+                        return
                     }
                 }
-            } catch {
-                await MainActor.run {
-                    if let reviewedSaveContext {
-                        guard let currentProject = appState.project(for: project.id),
-                              ChapterWritingSessionPolicy.isCurrent(reviewedSaveContext, for: currentProject)
-                        else {
-                            isSavingChapter = false
-                            aiStatusMessage = "拟标题期间正文、章节位置或长篇上下文已经变化，旧保存审查结果已丢弃。请按当前内容重新保存。"
-                            revealWritingDeskWindow(for: project.id)
-                            return
-                        }
-                    }
 
-                    let fallbackTitle = fallbackChapterTitle(for: latestProject)
-                    appState.updateCurrentChapterTitle(fallbackTitle, for: project.id)
-                    if let result = completeChapterDraftSave(
+                appState.updateCurrentChapterTitle(title, for: project.id)
+                if let result = await completeChapterDraftSave(for: project, statusPrefix: "AI 已拟好标题并保存") {
+                    refreshProjectContextAfterChapterSave(
                         for: project,
-                        statusPrefix: "AI 拟标题失败，已按当前标题保存",
-                        detailMessage: UserFacingError.aiMessage(for: error, fallbackAction: "AI 拟标题失败。")
-                    ) {
-                        refreshProjectContextAfterChapterSave(
-                            for: project,
-                            saveResult: result,
-                            configuration: configuration,
-                            statusPrefix: "AI 拟标题失败，已按当前标题保存",
-                            detailMessage: UserFacingError.aiMessage(for: error, fallbackAction: "AI 拟标题失败。"),
-                            advanceToNextChapter: advanceToNextChapter,
-                            preSaveReview: preSaveReview
-                        )
-                    } else {
+                        saveResult: result,
+                        configuration: configuration,
+                        statusPrefix: "AI 已拟好标题并保存",
+                        advanceToNextChapter: advanceToNextChapter,
+                        preSaveReview: preSaveReview
+                    )
+                } else {
+                    isSavingChapter = false
+                    revealWritingDeskWindow(for: project.id)
+                }
+            } catch {
+                if let reviewedSaveContext {
+                    guard let currentProject = appState.project(for: project.id),
+                          ChapterWritingSessionPolicy.isCurrent(reviewedSaveContext, for: currentProject)
+                    else {
                         isSavingChapter = false
+                        aiStatusMessage = "拟标题期间正文、章节位置或长篇上下文已经变化，旧保存审查结果已丢弃。请按当前内容重新保存。"
                         revealWritingDeskWindow(for: project.id)
+                        return
                     }
+                }
+
+                let fallbackTitle = fallbackChapterTitle(for: latestProject)
+                appState.updateCurrentChapterTitle(fallbackTitle, for: project.id)
+                if let result = await completeChapterDraftSave(
+                    for: project,
+                    statusPrefix: "AI 拟标题失败，已按当前标题保存",
+                    detailMessage: UserFacingError.aiMessage(for: error, fallbackAction: "AI 拟标题失败。")
+                ) {
+                    refreshProjectContextAfterChapterSave(
+                        for: project,
+                        saveResult: result,
+                        configuration: configuration,
+                        statusPrefix: "AI 拟标题失败，已按当前标题保存",
+                        detailMessage: UserFacingError.aiMessage(for: error, fallbackAction: "AI 拟标题失败。"),
+                        advanceToNextChapter: advanceToNextChapter,
+                        preSaveReview: preSaveReview
+                    )
+                } else {
+                    isSavingChapter = false
+                    revealWritingDeskWindow(for: project.id)
                 }
             }
         }
@@ -2906,9 +2914,13 @@ struct WritingDeskView: View {
         for project: NovelProject,
         statusPrefix: String,
         detailMessage: String? = nil
-    ) -> ChapterDraftSaveResult? {
-        guard let result = appState.saveCurrentChapterDraft(for: project.id) else {
-            aiStatusMessage = "草稿箱里还没有可保存的正文。"
+    ) async -> ChapterDraftSaveResult? {
+        guard let result = await appState.saveCurrentChapterDraft(for: project.id) else {
+            if let persistenceError = appState.lastProjectPersistenceErrorMessage {
+                aiStatusMessage = "章节已更新到当前会话，但写入磁盘失败：\(persistenceError)"
+            } else {
+                aiStatusMessage = "草稿箱里还没有可保存的正文。"
+            }
             return nil
         }
 
@@ -2942,13 +2954,13 @@ struct WritingDeskView: View {
         return commit
     }
 
-    private func saveLongformChapterWithoutModel(for project: NovelProject, advanceToNextChapter: Bool) {
+    private func saveLongformChapterWithoutModel(for project: NovelProject, advanceToNextChapter: Bool) async {
         isSavingChapter = true
 
         let fallbackTitle = fallbackChapterTitle(for: project)
         appState.updateCurrentChapterTitle(fallbackTitle, for: project.id)
 
-        guard let result = completeChapterDraftSave(
+        guard let result = await completeChapterDraftSave(
             for: project,
             statusPrefix: "模型未配置，已先安全保存"
         ) else {

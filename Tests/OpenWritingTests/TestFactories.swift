@@ -25,13 +25,14 @@ nonisolated final class InMemoryCredentialStore: CredentialStoring {
 
 extension NovelProject {
     init(
+        id: String = UUID().uuidString,
         title: String,
         genre: String,
         summary: String,
         storyLength: NovelLength = .medium
     ) {
         self.init(
-            id: UUID().uuidString,
+            id: id,
             title: title,
             genre: genre,
             summary: summary,

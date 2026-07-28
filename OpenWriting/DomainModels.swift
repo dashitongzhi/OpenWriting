@@ -1743,6 +1743,8 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
         genreTemplateId: String? = nil,
         strandWeaveTracker: StrandWeaveTracker? = nil,
         qualityReviewReports: [QualityReviewReport]? = nil,
+        foreshadowList: ForeshadowList = ForeshadowList(),
+        plotThreadList: PlotThreadList = PlotThreadList(),
         persistedMemoryBuckets: MemoryBuckets? = nil,
         persistedStrandWeaveState: StrandWeaveState? = nil,
         persistedAntiPatterns: [String]? = nil,
@@ -1789,8 +1791,8 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
         self.genreTemplateId = genreTemplateId
         self.strandWeaveTracker = strandWeaveTracker ?? StrandWeaveTracker()
         self.qualityReviewReports = qualityReviewReports ?? []
-        self.foreshadowList = ForeshadowList()
-        self.plotThreadList = PlotThreadList()
+        self.foreshadowList = foreshadowList
+        self.plotThreadList = plotThreadList
         self.persistedMemoryBuckets = persistedMemoryBuckets
         self.persistedStrandWeaveState = persistedStrandWeaveState
         self.persistedAntiPatterns = persistedAntiPatterns
@@ -2326,6 +2328,10 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
 }
 
 extension NovelProject {
+    nonisolated static func makeStorageIdentifier() -> String {
+        "project-\(UUID().uuidString.lowercased())"
+    }
+
     func importedBackupCopy(id newID: String, title newTitle: String, updatedAt: String) -> NovelProject {
         var copy = NovelProject(
             id: newID,
@@ -2362,14 +2368,14 @@ extension NovelProject {
             genreTemplateId: genreTemplateId,
             strandWeaveTracker: strandWeaveTracker,
             qualityReviewReports: qualityReviewReports,
+            foreshadowList: foreshadowList,
+            plotThreadList: plotThreadList,
             persistedMemoryBuckets: persistedMemoryBuckets,
             persistedStrandWeaveState: persistedStrandWeaveState,
             persistedAntiPatterns: persistedAntiPatterns,
             persistedLastReviewResult: persistedLastReviewResult,
             persistedLongformRuntimeState: persistedLongformRuntimeState
         )
-        copy.foreshadowList = foreshadowList
-        copy.plotThreadList = plotThreadList
         return copy
     }
 }

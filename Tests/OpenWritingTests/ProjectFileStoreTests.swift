@@ -60,11 +60,10 @@ final class ProjectFileStoreTests: XCTestCase {
     }
 
     func testSaveEmptyProjectsList() async throws {
-        // Saving empty list should not crash
         try store.saveProjects([], for: scope)
 
         let loaded = store.loadProjects(for: scope)
-        XCTAssertNil(loaded)
+        XCTAssertEqual(loaded?.isEmpty, true)
     }
 
     // MARK: - Chapter Draft Tests
@@ -284,7 +283,7 @@ final class ProjectFileStoreTests: XCTestCase {
         XCTAssertTrue(report.issues.contains { $0.kind == .projectMetadataCorrupt })
     }
 
-    func testFutureProjectIndexVersionIsRejected() async throws {
+    func testFutureProjectIndexVersionIsRejectedButProjectPayloadIsRecovered() async throws {
         let project = NovelProject(title: "未来索引项目", genre: "科幻", summary: "摘要")
         try store.saveProjects([project], for: scope)
 
@@ -297,7 +296,7 @@ final class ProjectFileStoreTests: XCTestCase {
         indexObject["version"] = 999
         try JSONSerialization.data(withJSONObject: indexObject).write(to: indexURL)
 
-        XCTAssertNil(store.loadProjects(for: scope))
+        XCTAssertEqual(store.loadProjects(for: scope)?.map(\.id), [project.id])
         XCTAssertTrue(
             store.storageHealthReport(for: project.id, scope: scope).issues.contains {
                 $0.kind == .projectIndexCorrupt
@@ -305,7 +304,7 @@ final class ProjectFileStoreTests: XCTestCase {
         )
     }
 
-    func testFutureChapterIndexVersionIsRejected() async throws {
+    func testFutureChapterIndexVersionIsRejectedButChapterPayloadIsRecovered() async throws {
         let chapter = ChapterDraft(
             volumeNumber: 1,
             chapterNumber: 1,
@@ -327,7 +326,7 @@ final class ProjectFileStoreTests: XCTestCase {
 
         let report = store.storageHealthReport(for: project.id, scope: scope)
         XCTAssertTrue(report.issues.contains { $0.kind == .chapterIndexCorrupt })
-        XCTAssertTrue(store.loadProjects(for: scope)?.first?.chapterCatalog.isEmpty ?? false)
+        XCTAssertEqual(store.loadProjects(for: scope)?.first?.chapterCatalog.map(\.id), [chapter.id])
     }
 
     func testLoadProjectsSkipsCorruptProjectMetadata() async throws {
@@ -361,6 +360,70 @@ final class ProjectFileStoreTests: XCTestCase {
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: corruptProjectDirectory.path))
         XCTAssertEqual(try Data(contentsOf: corruptMetadataURL), Data("{ invalid json".utf8))
+    }
+
+    func testCorruptProjectIndexFollowedByEmptySavePreservesRecoverableProjects() async throws {
+        let project = NovelProject(title: "索引损坏项目", genre: "悬疑", summary: "摘要")
+        try store.saveProjects([project], for: scope)
+        let projectIndexURL = try XCTUnwrap(storedFiles(named: "index.json").first {
+            !$0.path.contains("/chapters/")
+        })
+        try Data("{ invalid index".utf8).write(to: projectIndexURL)
+
+        XCTAssertEqual(store.loadProjects(for: scope)?.map(\.id), [project.id])
+        try store.saveProjects([], for: scope)
+
+        XCTAssertEqual(store.loadProjects(for: scope)?.map(\.id), [project.id])
+        XCTAssertNotNil(firstStoredFile(named: "project.json"))
+    }
+
+    func testCorruptChapterIndexFollowedBySavePreservesEveryChapter() async throws {
+        let chapters = [
+            ChapterDraft(volumeNumber: 1, chapterNumber: 1, chapterTitle: "第一章", content: "正文一"),
+            ChapterDraft(volumeNumber: 1, chapterNumber: 2, chapterTitle: "第二章", content: "正文二")
+        ]
+        var project = NovelProject(title: "章节索引损坏项目", genre: "科幻", summary: "摘要")
+        project.chapterDrafts = chapters
+        try store.saveProjects([project], for: scope)
+        let chapterIndexURL = try XCTUnwrap(storedFiles(named: "index.json").first {
+            $0.path.contains("/chapters/")
+        })
+        try Data("{ invalid chapter index".utf8).write(to: chapterIndexURL)
+
+        let loadedProject = try XCTUnwrap(store.loadProjects(for: scope)?.first)
+        XCTAssertEqual(Set(loadedProject.chapterCatalog.map(\.id)), Set(chapters.map(\.id)))
+        try store.saveProjects([loadedProject], for: scope)
+
+        XCTAssertEqual(
+            Set(store.loadChapterDrafts(for: project.id, scope: scope).map(\.id)),
+            Set(chapters.map(\.id))
+        )
+    }
+
+    func testNewIdentifierCannotReuseLegacyTitleSlugOrCorruptProtectedDirectory() async throws {
+        let legacyProject = NovelProject(
+            id: "same-title",
+            title: "Same Title",
+            genre: "都市",
+            summary: "旧项目"
+        )
+        try store.saveProjects([legacyProject], for: scope)
+        let legacyMetadataURL = try XCTUnwrap(firstStoredFile(named: "project.json"))
+        try Data("{ invalid project".utf8).write(to: legacyMetadataURL)
+
+        let newID = NovelProject.makeStorageIdentifier()
+        XCTAssertTrue(newID.hasPrefix("project-"))
+        XCTAssertNotEqual(newID, legacyProject.id)
+        let newProject = NovelProject(
+            id: newID,
+            title: "Same Title",
+            genre: "都市",
+            summary: "新项目"
+        )
+        try store.saveProjects([newProject], for: scope)
+
+        XCTAssertEqual(store.loadProjects(for: scope)?.map(\.id), [newID])
+        XCTAssertEqual(try Data(contentsOf: legacyMetadataURL), Data("{ invalid project".utf8))
     }
 
     func testPersistenceActorDropsStaleSaveForSameScope() async throws {
@@ -540,11 +603,11 @@ final class ProjectFileStoreTests: XCTestCase {
 
         try store.saveProjects([project], for: scope)
 
-        // Save empty list to effectively delete
+        // Empty snapshots retain a valid empty index without deleting the scope.
         try store.saveProjects([], for: scope)
 
         let loaded = store.loadProjects(for: scope)
-        XCTAssertNil(loaded)
+        XCTAssertEqual(loaded?.isEmpty, true)
     }
 
     // MARK: - Scope Tests

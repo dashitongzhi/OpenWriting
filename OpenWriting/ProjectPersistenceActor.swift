@@ -66,20 +66,3 @@ extension NovelProject {
         return snapshot
     }
 }
-
-nonisolated final class ProjectPersistenceBlockingResult: @unchecked Sendable {
-    private let lock = NSLock()
-    private var result: Result<Void, Error>?
-
-    func store(_ result: Result<Void, Error>) {
-        lock.lock()
-        self.result = result
-        lock.unlock()
-    }
-
-    func get() -> Result<Void, Error>? {
-        lock.lock()
-        defer { lock.unlock() }
-        return result
-    }
-}

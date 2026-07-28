@@ -444,11 +444,6 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
     func saveProjects(_ projects: [NovelProject], for scope: String?) throws {
         accessLock.lock()
         defer { accessLock.unlock() }
-        if projects.isEmpty {
-            try removeProjects(for: scope)
-            return
-        }
-
         try saveShardedProjects(projects, for: scope)
     }
 
@@ -472,8 +467,9 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
     private func loadShardedProjects(for scope: String?) -> [NovelProject]? {
         let indexURL = projectIndexURL(for: scope)
         guard let indexData = try? Data(contentsOf: indexURL),
-              let index = try? decoder.decode(ProjectIndex.self, from: indexData)
-        else { return nil }
+              let index = try? decoder.decode(ProjectIndex.self, from: indexData) else {
+            return loadProjectsFromDirectories(for: scope)
+        }
 
         var projects: [NovelProject] = []
         for projectID in index.projectIDs {
@@ -488,6 +484,29 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
         }
 
         return projects
+    }
+
+    private func loadProjectsFromDirectories(for scope: String?) -> [NovelProject]? {
+        let projectsDirectory = scopeDirectoryURL(for: scope)
+            .appendingPathComponent("projects", isDirectory: true)
+        guard let directories = try? fileManager.contentsOfDirectory(
+            at: projectsDirectory,
+            includingPropertiesForKeys: [.isDirectoryKey]
+        ), !directories.isEmpty else {
+            return nil
+        }
+
+        return directories.compactMap { directory in
+            let metadataURL = directory.appendingPathComponent("project.json", isDirectory: false)
+            guard let data = try? Data(contentsOf: metadataURL),
+                  var project = try? projectCodec.decode(data).project else {
+                return nil
+            }
+            project.chapterCatalog = loadChapterMetadata(for: project.id, scope: scope)
+            project.chapterDrafts = []
+            return project
+        }
+        .sorted { $0.updatedAtDate > $1.updatedAtDate }
     }
 
     func loadChapterDraft(_ chapterID: ChapterDraft.ID, for projectID: NovelProject.ID, scope: String?) -> ChapterDraft? {
@@ -532,7 +551,11 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
         let indexURL = chapterIndexURL(for: projectID, scope: scope)
         guard let indexData = try? Data(contentsOf: indexURL),
               let index = try? decoder.decode(ChapterIndex.self, from: indexData)
-        else { return [] }
+        else {
+            return decodedChapterDrafts(in: chapterDirectoryURL(for: projectID, scope: scope))
+                .map(ChapterDraftMetadata.init)
+                .sorted(by: ChapterDraftMetadata.sortDescending)
+        }
 
         if let chapters = index.chapters, !chapters.isEmpty {
             return chapters
@@ -592,8 +615,19 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
         guard let indexData = try? Data(contentsOf: projectIndexURL(for: scope)),
               let index = try? decoder.decode(ProjectIndex.self, from: indexData)
         else {
+            let recoveredProjectIDs = directoryNames.compactMap { directoryName -> NovelProject.ID? in
+                let metadataURL = projectsDirectory
+                    .appendingPathComponent(directoryName, isDirectory: true)
+                    .appendingPathComponent("project.json", isDirectory: false)
+                guard let data = try? Data(contentsOf: metadataURL),
+                      let project = try? projectCodec.decode(data).project,
+                      !incomingProjectIDs.contains(project.id) else {
+                    return nil
+                }
+                return project.id
+            }
             return ExistingProjectProtection(
-                indexedProjectIDs: [],
+                indexedProjectIDs: recoveredProjectIDs,
                 directoryNames: directoryNames.subtracting(incomingDirectoryNames)
             )
         }
@@ -623,12 +657,17 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
     private func saveProject(_ project: NovelProject, scope: String?) throws {
         let chaptersDirectory = chapterDirectoryURL(for: project.id, scope: scope)
         try fileManager.createDirectory(at: chaptersDirectory, withIntermediateDirectories: true)
+        let chapterIndexWasReadable = loadChapterIndex(for: project.id, scope: scope) != nil
 
         var metadata = project
         metadata.chapterDrafts = []
         try writeIfChanged(try projectCodec.encode(metadata), to: projectMetadataURL(for: project.id, scope: scope))
 
-        let chapterCatalog = resolvedChapterCatalog(for: project)
+        let chapterCatalog = resolvedChapterCatalog(
+            for: project,
+            preservingStoredChapters: !chapterIndexWasReadable,
+            scope: scope
+        )
         let chapterIndex = ChapterIndex(
             version: 3,
             chapterIDs: chapterCatalog.map(\.id),
@@ -644,19 +683,38 @@ nonisolated struct ProjectFileStore: @unchecked Sendable {
             )
         }
 
-        try removeDeletedChapterFiles(
-            in: chaptersDirectory,
-            keeping: Set(chapterCatalog.map(\.id))
-        )
+        if chapterIndexWasReadable {
+            try removeDeletedChapterFiles(
+                in: chaptersDirectory,
+                keeping: Set(chapterCatalog.map(\.id))
+            )
+        }
     }
 
-    private func resolvedChapterCatalog(for project: NovelProject) -> [ChapterDraftMetadata] {
+    private func resolvedChapterCatalog(
+        for project: NovelProject,
+        preservingStoredChapters: Bool,
+        scope: String?
+    ) -> [ChapterDraftMetadata] {
         var catalogByID = Dictionary(uniqueKeysWithValues: project.chapterCatalog.map { ($0.id, $0) })
         for chapterDraft in project.chapterDrafts {
             catalogByID[chapterDraft.id] = ChapterDraftMetadata(chapterDraft: chapterDraft)
         }
+        if preservingStoredChapters {
+            let directory = chapterDirectoryURL(for: project.id, scope: scope)
+            for chapterDraft in decodedChapterDrafts(in: directory) {
+                catalogByID[chapterDraft.id] = catalogByID[chapterDraft.id]
+                    ?? ChapterDraftMetadata(chapterDraft: chapterDraft)
+            }
+        }
 
         return catalogByID.values.sorted(by: ChapterDraftMetadata.sortDescending)
+    }
+
+    private func loadChapterIndex(for projectID: NovelProject.ID, scope: String?) -> ChapterIndex? {
+        let url = chapterIndexURL(for: projectID, scope: scope)
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? decoder.decode(ChapterIndex.self, from: data)
     }
 
     private func writeIfChanged(_ data: Data, to url: URL) throws {
