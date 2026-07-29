@@ -11,3 +11,8 @@ dist/
 *.dmg
 LongformEvals/runs/
 .codex-pr-review-bundles/
+/.arts/
+/.codex/
+/.git.corrupt-*/
+/OpenWriting-branch-archive-*.bundle
+*.profraw
