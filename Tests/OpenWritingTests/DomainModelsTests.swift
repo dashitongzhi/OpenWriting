@@ -3699,6 +3699,18 @@ final class DomainModelsTests: XCTestCase {
         )
     }
 
+    func testServerRejectedCloudKitSyncUsesActionableFallbackMessage() {
+        let error = NSError(
+            domain: CKErrorDomain,
+            code: CKError.Code.serverRejectedRequest.rawValue
+        )
+
+        XCTAssertEqual(
+            UserFacingError.syncMessage(for: error),
+            "iCloud 服务端暂时拒绝了同步请求，本机项目内容仍会保留。请稍后重试。"
+        )
+    }
+
     func testIndexCASDecisionAlreadyPublishedRetriesAndFails() {
         func makeIndex(
             projectRecordNames: [String] = ["project-payload"],

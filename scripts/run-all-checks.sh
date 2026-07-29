@@ -24,6 +24,9 @@ echo "Checking architecture indexes and test target membership"
 zsh -f "$SCRIPT_DIR/check-index-coverage.sh"
 zsh -f "$SCRIPT_DIR/verify-xctest-membership.sh"
 
+echo "Checking CloudKit environment entitlements"
+zsh -f "$SCRIPT_DIR/verify-cloudkit-entitlements.sh"
+
 echo "Running Codex PR review checks"
 zsh -f "$SCRIPT_DIR/run-codex-pr-review-checks.sh"
 

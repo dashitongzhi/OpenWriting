@@ -22,3 +22,15 @@ The exact run selection lives in `select-codex-review-bundle-run.cjs` so it can 
 3. Exact review bundle run selection.
 
 `run-all-checks.sh` calls these checks for local full verification, and the PR merge workflow runs the same scoped check script before smoke checks.
+
+## CloudKit entitlement verification
+
+`verify-cloudkit-entitlements.sh` checks that the entitlement template uses
+`ICLOUD_CONTAINER_ENVIRONMENT`, Debug resolves to `Development`, and Release
+resolves to `Production`.
+
+Pass a signed app path and expected environment to verify the final signature:
+
+```zsh
+./scripts/verify-cloudkit-entitlements.sh /path/to/OpenWriting.app Development
+```

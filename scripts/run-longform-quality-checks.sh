@@ -25,6 +25,7 @@ PROJECT_FILE="$REPO_ROOT/OpenWriting.xcodeproj/project.pbxproj"
 GIT_PREFLIGHT="$REPO_ROOT/scripts/git-preflight.sh"
 RUN_SMOKE="$REPO_ROOT/scripts/run-smoke-checks.sh"
 RUN_ALL="$REPO_ROOT/scripts/run-all-checks.sh"
+VERIFY_CLOUDKIT_ENTITLEMENTS="$REPO_ROOT/scripts/verify-cloudkit-entitlements.sh"
 RUN_HOSTED_XCTEST_GUARD="$REPO_ROOT/scripts/run-hosted-xctest-guard.sh"
 RUN_TESTS="$REPO_ROOT/scripts/run-tests.sh"
 RUN_EVALS="$REPO_ROOT/scripts/run-longform-evals.sh"
@@ -227,8 +228,16 @@ require_text "$SAVED_CHAPTERS_SHEET" "先保存当前草稿" \
     "saved chapters sheet must offer a save-before-load path"
 require_text "$ENTITLEMENTS" "com.apple.security.files.user-selected.read-write" \
     "sandbox export entitlement must allow writing user-selected files"
+require_text "$ENTITLEMENTS" "com.apple.developer.icloud-container-environment" \
+    "CloudKit entitlement must declare the target environment"
+require_text "$ENTITLEMENTS" '$(ICLOUD_CONTAINER_ENVIRONMENT)' \
+    "CloudKit entitlement must read its environment from the build configuration"
 require_text "$PROJECT_FILE" "ENABLE_USER_SELECTED_FILES = readwrite;" \
     "Xcode project must allow read/write access for user-selected export files"
+require_text "$PROJECT_FILE" "ICLOUD_CONTAINER_ENVIRONMENT = Development;" \
+    "Debug builds must use the Development CloudKit environment"
+require_text "$PROJECT_FILE" "ICLOUD_CONTAINER_ENVIRONMENT = Production;" \
+    "Release builds must use the Production CloudKit environment"
 
 require_text "$APP_STATE" "nextExistingChapterMetadata(after: chapterDraft, in: project)" \
     "beginNextChapter must detect existing cross-volume successor chapters"
@@ -298,6 +307,10 @@ require_text "$RUN_ALL" "swiftc -typecheck" \
     "run-all checks must include Swift typecheck"
 require_text "$RUN_ALL" "build-debug.sh" \
     "run-all checks must include Debug build"
+require_text "$RUN_ALL" "verify-cloudkit-entitlements.sh" \
+    "run-all checks must validate CloudKit environments"
+require_text "$VERIFY_CLOUDKIT_ENTITLEMENTS" "codesign -d --entitlements" \
+    "CloudKit checks must validate the final signed app entitlements"
 require_text "$RUN_ALL" "run-hosted-xctest-guard.sh" \
     "run-all checks must run the hosted XCTest launch guard"
 require_text "$RUN_ALL" "run-tests.sh" \

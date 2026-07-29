@@ -1,3 +1,4 @@
+import CloudKit
 import Foundation
 
 enum UserFacingError {
@@ -30,7 +31,13 @@ enum UserFacingError {
     }
 
     static func syncMessage(for error: Error) -> String {
-        "iCloud 同步暂时没有完成，本机项目内容仍会保留。\(shortDetail(error.localizedDescription))"
+        let nsError = error as NSError
+        if nsError.domain == CKErrorDomain,
+           nsError.code == CKError.Code.serverRejectedRequest.rawValue {
+            return "iCloud 服务端暂时拒绝了同步请求，本机项目内容仍会保留。请稍后重试。"
+        }
+
+        return "iCloud 同步暂时没有完成，本机项目内容仍会保留。\(shortDetail(error.localizedDescription))"
     }
 
     static func exportMessage(for error: Error) -> String {
