@@ -27,6 +27,8 @@ enum WritingSkillLibraryMode: String, CaseIterable, Identifiable {
 
 struct WritingSkillRow: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appAccentInkColor) private var accentInkColor
+    @Environment(\.appAccentStrokeColor) private var accentStrokeColor
     let skill: WritingSkill
     let isSelected: Bool
     var trailingLabel: String?
@@ -47,7 +49,11 @@ struct WritingSkillRow: View {
 
                 Text(trailingLabel ?? (skill.isEnabled ? "启用" : "停用"))
                     .font(.caption2.weight(.bold))
-                    .foregroundStyle(skill.isEnabled || trailingLabel != nil ? palette.coolAccent : palette.textSecondary)
+                    .foregroundStyle(
+                        skill.isEnabled || trailingLabel != nil
+                            ? accentInkColor
+                            : palette.textSecondary
+                    )
             }
 
             Text(skill.summary)
@@ -71,13 +77,18 @@ struct WritingSkillRow: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(isSelected ? palette.coolAccent.opacity(0.36) : palette.stroke, lineWidth: 1)
+                .strokeBorder(
+                    isSelected ? accentStrokeColor : palette.stroke,
+                    lineWidth: 1
+                )
         )
     }
 }
 
 struct WritingSkillTag: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appAccentForegroundColor) private var accentForegroundColor
+    @Environment(\.appAccentStrokeColor) private var accentStrokeColor
     let title: String
     let symbolName: String
     var isActive = false
@@ -89,7 +100,7 @@ struct WritingSkillTag: View {
     var body: some View {
         Label(title, systemImage: symbolName)
             .font(.caption.weight(.semibold))
-            .foregroundStyle(isActive ? .white : palette.textPrimary)
+            .foregroundStyle(isActive ? accentForegroundColor : palette.textPrimary)
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
             .background(
@@ -98,7 +109,10 @@ struct WritingSkillTag: View {
             )
             .overlay(
                 Capsule()
-                    .strokeBorder(isActive ? palette.coolAccent : palette.stroke, lineWidth: 1)
+                    .strokeBorder(
+                        isActive ? accentStrokeColor : palette.stroke,
+                        lineWidth: 1
+                    )
             )
     }
 }

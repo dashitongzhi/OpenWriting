@@ -92,6 +92,150 @@ enum WritingRunState {
     case stopping
 }
 
+enum ChapterRepairEligibility {
+    private struct Position: Hashable {
+        let volumeNumber: Int
+        let chapterNumber: Int
+
+        init(volumeNumber: Int, chapterNumber: Int) {
+            self.volumeNumber = max(volumeNumber, 1)
+            self.chapterNumber = max(chapterNumber, 1)
+        }
+    }
+
+    static func canRepair(
+        _ issue: LongformRuntimeHealthIssue,
+        in project: NovelProject,
+        allowsCurrentChapterRepair: Bool
+    ) -> Bool {
+        guard allowsCurrentChapterRepair else { return false }
+        let currentPosition = Position(
+            volumeNumber: project.currentVolumeNumber,
+            chapterNumber: project.currentChapterNumber
+        )
+
+        switch issue.kind {
+        case .uncommittedSavedChapter:
+            return uncommittedSavedChapterPositions(in: project) == Set([currentPosition])
+        case .staleSavedChapterCommit:
+            return staleSavedChapterCommitPositions(in: project) == Set([currentPosition])
+        case .missingChapterSequence:
+            return missingSavedChapterPositions(in: project) == Set([currentPosition])
+        case .missingVolumeSequence:
+            return currentPosition.chapterNumber == 1
+                && missingSavedVolumeNumbers(in: project) == Set([currentPosition.volumeNumber])
+        case .latestCommitRejected:
+            guard let latestCommit = project.longformRuntimeState.latestCommit else { return false }
+            return latestCommit.status == .rejected
+                && Position(
+                    volumeNumber: latestCommit.volumeNumber,
+                    chapterNumber: latestCommit.chapterNumber
+                ) == currentPosition
+        case .prewriteGate, .contractNotPersisted, .other:
+            return false
+        }
+    }
+
+    private static func savedChapterPositions(in project: NovelProject) -> Set<Position> {
+        let catalogPositions = project.chapterCatalog.map {
+            Position(volumeNumber: $0.volumeNumber, chapterNumber: $0.chapterNumber)
+        }
+        let loadedPositions = project.chapterDrafts.map {
+            Position(volumeNumber: $0.volumeNumber, chapterNumber: $0.chapterNumber)
+        }
+        return Set(catalogPositions + loadedPositions)
+    }
+
+    private static func uncommittedSavedChapterPositions(in project: NovelProject) -> Set<Position> {
+        let acceptedPositions = Set(project.longformRuntimeState.acceptedCommits.map {
+            Position(
+                volumeNumber: $0.volumeNumber,
+                chapterNumber: $0.chapterNumber
+            )
+        })
+        return savedChapterPositions(in: project).subtracting(acceptedPositions)
+    }
+
+    private static func staleSavedChapterCommitPositions(in project: NovelProject) -> Set<Position> {
+        var acceptedCommitsByPosition: [Position: LongformChapterCommit] = [:]
+        for commit in project.longformRuntimeState.acceptedCommits {
+            let position = Position(
+                volumeNumber: commit.volumeNumber,
+                chapterNumber: commit.chapterNumber
+            )
+            acceptedCommitsByPosition[position] = acceptedCommitsByPosition[position] ?? commit
+        }
+
+        let draftsByPosition = Dictionary(
+            grouping: project.chapterDrafts,
+            by: {
+                Position(
+                    volumeNumber: $0.volumeNumber,
+                    chapterNumber: $0.chapterNumber
+                )
+            }
+        ).compactMapValues { drafts in
+            drafts.max { $0.savedAtDate < $1.savedAtDate }
+        }
+        let recentPositions = savedChapterPositions(in: project)
+            .sorted { lhs, rhs in
+                if lhs.volumeNumber != rhs.volumeNumber {
+                    return lhs.volumeNumber > rhs.volumeNumber
+                }
+                return lhs.chapterNumber > rhs.chapterNumber
+            }
+            .prefix(40)
+
+        return Set(recentPositions.compactMap { position in
+            guard let draft = draftsByPosition[position],
+                  let commit = acceptedCommitsByPosition[position],
+                  commit.id != expectedLongformCommitID(projectID: project.id, draft: draft) else {
+                return nil
+            }
+            return position
+        })
+    }
+
+    private static func missingSavedChapterPositions(in project: NovelProject) -> Set<Position> {
+        let positionsByVolume = Dictionary(
+            grouping: savedChapterPositions(in: project),
+            by: \.volumeNumber
+        )
+        var missing = Set<Position>()
+        for (volumeNumber, positions) in positionsByVolume {
+            let chapterNumbers = Set(positions.map(\.chapterNumber))
+            guard let highestChapter = chapterNumbers.max(), highestChapter > 1 else { continue }
+            for chapterNumber in 1...highestChapter where !chapterNumbers.contains(chapterNumber) {
+                missing.insert(Position(
+                    volumeNumber: volumeNumber,
+                    chapterNumber: chapterNumber
+                ))
+            }
+        }
+        return missing
+    }
+
+    private static func missingSavedVolumeNumbers(in project: NovelProject) -> Set<Int> {
+        let volumeNumbers = Set(savedChapterPositions(in: project).map(\.volumeNumber))
+        guard let highestVolume = volumeNumbers.max(), highestVolume > 1 else { return [] }
+        return Set((1...highestVolume).filter { !volumeNumbers.contains($0) })
+    }
+
+    private static func expectedLongformCommitID(projectID: String, draft: ChapterDraft) -> String {
+        let raw = [
+            "commit",
+            projectID,
+            String(max(draft.volumeNumber, 1)),
+            String(draft.chapterNumber),
+            draft.content
+        ].joined(separator: "|")
+        let hash = raw.unicodeScalars.reduce(UInt64(14_695_981_039_346_656_037)) { result, scalar in
+            (result ^ UInt64(scalar.value)) &* 1_099_511_628_211
+        }
+        return String(format: "%016llx", hash)
+    }
+}
+
 enum AIRewriteDirection: String, CaseIterable, Identifiable {
     case freshTake
     case fasterPace

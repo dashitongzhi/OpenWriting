@@ -12,7 +12,7 @@ import Foundation
 // MARK: - Legacy Types (kept for Codable backward compatibility)
 
 /// Legacy review dimension (pre-unification). Kept for Codable compatibility.
-enum LegacyQualityReviewDimension: String, Codable, CaseIterable, Identifiable {
+nonisolated enum LegacyQualityReviewDimension: String, Codable, CaseIterable, Identifiable {
     case highPoint = "爽点密度"
     case consistency = "设定一致性"
     case characterOOC = "角色OOC"
@@ -58,7 +58,7 @@ enum LegacyQualityReviewDimension: String, Codable, CaseIterable, Identifiable {
 }
 
 /// Legacy dimension result (pre-unification). Kept for Codable compatibility.
-struct ReviewDimensionResult: Codable, Identifiable {
+nonisolated struct ReviewDimensionResult: Codable, Identifiable {
     let dimension: LegacyQualityReviewDimension
     let score: Int // 1-10
     let issues: [LegacyQualityReviewIssue]
@@ -77,7 +77,7 @@ struct ReviewDimensionResult: Codable, Identifiable {
 }
 
 /// Legacy issue severity (pre-unification). Kept for Codable compatibility.
-enum LegacyIssueSeverity: String, Codable {
+nonisolated enum LegacyIssueSeverity: String, Codable {
     case critical = "严重"
     case major = "重要"
     case minor = "轻微"
@@ -93,7 +93,7 @@ enum LegacyIssueSeverity: String, Codable {
 }
 
 /// Legacy issue (pre-unification). Kept for Codable compatibility.
-struct LegacyQualityReviewIssue: Codable, Identifiable {
+nonisolated struct LegacyQualityReviewIssue: Codable, Identifiable {
     let id: UUID
     let severity: LegacyIssueSeverity
     let description: String
@@ -109,7 +109,7 @@ struct LegacyQualityReviewIssue: Codable, Identifiable {
 
 // MARK: - QualityReviewReport (Backward-Compatible, now wraps ChapterReviewResult)
 
-struct ChapterReviewTarget: Hashable {
+nonisolated struct ChapterReviewTarget: Hashable {
     var volumeNumber: Int
     var chapterNumber: Int
     var chapterTitle: String
@@ -131,7 +131,7 @@ struct ChapterReviewTarget: Hashable {
 
 /// Legacy report format, stored in NovelProject.qualityReviewReports.
 /// Now constructed from the unified ChapterReviewResult.
-struct QualityReviewReport: Codable, Identifiable {
+nonisolated struct QualityReviewReport: Codable, Identifiable {
     let id: UUID
     let volumeNumber: Int?
     let chapterNumber: Int

@@ -84,7 +84,7 @@ struct AccountProjectSnapshot: Codable, @unchecked Sendable {
         self.updatedAt = updatedAt
     }
 
-    init(from decoder: Decoder) throws {
+    nonisolated init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let sourceVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
         guard sourceVersion >= 1 else {
@@ -114,7 +114,7 @@ struct AccountProjectSnapshot: Codable, @unchecked Sendable {
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     }
 
-    func encode(to encoder: Encoder) throws {
+    nonisolated func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(Self.currentSchemaVersion, forKey: .schemaVersion)
         try container.encodeIfPresent(activeProjectID, forKey: .activeProjectID)

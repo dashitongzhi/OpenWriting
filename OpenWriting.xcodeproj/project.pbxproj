@@ -17,6 +17,7 @@
 		B0010000000000000000001B /* WritingDeskSessionPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0010000000000000000001A /* WritingDeskSessionPolicyTests.swift */; };
 		B0010000000000000000001D /* ChapterCommitUseCaseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0010000000000000000001C /* ChapterCommitUseCaseTests.swift */; };
 		B0010000000000000000001F /* WritingSkillMarketplaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0010000000000000000001E /* WritingSkillMarketplaceTests.swift */; };
+		B00100000000000000000021 /* KeychainFailurePropagationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00100000000000000000020 /* KeychainFailurePropagationTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -42,6 +43,7 @@
 		B0010000000000000000001A /* WritingDeskSessionPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/WritingDeskSessionPolicyTests.swift; sourceTree = "<group>"; };
 		B0010000000000000000001C /* ChapterCommitUseCaseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/ChapterCommitUseCaseTests.swift; sourceTree = "<group>"; };
 		B0010000000000000000001E /* WritingSkillMarketplaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/WritingSkillMarketplaceTests.swift; sourceTree = "<group>"; };
+		B00100000000000000000020 /* KeychainFailurePropagationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWritingTests/KeychainFailurePropagationTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -94,6 +96,7 @@
 				B0010000000000000000001C /* ChapterCommitUseCaseTests.swift */,
 				B00100000000000000000005 /* DomainModelsTests.swift */,
 				B00100000000000000000018 /* HostedXCTestLaunchGuardTests.swift */,
+				B00100000000000000000020 /* KeychainFailurePropagationTests.swift */,
 				B00100000000000000000003 /* NovelProjectTests.swift */,
 				B00100000000000000000007 /* ProjectExportServiceTests.swift */,
 				B00100000000000000000004 /* ProjectFileStoreTests.swift */,
@@ -221,6 +224,7 @@
 				B0010000000000000000001D /* ChapterCommitUseCaseTests.swift in Sources */,
 				B0010000000000000000000A /* DomainModelsTests.swift in Sources */,
 				B00100000000000000000019 /* HostedXCTestLaunchGuardTests.swift in Sources */,
+				B00100000000000000000021 /* KeychainFailurePropagationTests.swift in Sources */,
 				B00100000000000000000008 /* NovelProjectTests.swift in Sources */,
 				B0010000000000000000000C /* ProjectExportServiceTests.swift in Sources */,
 				B00100000000000000000009 /* ProjectFileStoreTests.swift in Sources */,
@@ -447,10 +451,10 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_STRICT_CONCURRENCY = complete;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/OpenWriting.app/Contents/MacOS/OpenWriting";
 				WRAPPER_EXTENSION = xctest;
 			};
@@ -473,10 +477,10 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_STRICT_CONCURRENCY = complete;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/OpenWriting.app/Contents/MacOS/OpenWriting";
 				WRAPPER_EXTENSION = xctest;
 			};

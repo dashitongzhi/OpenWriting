@@ -15,7 +15,7 @@ extension AppState {
             chapterNumber: chapterNumber,
             chapterTitle: project(for: projectID)?.currentChapterTitle ?? "未命名章节",
             content: chapterContent,
-            savedAt: Self.currentTimestampLabel()
+            savedAt: Self.currentTimestampValue()
         )
         return extractAndStoreMemoryItems(
             from: chapterDraft,
@@ -43,7 +43,7 @@ extension AppState {
                 review: review,
                 reviewFailureReason: reviewFailureReason,
                 contractOverride: contractOverride,
-                updatedAt: Self.currentTimestampLabel()
+                updatedAt: Self.currentTimestampValue()
             ))
             project = outcome.project
             builtCommit = outcome.commit
@@ -62,8 +62,23 @@ extension AppState {
         expectedCommitID: LongformChapterCommit.ID? = nil,
         projectID: NovelProject.ID
     ) {
-        Task { [weak self] in
+        let sourceScope = currentStorageScope
+        cancelAIMemoryExtractionTasks(
+            forProjectID: projectID,
+            scope: sourceScope
+        )
+        let taskID = UUID()
+        let task = Task { [weak self] in
             guard let self else { return }
+            defer {
+                aiMemoryExtractionTasks.removeValue(forKey: taskID)
+            }
+            guard isAIMemoryExtractionContextCurrent(
+                scope: sourceScope,
+                projectID: projectID
+            ) else {
+                return
+            }
             let configuration = self.aiConfiguration
 
             // Capture project context before the async call
@@ -130,6 +145,13 @@ extension AppState {
                     temperature: 0.2,
                     maxTokens: 3000
                 )
+                try Task.checkCancellation()
+                guard isAIMemoryExtractionContextCurrent(
+                    scope: sourceScope,
+                    projectID: projectID
+                ) else {
+                    return
+                }
 
                 guard let extractionResult = MemoryExtractionService.parseExtractionResult(from: response) else {
                     self.recordAIMemoryExtractionStatus(
@@ -137,6 +159,7 @@ extension AppState {
                         volumeNumber: sourceVolumeNumber,
                         chapterNumber: chapterNumber,
                         expectedCommitID: expectedCommitID,
+                        scope: sourceScope,
                         projectID: projectID
                     )
                     return
@@ -152,6 +175,7 @@ extension AppState {
                         volumeNumber: sourceVolumeNumber,
                         chapterNumber: chapterNumber,
                         expectedCommitID: expectedCommitID,
+                        scope: sourceScope,
                         projectID: projectID
                     )
                     return
@@ -192,16 +216,30 @@ extension AppState {
                         project.longformRuntimeState = runtime
                     }
                 }
+            } catch is CancellationError {
+                return
             } catch {
+                guard isAIMemoryExtractionContextCurrent(
+                    scope: sourceScope,
+                    projectID: projectID
+                ) else {
+                    return
+                }
                 self.recordAIMemoryExtractionStatus(
                     "failed",
                     volumeNumber: sourceVolumeNumber,
                     chapterNumber: chapterNumber,
                     expectedCommitID: expectedCommitID,
+                    scope: sourceScope,
                     projectID: projectID
                 )
             }
         }
+        aiMemoryExtractionTasks[taskID] = AIMemoryExtractionTaskRegistration(
+            scope: sourceScope,
+            projectID: projectID,
+            task: task
+        )
     }
 
     private func recordAIMemoryExtractionStatus(
@@ -209,8 +247,15 @@ extension AppState {
         volumeNumber: Int,
         chapterNumber: Int,
         expectedCommitID: LongformChapterCommit.ID?,
+        scope: String?,
         projectID: NovelProject.ID
     ) {
+        guard isAIMemoryExtractionContextCurrent(
+            scope: scope,
+            projectID: projectID
+        ) else {
+            return
+        }
         updateProject(projectID) { project in
             var runtime = project.longformRuntimeState
             guard var latestCommit = runtime.latestCommit,
@@ -230,5 +275,36 @@ extension AppState {
             }
             project.longformRuntimeState = runtime
         }
+    }
+
+    func cancelAIMemoryExtractionTasks(
+        forProjectID projectID: NovelProject.ID? = nil,
+        scope: String? = nil
+    ) {
+        let matchingTaskIDs = aiMemoryExtractionTasks.compactMap {
+            taskID,
+            registration -> UUID? in
+            if let projectID, registration.projectID != projectID {
+                return nil
+            }
+            if let scope, registration.scope != scope {
+                return nil
+            }
+            return taskID
+        }
+
+        for taskID in matchingTaskIDs {
+            aiMemoryExtractionTasks[taskID]?.task.cancel()
+            aiMemoryExtractionTasks.removeValue(forKey: taskID)
+        }
+    }
+
+    private func isAIMemoryExtractionContextCurrent(
+        scope: String?,
+        projectID: NovelProject.ID
+    ) -> Bool {
+        !Task.isCancelled
+            && currentStorageScope == scope
+            && recentProjects.contains(where: { $0.id == projectID })
     }
 }

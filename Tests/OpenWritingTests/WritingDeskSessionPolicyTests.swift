@@ -1,6 +1,7 @@
 import XCTest
 @testable import OpenWriting
 
+@MainActor
 final class WritingDeskSessionPolicyTests: XCTestCase {
     func testPreferredLengthFallsBackToStoryLengthWithoutChapterTarget() {
         let project = NovelProject(
@@ -114,5 +115,196 @@ final class WritingDeskSessionPolicyTests: XCTestCase {
 
         project.draftText = "尚未保存的新正文"
         XCTAssertTrue(ChapterWritingSessionPolicy.shouldConfirmChapterLoad(in: project))
+    }
+
+    func testChapterRepairEligibilityAllowsOnlyCurrentSingleChapterGap() {
+        var project = repairProject(
+            savedPositions: [(1, 1), (1, 3)],
+            currentPosition: (1, 2)
+        )
+        let issue = repairIssue(kind: .missingChapterSequence)
+
+        XCTAssertTrue(
+            ChapterRepairEligibility.canRepair(
+                issue,
+                in: project,
+                allowsCurrentChapterRepair: true
+            )
+        )
+
+        project.currentChapterNumber = 1
+        XCTAssertFalse(
+            ChapterRepairEligibility.canRepair(
+                issue,
+                in: project,
+                allowsCurrentChapterRepair: true
+            )
+        )
+    }
+
+    func testFullHealthAllowsRepairingOnlyCurrentSingleChapterGap() {
+        let project = repairProject(
+            savedPositions: [(1, 1), (1, 3)],
+            currentPosition: (1, 2)
+        )
+        let blockers = project.longformRuntimeHealth.blockingIssues
+            .filter { $0.kind != .prewriteGate }
+
+        XCTAssertEqual(Set(blockers.map(\.kind)), [.missingChapterSequence])
+        XCTAssertTrue(
+            blockers.allSatisfy {
+                ChapterRepairEligibility.canRepair(
+                    $0,
+                    in: project,
+                    allowsCurrentChapterRepair: true
+                )
+            }
+        )
+    }
+
+    func testChapterRepairEligibilityRejectsWhenMultipleChapterGapsRemain() {
+        let project = repairProject(
+            savedPositions: [(1, 1), (1, 3), (1, 5)],
+            currentPosition: (1, 2)
+        )
+
+        XCTAssertFalse(
+            ChapterRepairEligibility.canRepair(
+                repairIssue(kind: .missingChapterSequence),
+                in: project,
+                allowsCurrentChapterRepair: true
+            )
+        )
+    }
+
+    func testChapterRepairEligibilityAllowsOnlyCurrentSingleVolumeGapStart() {
+        let project = repairProject(
+            savedPositions: [(1, 1), (3, 1)],
+            currentPosition: (2, 1)
+        )
+
+        XCTAssertTrue(
+            ChapterRepairEligibility.canRepair(
+                repairIssue(kind: .missingVolumeSequence),
+                in: project,
+                allowsCurrentChapterRepair: true
+            )
+        )
+    }
+
+    func testFullHealthAllowsRepairingOnlyCurrentSingleVolumeGapStart() {
+        let project = repairProject(
+            savedPositions: [(1, 1), (3, 1)],
+            currentPosition: (2, 1)
+        )
+        let blockers = project.longformRuntimeHealth.blockingIssues
+            .filter { $0.kind != .prewriteGate }
+
+        XCTAssertEqual(Set(blockers.map(\.kind)), [.missingVolumeSequence])
+        XCTAssertTrue(
+            blockers.allSatisfy {
+                ChapterRepairEligibility.canRepair(
+                    $0,
+                    in: project,
+                    allowsCurrentChapterRepair: true
+                )
+            }
+        )
+    }
+
+    func testChapterRepairEligibilityRejectsMultipleVolumeGaps() {
+        let project = repairProject(
+            savedPositions: [(1, 1), (3, 1), (5, 1)],
+            currentPosition: (2, 1)
+        )
+
+        XCTAssertFalse(
+            ChapterRepairEligibility.canRepair(
+                repairIssue(kind: .missingVolumeSequence),
+                in: project,
+                allowsCurrentChapterRepair: true
+            )
+        )
+    }
+
+    private func repairProject(
+        savedPositions: [(volume: Int, chapter: Int)],
+        currentPosition: (volume: Int, chapter: Int)
+    ) -> NovelProject {
+        var project = NovelProject(
+            title: "卷章修复测试",
+            genre: "玄幻",
+            summary: "验证修复资格只依据结构化目录状态。",
+            storyLength: .long
+        )
+        project.currentVolumeNumber = currentPosition.volume
+        project.currentChapterNumber = currentPosition.chapter
+        project.chapterDrafts = savedPositions.map { position in
+            ChapterDraft(
+                volumeNumber: position.volume,
+                chapterNumber: position.chapter,
+                chapterTitle: "第 \(position.chapter) 章",
+                content: "已保存正文 \(position.volume)-\(position.chapter)",
+                savedAt: "2026-07-28T12:00:00Z"
+            )
+        }
+        var runtime = LongformStoryRuntimeState.empty
+        for draft in project.chapterDrafts {
+            runtime.record(commit: acceptedCommit(projectID: project.id, draft: draft))
+        }
+        project.longformRuntimeState = runtime
+        return project
+    }
+
+    private func acceptedCommit(
+        projectID: NovelProject.ID,
+        draft: ChapterDraft
+    ) -> LongformChapterCommit {
+        let rawID = [
+            "commit",
+            projectID,
+            String(max(draft.volumeNumber, 1)),
+            String(draft.chapterNumber),
+            draft.content
+        ].joined(separator: "|")
+        let hash = rawID.unicodeScalars.reduce(UInt64(14_695_981_039_346_656_037)) {
+            ($0 ^ UInt64($1.value)) &* 1_099_511_628_211
+        }
+        return LongformChapterCommit(
+            id: String(format: "%016llx", hash),
+            chapterNumber: draft.chapterNumber,
+            volumeNumber: draft.volumeNumber,
+            chapterTitle: draft.chapterTitle,
+            status: .accepted,
+            createdAt: draft.savedAtDate,
+            plannedNodes: [],
+            coveredNodes: [],
+            missedNodes: [],
+            rejectionReasons: [],
+            revisionHints: [],
+            acceptedEvents: [],
+            extractedMemoryItems: [],
+            dominantThreadType: .quest,
+            reviewStatus: .completed,
+            reviewSummary: "通过",
+            projectionStatus: [
+                "memory": "done",
+                "foreshadowing": "done",
+                "threads": "done",
+                "strands": "done",
+                "runtime": "done"
+            ]
+        )
+    }
+
+    private func repairIssue(kind: LongformRuntimeHealthIssueKind) -> LongformRuntimeHealthIssue {
+        LongformRuntimeHealthIssue(
+            id: "repair-\(kind.rawValue)",
+            kind: kind,
+            status: .blocked,
+            title: "可变显示文案",
+            detail: "此处文案不参与控制流。",
+            repairHint: "补齐唯一缺口。"
+        )
     }
 }

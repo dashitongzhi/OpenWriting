@@ -46,22 +46,97 @@ nonisolated enum RankedContextBudget {
                 appendMarker(omissionMarker, to: &rendered, limit: maximumCharacters)
                 break
             }
-            rendered += header
 
-            let remainingForContent = maximumCharacters - rendered.count
-            guard section.content.count <= remainingForContent else {
-                let contentBudget = max(0, remainingForContent - truncationMarker.count)
-                rendered += String(section.content.prefix(contentBudget))
-                appendMarker(truncationMarker, to: &rendered, limit: maximumCharacters)
-                if index < sections.index(before: sections.endIndex) {
-                    appendMarker(omissionMarker, to: &rendered, limit: maximumCharacters)
-                }
-                break
+            let laterSections = sections.dropFirst(index + 1)
+            let currentMinimum = min(
+                section.content.count,
+                minimumReservedContentCharacters(for: section.category)
+            )
+            let maximumLaterReservation = max(
+                0,
+                remainingBeforeHeader - header.count - currentMinimum
+            )
+            let laterReservation = min(
+                reservedCharacters(for: laterSections),
+                maximumLaterReservation
+            )
+            let contentBudget = max(
+                0,
+                remainingBeforeHeader - header.count - laterReservation
+            )
+            guard contentBudget > 0 else {
+                continue
             }
-            rendered += section.content
+
+            rendered += header
+            guard section.content.count > contentBudget else {
+                rendered += section.content
+                continue
+            }
+
+            appendTruncated(
+                section.content,
+                to: &rendered,
+                contentBudget: contentBudget
+            )
         }
 
         return rendered
+    }
+
+    private static func reservedCharacters(
+        for sections: ArraySlice<ContextSection>
+    ) -> Int {
+        sections.reduce(into: 0) { total, section in
+            let minimumContent = min(
+                section.content.count,
+                minimumReservedContentCharacters(for: section.category)
+            )
+            guard minimumContent > 0 else { return }
+            total += "\n\n\(section.label)：\n".count + minimumContent
+        }
+    }
+
+    private static func minimumReservedContentCharacters(
+        for category: ContextSection.Category
+    ) -> Int {
+        switch category {
+        case .currentDraft:
+            return 768
+        case .chapterTree, .enhancedMemory:
+            return 512
+        case .activeThreads, .specialRequirements:
+            return 384
+        case .strandContext:
+            return 256
+        case .styleFingerprint,
+             .outline,
+             .volumePlan,
+             .genreTemplate,
+             .narrativeStage,
+             .manualReference,
+             .retrievedReferences,
+             .other:
+            return 0
+        }
+    }
+
+    private static func appendTruncated(
+        _ content: String,
+        to rendered: inout String,
+        contentBudget: Int
+    ) {
+        guard contentBudget > truncationMarker.count else {
+            rendered += String(truncationMarker.prefix(contentBudget))
+            return
+        }
+
+        let availableContent = contentBudget - truncationMarker.count
+        let prefixBudget = (availableContent * 2) / 3
+        let suffixBudget = availableContent - prefixBudget
+        rendered += String(content.prefix(prefixBudget))
+        rendered += truncationMarker
+        rendered += String(content.suffix(suffixBudget))
     }
 
     private static func appendMarker(_ marker: String, to text: inout String, limit: Int) {
@@ -126,20 +201,28 @@ struct ContextRanker {
             project.draftText
         ].joined(separator: "\n"))
 
-        let scored: [(ContextSection, Double)] = rankable.map { section in
-            let recency       = recencyScore(for: section)
-            let entityOverlap = entityOverlapScore(for: section, entities: currentEntities)
-            let signal        = signalStrengthScore(for: section)
+        let scored: [(section: ContextSection, score: Double, originalIndex: Int)] = rankable
+            .enumerated()
+            .map { entry in
+                let (originalIndex, section) = entry
+                let recency       = recencyScore(for: section)
+                let entityOverlap = entityOverlapScore(for: section, entities: currentEntities)
+                let signal        = signalStrengthScore(for: section)
 
-            let total = recency       * recencyWeight
-                      + entityOverlap * entityOverlapWeight
-                      + signal        * signalStrengthWeight
-            return (section, total)
-        }
+                let total = recency       * recencyWeight
+                          + entityOverlap * entityOverlapWeight
+                          + signal        * signalStrengthWeight
+                return (section, total, originalIndex)
+            }
 
         let ranked = scored
-            .sorted { $0.1 > $1.1 }
-            .map { $0.0 }
+            .sorted { lhs, rhs in
+                if lhs.score == rhs.score {
+                    return lhs.originalIndex < rhs.originalIndex
+                }
+                return lhs.score > rhs.score
+            }
+            .map(\.section)
 
         return pinned + ranked
     }
@@ -180,10 +263,12 @@ struct ContextRanker {
         let sectionEntities = extractEntities(from: section.content)
         guard !sectionEntities.isEmpty else { return 0.0 }
 
-        let intersection = currentEntities.intersection(sectionEntities)
+        let normalizedCurrentEntities = normalizedEntitySet(currentEntities)
+        let normalizedSectionEntities = normalizedEntitySet(sectionEntities)
+        let intersection = normalizedCurrentEntities.intersection(normalizedSectionEntities)
 
-        let recall    = Double(intersection.count) / Double(currentEntities.count)
-        let precision = Double(intersection.count) / Double(sectionEntities.count)
+        let recall    = Double(intersection.count) / Double(normalizedCurrentEntities.count)
+        let precision = Double(intersection.count) / Double(normalizedSectionEntities.count)
 
         guard recall + precision > 0 else { return 0.0 }
         // F1-like score
@@ -226,23 +311,43 @@ struct ContextRanker {
 
     // MARK: - Entity Extraction
 
-    /// Extract candidate entity tokens from CJK text.
-    /// Sequences of 2–6 contiguous CJK characters are treated as entity candidates.
+    /// Extract candidate entity tokens from CJK and mixed-script text.
+    /// CJK windows are retained for recall, while Latin/digit runs and identifiers
+    /// such as `XJ-9` or `A区7号` are preserved as entity candidates.
     static func extractEntities(from text: String) -> Set<String> {
         var entities = Set<String>()
-        var buffer = [Unicode.Scalar]()
+        var cjkBuffer = [Unicode.Scalar]()
+        var mixedBuffer = [Unicode.Scalar]()
+        var pendingConnector: Unicode.Scalar?
 
         for scalar in text.unicodeScalars {
             if entities.count >= maxExtractedEntities {
                 break
             }
-            if isCJK(scalar) {
-                buffer.append(scalar)
+
+            if isEntityCore(scalar) {
+                if let pendingConnector, !mixedBuffer.isEmpty {
+                    mixedBuffer.append(pendingConnector)
+                }
+                pendingConnector = nil
+                mixedBuffer.append(scalar)
+
+                if isCJK(scalar) {
+                    cjkBuffer.append(scalar)
+                } else {
+                    flushEntityBuffer(&cjkBuffer, into: &entities)
+                }
+            } else if isEntityConnector(scalar), !mixedBuffer.isEmpty {
+                flushEntityBuffer(&cjkBuffer, into: &entities)
+                pendingConnector = scalar
             } else {
-                flushEntityBuffer(&buffer, into: &entities)
+                pendingConnector = nil
+                flushEntityBuffer(&cjkBuffer, into: &entities)
+                flushMixedEntityBuffer(&mixedBuffer, into: &entities)
             }
         }
-        flushEntityBuffer(&buffer, into: &entities)
+        flushEntityBuffer(&cjkBuffer, into: &entities)
+        flushMixedEntityBuffer(&mixedBuffer, into: &entities)
         return entities
     }
 
@@ -274,6 +379,94 @@ struct ContextRanker {
             }
         }
         buffer.removeAll()
+    }
+
+    private static func flushMixedEntityBuffer(
+        _ buffer: inout [Unicode.Scalar],
+        into entities: inout Set<String>
+    ) {
+        defer { buffer.removeAll() }
+        guard entities.count < maxExtractedEntities else { return }
+
+        func insertCandidate(_ candidate: [Unicode.Scalar]) {
+            let coreScalars = candidate.filter(isEntityCore)
+            guard entities.count < maxExtractedEntities,
+                  coreScalars.contains(where: { !isCJK($0) }),
+                  (2...64).contains(coreScalars.count) else {
+                return
+            }
+            entities.insert(candidate.map(String.init).joined())
+        }
+
+        insertCandidate(buffer)
+
+        var index = 0
+        while index < buffer.count {
+            guard isNonCJKAlphanumeric(buffer[index]) else {
+                index += 1
+                continue
+            }
+
+            let start = index
+            var end = index
+            while end + 1 < buffer.count {
+                if isNonCJKAlphanumeric(buffer[end + 1]) {
+                    end += 1
+                } else if isEntityConnector(buffer[end + 1]),
+                          end + 2 < buffer.count,
+                          isNonCJKAlphanumeric(buffer[end + 2]) {
+                    end += 2
+                } else {
+                    break
+                }
+            }
+
+            let component = Array(buffer[start...end])
+            insertCandidate(component)
+
+            var rightCandidate = component
+            var rightIndex = end + 1
+            var appendedRightCJK = 0
+            while rightIndex < buffer.count, isCJK(buffer[rightIndex]), appendedRightCJK < 2 {
+                rightCandidate.append(buffer[rightIndex])
+                insertCandidate(rightCandidate)
+                appendedRightCJK += 1
+                rightIndex += 1
+            }
+
+            if start > 0, isCJK(buffer[start - 1]) {
+                var surroundingCandidate = [buffer[start - 1]] + component
+                insertCandidate(surroundingCandidate)
+                if end + 1 < buffer.count, isCJK(buffer[end + 1]) {
+                    surroundingCandidate.append(buffer[end + 1])
+                    insertCandidate(surroundingCandidate)
+                }
+            }
+
+            index = end + 1
+        }
+    }
+
+    private static func normalizedEntitySet(_ entities: Set<String>) -> Set<String> {
+        Set(entities.map {
+            $0.folding(
+                options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+                locale: Locale(identifier: "en_US_POSIX")
+            ).lowercased()
+        })
+    }
+
+    private static func isEntityCore(_ scalar: Unicode.Scalar) -> Bool {
+        isCJK(scalar) || isNonCJKAlphanumeric(scalar)
+    }
+
+    private static func isNonCJKAlphanumeric(_ scalar: Unicode.Scalar) -> Bool {
+        !isCJK(scalar)
+            && (CharacterSet.letters.contains(scalar) || CharacterSet.decimalDigits.contains(scalar))
+    }
+
+    private static func isEntityConnector(_ scalar: Unicode.Scalar) -> Bool {
+        scalar == "-" || scalar == "_" || scalar == "." || scalar == "·" || scalar == "・"
     }
 
     private static func isCJK(_ scalar: Unicode.Scalar) -> Bool {

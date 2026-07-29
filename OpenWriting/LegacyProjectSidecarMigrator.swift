@@ -30,12 +30,15 @@ struct LegacyProjectSidecarMigrator {
         _ project: inout NovelProject,
         keysToRemove: inout Set<String>
     ) {
+        var didChangeProject = false
+
         let memoryBucketsKey = key("memoryBuckets", projectID: project.id)
         if let data = userDefaults.data(forKey: memoryBucketsKey) {
             if project.persistedMemoryBuckets != nil {
                 keysToRemove.insert(memoryBucketsKey)
             } else if let value = try? decoder.decode(MemoryBuckets.self, from: data) {
                 project.persistedMemoryBuckets = value
+                didChangeProject = true
                 keysToRemove.insert(memoryBucketsKey)
             }
         }
@@ -46,6 +49,7 @@ struct LegacyProjectSidecarMigrator {
                 keysToRemove.insert(strandWeaveKey)
             } else if let value = try? decoder.decode(StrandWeaveState.self, from: data) {
                 project.persistedStrandWeaveState = value
+                didChangeProject = true
                 keysToRemove.insert(strandWeaveKey)
             }
         }
@@ -56,6 +60,7 @@ struct LegacyProjectSidecarMigrator {
                 keysToRemove.insert(lastReviewKey)
             } else if let value = try? decoder.decode(ChapterReviewResult.self, from: data) {
                 project.persistedLastReviewResult = value
+                didChangeProject = true
                 keysToRemove.insert(lastReviewKey)
             }
         }
@@ -64,6 +69,7 @@ struct LegacyProjectSidecarMigrator {
         if let value = userDefaults.stringArray(forKey: antiPatternsKey) {
             if project.persistedAntiPatterns == nil {
                 project.persistedAntiPatterns = value
+                didChangeProject = true
             }
             keysToRemove.insert(antiPatternsKey)
         }
@@ -74,8 +80,19 @@ struct LegacyProjectSidecarMigrator {
                 keysToRemove.insert(runtimeKey)
             } else if let value = try? decoder.decode(LongformStoryRuntimeState.self, from: data) {
                 project.persistedLongformRuntimeState = value
+                didChangeProject = true
                 keysToRemove.insert(runtimeKey)
             }
+        }
+
+        if didChangeProject {
+            let nextPersistedMillisecond = max(
+                Date().timeIntervalSince1970,
+                project.updatedAtDate.timeIntervalSince1970 + 0.001
+            )
+            project.updatedAtDate = Date(
+                timeIntervalSince1970: ceil(nextPersistedMillisecond * 1_000) / 1_000
+            )
         }
     }
 

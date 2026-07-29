@@ -1,18 +1,18 @@
 import Foundation
 
-enum LongformCommitStatus: String, Codable, Hashable {
+nonisolated enum LongformCommitStatus: String, Codable, Hashable {
     case accepted
     case rejected
 }
 
-enum LongformChapterReviewStatus: String, Codable, Hashable {
+nonisolated enum LongformChapterReviewStatus: String, Codable, Hashable {
     case missing
     case completed
     case failed
     case unknown
 }
 
-enum LongformWriteGateStage: String, Codable, Hashable {
+nonisolated enum LongformWriteGateStage: String, Codable, Hashable {
     case prewrite
     case review
     case fulfillment
@@ -32,7 +32,7 @@ enum LongformWriteGateStage: String, Codable, Hashable {
     }
 }
 
-enum LongformWriteGateStatus: String, Codable, Hashable {
+nonisolated enum LongformWriteGateStatus: String, Codable, Hashable {
     case passed
     case warning
     case blocked
@@ -49,7 +49,7 @@ enum LongformWriteGateStatus: String, Codable, Hashable {
     }
 }
 
-struct LongformWriteGateCheck: Codable, Hashable, Identifiable {
+nonisolated struct LongformWriteGateCheck: Codable, Hashable, Identifiable {
     var id: String
     var stage: LongformWriteGateStage
     var status: LongformWriteGateStatus
@@ -57,7 +57,7 @@ struct LongformWriteGateCheck: Codable, Hashable, Identifiable {
     var detail: String?
 }
 
-struct LongformWriteGateReport: Codable, Hashable, Identifiable {
+nonisolated struct LongformWriteGateReport: Codable, Hashable, Identifiable {
     var id: String
     var volumeNumber: Int
     var chapterNumber: Int
@@ -88,7 +88,7 @@ struct LongformWriteGateReport: Codable, Hashable, Identifiable {
     }
 }
 
-struct LongformProjectionStatusMessage: Hashable, Identifiable {
+nonisolated struct LongformProjectionStatusMessage: Hashable, Identifiable {
     var key: String
     var title: String
     var status: LongformWriteGateStatus
@@ -107,8 +107,9 @@ struct LongformProjectionStatusMessage: Hashable, Identifiable {
     }
 }
 
-enum LongformRuntimeHealthIssueKind: String, Codable, Hashable {
+nonisolated enum LongformRuntimeHealthIssueKind: String, Codable, Hashable {
     case prewriteGate
+    case contractNotPersisted
     case missingVolumeSequence
     case missingChapterSequence
     case uncommittedSavedChapter
@@ -117,7 +118,7 @@ enum LongformRuntimeHealthIssueKind: String, Codable, Hashable {
     case other
 }
 
-struct LongformRuntimeHealthIssue: Codable, Hashable, Identifiable {
+nonisolated struct LongformRuntimeHealthIssue: Codable, Hashable, Identifiable {
     var id: String
     var kind: LongformRuntimeHealthIssueKind
     var status: LongformWriteGateStatus
@@ -139,6 +140,10 @@ struct LongformRuntimeHealthIssue: Codable, Hashable, Identifiable {
         self.title = title
         self.detail = detail
         self.repairHint = repairHint
+    }
+
+    var shouldIncludeInWritingContext: Bool {
+        kind != .contractNotPersisted
     }
 
     enum CodingKeys: String, CodingKey {
@@ -168,6 +173,7 @@ struct LongformRuntimeHealthIssue: Codable, Hashable, Identifiable {
     ) -> LongformRuntimeHealthIssueKind {
         switch title {
         case "写前门禁未通过": return .prewriteGate
+        case "长篇合同尚未落盘": return .contractNotPersisted
         case "分卷目录存在断卷": return .missingVolumeSequence
         case "章节目录存在断章": return .missingChapterSequence
         case "保存章节未进入提交链": return .uncommittedSavedChapter
@@ -178,7 +184,7 @@ struct LongformRuntimeHealthIssue: Codable, Hashable, Identifiable {
     }
 }
 
-struct LongformRuntimeHealthReport: Codable, Hashable, Identifiable {
+nonisolated struct LongformRuntimeHealthReport: Codable, Hashable, Identifiable {
     var id: String
     var volumeNumber: Int
     var chapterNumber: Int
@@ -216,7 +222,7 @@ struct LongformRuntimeHealthReport: Codable, Hashable, Identifiable {
     }
 }
 
-struct LongformQualityTrend {
+nonisolated struct LongformQualityTrend {
     var recentScores: [Int]
     var minimumAcceptedScore: Int
     var recurringDimensions: [(dimension: ReviewDimension, count: Int)]
@@ -284,7 +290,7 @@ struct LongformQualityTrend {
     }
 }
 
-struct LongformNextChapterBrief: Codable, Hashable {
+nonisolated struct LongformNextChapterBrief: Codable, Hashable {
     var chapterGoal: String
     var mandatoryContinuities: [String]
     var foreshadowingPromises: [String]
@@ -323,7 +329,7 @@ struct LongformNextChapterBrief: Codable, Hashable {
     }
 }
 
-struct LongformStoryContractBundle: Codable, Hashable {
+nonisolated struct LongformStoryContractBundle: Codable, Hashable {
     var master: MasterContract
     var volume: VolumeContract
     var chapter: ChapterContract
@@ -387,7 +393,20 @@ struct LongformStoryContractBundle: Codable, Hashable {
     }
 }
 
-struct LongformChapterCommit: Codable, Hashable, Identifiable {
+nonisolated struct LongformPromptContext {
+    let contract: LongformStoryContractBundle
+    let health: LongformRuntimeHealthReport
+    let qualityTrend: LongformQualityTrend
+    let nextChapterBrief: LongformNextChapterBrief
+}
+
+nonisolated struct LongformWritingDeskContext {
+    let health: LongformRuntimeHealthReport
+    let qualityTrend: LongformQualityTrend
+    let nextChapterBrief: LongformNextChapterBrief
+}
+
+nonisolated struct LongformChapterCommit: Codable, Hashable, Identifiable {
     var id: String
     var chapterNumber: Int
     var volumeNumber: Int
@@ -520,7 +539,7 @@ struct LongformChapterCommit: Codable, Hashable, Identifiable {
     }
 }
 
-struct LongformStoryEvent: Codable, Hashable, Identifiable {
+nonisolated struct LongformStoryEvent: Codable, Hashable, Identifiable {
     var id: String
     var volumeNumber: Int? = nil
     var chapter: Int
@@ -530,7 +549,7 @@ struct LongformStoryEvent: Codable, Hashable, Identifiable {
     var value: String
 }
 
-struct LongformStoryRuntimeState: Codable, Hashable {
+nonisolated struct LongformStoryRuntimeState: Codable, Hashable {
     private static let rejectedCommitHistoryLimit = 200
 
     var latestContract: LongformStoryContractBundle?
@@ -625,6 +644,52 @@ enum LongformStorySystem {
     }
 
     static func buildRuntimeContract(for project: NovelProject) -> LongformStoryContractBundle {
+        let qualityTrend = buildQualityTrend(for: project)
+        let health = buildRuntimeHealth(for: project, qualityTrend: qualityTrend)
+        return buildRuntimeContract(
+            for: project,
+            qualityTrend: qualityTrend,
+            health: health
+        )
+    }
+
+    static func buildPromptContext(for project: NovelProject) -> LongformPromptContext {
+        let writingDeskContext = buildWritingDeskContext(for: project)
+        let contract = buildRuntimeContract(
+            for: project,
+            qualityTrend: writingDeskContext.qualityTrend,
+            health: writingDeskContext.health
+        )
+        return LongformPromptContext(
+            contract: contract,
+            health: writingDeskContext.health,
+            qualityTrend: writingDeskContext.qualityTrend,
+            nextChapterBrief: writingDeskContext.nextChapterBrief
+        )
+    }
+
+    static func buildWritingDeskContext(
+        for project: NovelProject
+    ) -> LongformWritingDeskContext {
+        let qualityTrend = buildQualityTrend(for: project)
+        let health = buildRuntimeHealth(for: project, qualityTrend: qualityTrend)
+        let nextChapterBrief = buildNextChapterBrief(
+            for: project,
+            qualityTrend: qualityTrend,
+            health: health
+        )
+        return LongformWritingDeskContext(
+            health: health,
+            qualityTrend: qualityTrend,
+            nextChapterBrief: nextChapterBrief
+        )
+    }
+
+    private static func buildRuntimeContract(
+        for project: NovelProject,
+        qualityTrend: LongformQualityTrend,
+        health: LongformRuntimeHealthReport
+    ) -> LongformStoryContractBundle {
         let validation = PrewriteValidator.validate(project: project)
         let memoryConflicts = project.memoryBuckets.conflicts.map {
             "\($0.category.displayName)：\($0.key) 存在 \($0.count) 条生效记录"
@@ -714,7 +779,12 @@ enum LongformStorySystem {
         )
 
         var completed = contract
-        completed.writingBrief = writingBrief(for: project, contract: completed)
+        completed.writingBrief = writingBrief(
+            for: project,
+            contract: completed,
+            qualityTrend: qualityTrend,
+            health: health
+        )
         return completed
     }
 
@@ -1086,12 +1156,21 @@ enum LongformStorySystem {
     }
 
     static func buildRuntimeHealth(for project: NovelProject) -> LongformRuntimeHealthReport {
+        buildRuntimeHealth(
+            for: project,
+            qualityTrend: buildQualityTrend(for: project)
+        )
+    }
+
+    private static func buildRuntimeHealth(
+        for project: NovelProject,
+        qualityTrend: LongformQualityTrend
+    ) -> LongformRuntimeHealthReport {
         let runtime = project.longformRuntimeState
         let prewrite = PrewriteValidator.validate(project: project)
         let memoryBuckets = project.memoryBuckets
         let memoryConflicts = memoryBuckets.conflicts
         let strandWarnings = project.strandWeaveState.checkRedLines(currentChapter: project.currentChapterNumber)
-        let qualityTrend = buildQualityTrend(for: project)
         let minimumAcceptedScore = minimumAcceptedScore(for: project.storyLength)
         var issues: [LongformRuntimeHealthIssue] = []
 
@@ -1102,8 +1181,11 @@ enum LongformStorySystem {
             detail: String,
             repairHint: String
         ) {
+            let identityParts = kind == .other
+                ? [title, detail]
+                : [kind.rawValue]
             issues.append(LongformRuntimeHealthIssue(
-                id: stableID(parts: ["health", project.id, title, detail]),
+                id: stableID(parts: ["health", project.id] + identityParts),
                 kind: kind,
                 status: status,
                 title: title,
@@ -1131,6 +1213,7 @@ enum LongformStorySystem {
 
         if project.storyLength.supportsVolumePlanning && runtime.latestContract == nil {
             appendIssue(
+                kind: .contractNotPersisted,
                 status: .warning,
                 title: "长篇合同尚未落盘",
                 detail: "当前项目还没有持久化的后台合同。",
@@ -1139,13 +1222,20 @@ enum LongformStorySystem {
         }
 
         if let writeGate = runtime.latestWriteGate {
-            for check in writeGate.blockingChecks.prefix(3) {
-                appendIssue(
-                    status: .blocked,
-                    title: "\(check.stage.displayName)门禁阻断",
-                    detail: [check.message, check.detail].compactMap { $0 }.joined(separator: "："),
-                    repairHint: "按门禁提示修复后再推进下一章。"
-                )
+            let representsLatestRejectedCommit = runtime.latestCommit.map {
+                $0.status == .rejected
+                    && $0.volumeNumber == writeGate.volumeNumber
+                    && $0.chapterNumber == writeGate.chapterNumber
+            } ?? false
+            if !representsLatestRejectedCommit {
+                for check in writeGate.blockingChecks.prefix(3) {
+                    appendIssue(
+                        status: .blocked,
+                        title: "\(check.stage.displayName)门禁阻断",
+                        detail: [check.message, check.detail].compactMap { $0 }.joined(separator: "："),
+                        repairHint: "按门禁提示修复后再推进下一章。"
+                    )
+                }
             }
             for check in writeGate.warningChecks.prefix(2) {
                 appendIssue(
@@ -1559,6 +1649,20 @@ enum LongformStorySystem {
     }
 
     static func buildNextChapterBrief(for project: NovelProject) -> LongformNextChapterBrief {
+        let qualityTrend = buildQualityTrend(for: project)
+        let health = buildRuntimeHealth(for: project, qualityTrend: qualityTrend)
+        return buildNextChapterBrief(
+            for: project,
+            qualityTrend: qualityTrend,
+            health: health
+        )
+    }
+
+    private static func buildNextChapterBrief(
+        for project: NovelProject,
+        qualityTrend: LongformQualityTrend,
+        health: LongformRuntimeHealthReport
+    ) -> LongformNextChapterBrief {
         let chapterGoal = firstUsefulText([project.chapterFocus, project.currentChapterSummary])
         let chapterNodePlan = chapterRelevantLines(
             from: [project.outlineText, project.structureNotes],
@@ -1567,19 +1671,23 @@ enum LongformStorySystem {
             fallback: chapterGoal
         )
         let memoryItems = project.memoryBuckets.relevantActiveItems(
-            for: [chapterGoal, project.draftText, project.outlineText, project.structureNotes].joined(separator: " "),
+            for: [
+                chapterGoal,
+                project.outlineText,
+                project.structureNotes,
+                project.sceneProgressNotes,
+                project.characterArcNotes
+            ].joined(separator: " "),
             limit: 12
         )
         let memoryContinuities = memoryItems.map {
             "[\($0.category.displayName)] \($0.subject) / \($0.field)：\($0.value)"
         }
-        let qualityTrend = buildQualityTrend(for: project)
-        let health = buildRuntimeHealth(for: project)
         let healthRepairTasks = health.issues
-            .filter { $0.title != "长篇合同尚未落盘" }
+            .filter(\.shouldIncludeInWritingContext)
             .map { "\($0.title)：\($0.repairHint)" }
         let healthRisks = health.issues
-            .filter { $0.status != .passed && $0.title != "长篇合同尚未落盘" }
+            .filter { $0.status != .passed && $0.shouldIncludeInWritingContext }
             .map { "\($0.title)：\($0.detail)" }
 
         return LongformNextChapterBrief(
@@ -1701,7 +1809,9 @@ enum LongformStorySystem {
 
     private static func writingBrief(
         for project: NovelProject,
-        contract: LongformStoryContractBundle
+        contract: LongformStoryContractBundle,
+        qualityTrend: LongformQualityTrend,
+        health: LongformRuntimeHealthReport
     ) -> String {
         let chapter = contract.chapter
         let master = contract.master
@@ -1767,7 +1877,6 @@ enum LongformStorySystem {
         \(contract.review.requiresPostwriteReview == true ? "- 长篇章节必须通过写后质量审查后才会写入长期记忆、伏笔和叙事线。" : "- 当前规模允许轻量本地提交，但仍应尽量完成写后审查。")
         """)
 
-        let qualityTrend = buildQualityTrend(for: project)
         if qualityTrend.hasSignals {
             sections.append("""
             【近期质量趋势】
@@ -1787,9 +1896,8 @@ enum LongformStorySystem {
             """)
         }
 
-        let health = buildRuntimeHealth(for: project)
         let healthIssues = health.issues
-            .filter { $0.title != "长篇合同尚未落盘" }
+            .filter(\.shouldIncludeInWritingContext)
             .prefix(4)
         if !healthIssues.isEmpty {
             let healthLines = healthIssues.map { issue in

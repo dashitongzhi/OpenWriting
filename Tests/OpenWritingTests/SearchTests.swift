@@ -1,6 +1,7 @@
 import XCTest
 @testable import OpenWriting
 
+@MainActor
 final class SearchTests: XCTestCase {
 
     // MARK: - Search Token Extraction

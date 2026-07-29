@@ -3,6 +3,7 @@ import SwiftUI
 // MARK: - Dimension Bar Row
 
 struct DimensionBarRow: View {
+    @Environment(\.appAccentInkColor) private var accentInkColor
     let dimension: ReviewDimension
     let score: Int // 0–100 scale (unified reviewer output)
     let palette: DashboardPalette
@@ -23,6 +24,10 @@ struct DimensionBarRow: View {
 
     private var fraction: CGFloat { CGFloat(normalizedScore) / 100.0 }
 
+    private var scoreColor: Color {
+        60..<80 ~= normalizedScore ? accentInkColor : barColor
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -34,7 +39,7 @@ struct DimensionBarRow: View {
 
                 Text("\(normalizedScore)/100")
                     .font(.subheadline.weight(.bold).monospacedDigit())
-                    .foregroundStyle(barColor)
+                    .foregroundStyle(scoreColor)
             }
 
             GeometryReader { geo in

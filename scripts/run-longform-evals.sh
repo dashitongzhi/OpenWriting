@@ -27,6 +27,10 @@ done
 
 case "$mode" in
     mock)
+        if ! command -v python3 >/dev/null 2>&1; then
+            echo "error: required command 'python3' was not found" >&2
+            exit 1
+        fi
         python3 "$REPO_ROOT/LongformEvals/run_mock_eval.py" \
             --chapters "$chapters" \
             --mode mock \
@@ -34,6 +38,10 @@ case "$mode" in
             --output "$REPO_ROOT/LongformEvals/runs"
         ;;
     local|real)
+        if ! command -v xcrun >/dev/null 2>&1; then
+            echo "error: required command 'xcrun' was not found" >&2
+            exit 1
+        fi
         build_dir="$REPO_ROOT/LongformEvals/.build"
         runner="$build_dir/longform-pipeline-eval"
         mkdir -p "$build_dir"
@@ -45,6 +53,7 @@ case "$mode" in
             "$REPO_ROOT/OpenWriting/AppLogger.swift"
             "$REPO_ROOT/OpenWriting/ChapterQualityReviewer.swift"
             "$REPO_ROOT/OpenWriting/ChapterTreeRefresh.swift"
+            "$REPO_ROOT/OpenWriting/ContextRanker.swift"
             "$REPO_ROOT/OpenWriting/DomainModels.swift"
             "$REPO_ROOT/OpenWriting/GenreTemplateData.swift"
             "$REPO_ROOT/OpenWriting/GenreTemplateEngine.swift"

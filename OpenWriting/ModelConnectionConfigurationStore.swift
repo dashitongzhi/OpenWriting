@@ -1,17 +1,44 @@
 import Foundation
 import Security
 
+nonisolated enum CredentialReadResult: Equatable, Sendable {
+    case value(String)
+    case notFound
+    case failure(String)
+
+    var value: String? {
+        guard case let .value(value) = self else { return nil }
+        return value
+    }
+}
+
 nonisolated protocol CredentialStoring {
     func value(service: String, account: String) -> String?
+    func readResult(service: String, account: String) -> CredentialReadResult
 
     @discardableResult
     func store(_ value: String, service: String, account: String) -> Bool
 
-    func remove(service: String, account: String)
+    @discardableResult
+    func remove(service: String, account: String) -> Bool
+}
+
+extension CredentialStoring {
+    func readResult(service: String, account: String) -> CredentialReadResult {
+        value(service: service, account: account)
+            .map(CredentialReadResult.value) ?? .notFound
+    }
 }
 
 nonisolated struct SecurityKeychainCredentialStore: CredentialStoring {
     func value(service: String, account: String) -> String? {
+        readResult(service: service, account: account).value
+    }
+
+    func readResult(
+        service: String,
+        account: String
+    ) -> CredentialReadResult {
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
@@ -21,12 +48,20 @@ nonisolated struct SecurityKeychainCredentialStore: CredentialStoring {
         ]
 
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data,
-              let value = String(data: data, encoding: .utf8)
-        else { return nil }
-
-        return value
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecItemNotFound {
+            return .notFound
+        }
+        guard status == errSecSuccess else {
+            let message = SecCopyErrorMessageString(status, nil) as String?
+                ?? "OSStatus \(status)"
+            return .failure(message)
+        }
+        guard let data = item as? Data,
+              let value = String(data: data, encoding: .utf8) else {
+            return .failure("Keychain 返回了无法解码的凭据数据。")
+        }
+        return .value(value)
     }
 
     @discardableResult
@@ -49,13 +84,20 @@ nonisolated struct SecurityKeychainCredentialStore: CredentialStoring {
         return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
     }
 
-    func remove(service: String, account: String) {
+    @discardableResult
+    func remove(service: String, account: String) -> Bool {
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
             kSecAttrAccount: account
         ]
-        SecItemDelete(query as CFDictionary)
+        return Self.isSuccessfulRemovalStatus(
+            SecItemDelete(query as CFDictionary)
+        )
+    }
+
+    static func isSuccessfulRemovalStatus(_ status: OSStatus) -> Bool {
+        status == errSecSuccess || status == errSecItemNotFound
     }
 }
 
@@ -74,6 +116,17 @@ nonisolated struct OfficialChannelCredential: Codable, Hashable, Sendable {
     }
 }
 
+nonisolated enum OfficialChannelCredentialReadResult: Equatable, Sendable {
+    case value(OfficialChannelCredential)
+    case notFound
+    case failure(String)
+
+    var value: OfficialChannelCredential? {
+        guard case let .value(value) = self else { return nil }
+        return value
+    }
+}
+
 nonisolated enum OfficialChannelCredentialStore {
     static let service = "CHZ.Kral.OpenWriting.official-channel-credential"
     static let account = "server-issued-session"
@@ -81,11 +134,27 @@ nonisolated enum OfficialChannelCredentialStore {
     static func load(
         credentialStore: any CredentialStoring = SecurityKeychainCredentialStore()
     ) -> OfficialChannelCredential? {
-        guard let encoded = credentialStore.value(service: service, account: account),
-              let data = encoded.data(using: .utf8) else {
-            return nil
+        readResult(credentialStore: credentialStore).value
+    }
+
+    static func readResult(
+        credentialStore: any CredentialStoring = SecurityKeychainCredentialStore()
+    ) -> OfficialChannelCredentialReadResult {
+        switch credentialStore.readResult(service: service, account: account) {
+        case let .value(encoded):
+            guard let data = encoded.data(using: .utf8),
+                  let credential = try? JSONDecoder().decode(
+                      OfficialChannelCredential.self,
+                      from: data
+                  ) else {
+                return .failure("Keychain 返回了无法解码的登录凭据。")
+            }
+            return .value(credential)
+        case .notFound:
+            return .notFound
+        case let .failure(message):
+            return .failure(message)
         }
-        return try? JSONDecoder().decode(OfficialChannelCredential.self, from: data)
     }
 
     @discardableResult
@@ -94,8 +163,7 @@ nonisolated enum OfficialChannelCredentialStore {
         credentialStore: any CredentialStoring = SecurityKeychainCredentialStore()
     ) -> Bool {
         guard let credential else {
-            credentialStore.remove(service: service, account: account)
-            return true
+            return credentialStore.remove(service: service, account: account)
         }
         guard let data = try? JSONEncoder().encode(credential),
               let encoded = String(data: data, encoding: .utf8) else {
@@ -369,8 +437,18 @@ enum ModelConnectionConfigurationStore {
         for provider: ModelProvider,
         credentialStore: any CredentialStoring = SecurityKeychainCredentialStore()
     ) -> String? {
-        guard provider.requiresAPIKey else { return nil }
-        return credentialStore.value(
+        readAPIKeyFromKeychain(
+            for: provider,
+            credentialStore: credentialStore
+        ).value
+    }
+
+    static func readAPIKeyFromKeychain(
+        for provider: ModelProvider,
+        credentialStore: any CredentialStoring = SecurityKeychainCredentialStore()
+    ) -> CredentialReadResult {
+        guard provider.requiresAPIKey else { return .notFound }
+        return credentialStore.readResult(
             service: KeychainKey.service,
             account: keychainAccount(for: provider)
         )
@@ -383,8 +461,10 @@ enum ModelConnectionConfigurationStore {
         credentialStore: any CredentialStoring = SecurityKeychainCredentialStore()
     ) -> Bool {
         guard provider.requiresAPIKey else {
-            deleteAPIKeyFromKeychain(for: provider, credentialStore: credentialStore)
-            return true
+            return deleteAPIKeyFromKeychain(
+                for: provider,
+                credentialStore: credentialStore
+            )
         }
         return credentialStore.store(
             apiKey,
@@ -393,10 +473,11 @@ enum ModelConnectionConfigurationStore {
         )
     }
 
+    @discardableResult
     static func deleteAPIKeyFromKeychain(
         for provider: ModelProvider,
         credentialStore: any CredentialStoring = SecurityKeychainCredentialStore()
-    ) {
+    ) -> Bool {
         credentialStore.remove(
             service: KeychainKey.service,
             account: keychainAccount(for: provider)
@@ -410,9 +491,25 @@ enum ModelConnectionConfigurationStore {
         let provider = loadSelectedProvider(userDefaults: userDefaults)
         let rawModelName = loadModelName(for: provider, userDefaults: userDefaults)
         let rawBaseURL = loadBaseURL(for: provider, userDefaults: userDefaults)
-        let rawAPIKey = provider.requiresAPIKey
-            ? loadAPIKeyFromKeychain(for: provider, credentialStore: credentialStore) ?? ""
-            : ""
+        let apiKeyReadResult = readAPIKeyFromKeychain(
+            for: provider,
+            credentialStore: credentialStore
+        )
+        if case .failure = apiKeyReadResult {
+            throw ModelConnectionConfigurationError.apiKeyReadFailed(
+                provider: provider
+            )
+        }
+        let officialCredentialReadResult =
+            provider == .openAICompatible
+                ? OfficialChannelCredentialStore.readResult(
+                    credentialStore: credentialStore
+                )
+                : .notFound
+        if case .failure = officialCredentialReadResult {
+            throw ModelConnectionConfigurationError.officialCredentialReadFailed
+        }
+        let rawAPIKey = apiKeyReadResult.value ?? ""
 
         let modelName = rawModelName.trimmingCharacters(in: .whitespacesAndNewlines)
         let apiKey = rawAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -437,9 +534,7 @@ enum ModelConnectionConfigurationStore {
                 ? serverManagedAdditionalHeaders(userDefaults: userDefaults)
                 : [:],
             officialBearerToken: provider == .openAICompatible
-                ? OfficialChannelCredentialStore.load(
-                    credentialStore: credentialStore
-                )?.validAccessToken()
+                ? officialCredentialReadResult.value?.validAccessToken()
                 : nil,
             requiresOfficialAuthentication: provider == .openAICompatible
         )
@@ -450,6 +545,8 @@ enum ModelConnectionConfigurationError: LocalizedError {
     case missingModelName(provider: ModelProvider)
     case invalidBaseURL(provider: ModelProvider, value: String)
     case missingAPIKey(provider: ModelProvider)
+    case apiKeyReadFailed(provider: ModelProvider)
+    case officialCredentialReadFailed
 
     var errorDescription: String? {
         switch self {
@@ -459,6 +556,10 @@ enum ModelConnectionConfigurationError: LocalizedError {
             return "\(provider.title) Base URL 无效：\(value)"
         case let .missingAPIKey(provider):
             return "\(provider.title) API Key 为空，请先在 OpenWriting 设置里保存密钥。"
+        case let .apiKeyReadFailed(provider):
+            return "\(provider.title) API Key 未能从系统 Keychain 读取，请检查钥匙串访问后重试。"
+        case .officialCredentialReadFailed:
+            return "登录凭据未能从系统 Keychain 读取，请检查钥匙串访问后重试。"
         }
     }
 }

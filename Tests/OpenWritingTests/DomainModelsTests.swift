@@ -1,5 +1,6 @@
 import AuthenticationServices
 import CloudKit
+import SwiftUI
 import XCTest
 @testable import OpenWriting
 
@@ -16,6 +17,7 @@ nonisolated private struct FailingAppleCredentialStateProvider:
 
 nonisolated private struct InjectedPersistenceFailure: Error {}
 
+@MainActor
 final class DomainModelsTests: XCTestCase {
     func testNovelProjectInitializerCarriesStructuredForeshadowAndPlotThreads() {
         let foreshadow = ForeshadowEntry(title: "旧钥匙", firstChapter: 1)
@@ -70,6 +72,348 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertTrue(ModelProvider.anthropic.requiresAPIKey)
     }
 
+    func testAppAccentColorPreferenceNormalizesStoredHex() {
+        XCTAssertEqual(
+            AppAccentColorPreference.normalizedHex("  0a84ff  "),
+            "#0A84FF"
+        )
+        XCTAssertEqual(
+            AppAccentColorPreference.normalizedHex("#336699"),
+            "#336699"
+        )
+        XCTAssertNil(AppAccentColorPreference.normalizedHex("#12345"))
+        XCTAssertNil(AppAccentColorPreference.normalizedHex("#12GG00"))
+    }
+
+    func testAppAccentColorPreferenceRoundTripsColorPickerRGB() throws {
+        let selectedColor = Color(
+            red: Double(0x33) / 255,
+            green: Double(0x66) / 255,
+            blue: Double(0x99) / 255
+        )
+
+        XCTAssertEqual(
+            try XCTUnwrap(
+                AppAccentColorPreference.hexString(from: selectedColor)
+            ),
+            "#336699"
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(
+                AppAccentColorPreference.hexString(
+                    from: AppAccentColorPreference.color(
+                        from: "invalid-value"
+                    )
+                )
+            ),
+            AppAccentColorPreference.defaultCustomColorHex
+        )
+    }
+
+    func testAppAccentColorPreferenceDefaultsToAppleBlueInsteadOfOrange() throws {
+        XCTAssertEqual(
+            AppAccentColorPreference.defaultCustomColorHex,
+            "#0A84FF"
+        )
+        XCTAssertEqual(
+            AppAccentColorMode.custom.rawValue,
+            "custom"
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(
+                AppAccentColorPreference.hexString(
+                    from: AppAccentColorPreference.resolvedColor(
+                        modeRawValue: AppAccentColorMode.custom.rawValue,
+                        customColorHex: "invalid"
+                    )
+                )
+            ),
+            "#0A84FF"
+        )
+    }
+
+    func testAppAccentForegroundChoosesBlackOrWhiteWithReadableContrast() throws {
+        let samples = [
+            Color.black,
+            Color.white,
+            AppAccentColorPreference.color(from: "#0A84FF"),
+            AppAccentColorPreference.color(from: "#FFFF00"),
+            AppAccentColorPreference.color(from: "#001133"),
+            AppAccentColorPreference.color(from: "#757575"),
+            AppAccentColorPreference.color(from: "#767676")
+        ]
+
+        for sample in samples {
+            let foreground =
+                AppAccentColorPreference.foregroundColor(on: sample)
+            let hex = try XCTUnwrap(
+                AppAccentColorPreference.hexString(from: foreground)
+            )
+            XCTAssertTrue(
+                hex == "#000000" || hex == "#FFFFFF",
+                "实心重点色前景必须为纯黑或纯白，实际为 \(hex)"
+            )
+            XCTAssertGreaterThanOrEqual(
+                try XCTUnwrap(
+                    AppAccentColorPreference.contrastRatio(
+                        between: foreground,
+                        and: sample
+                    )
+                ),
+                4.5
+            )
+        }
+    }
+
+    func testAppAccentInkMeetsTextContrastAcrossDashboardSurfaces() throws {
+        let samples = [
+            Color.black,
+            Color.white,
+            AppAccentColorPreference.color(from: "#0A84FF"),
+            AppAccentColorPreference.color(from: "#FFFF00"),
+            AppAccentColorPreference.color(from: "#001133")
+        ]
+        let lightSurfaces = [
+            Color(red: 0.98, green: 0.98, blue: 0.97),
+            Color(red: 0.92, green: 0.96, blue: 0.98),
+            Color.white
+        ]
+        let darkSurfaces = [
+            Color(red: 0.04, green: 0.04, blue: 0.05),
+            Color(red: 0.12, green: 0.12, blue: 0.14),
+            Color(red: 0.17, green: 0.19, blue: 0.23)
+        ]
+
+        for sample in samples {
+            try assertMinimumAccentContrast(
+                AppAccentColorPreference.accessibleInkColor(
+                    from: sample,
+                    colorScheme: .light
+                ),
+                against: lightSurfaces,
+                minimum: 4.5
+            )
+            try assertMinimumAccentContrast(
+                AppAccentColorPreference.accessibleInkColor(
+                    from: sample,
+                    colorScheme: .dark
+                ),
+                against: darkSurfaces,
+                minimum: 4.5
+            )
+        }
+    }
+
+    func testAppAccentStrokeMeetsGraphicalContrastAcrossDashboardSurfaces() throws {
+        let samples = [
+            Color.black,
+            Color.white,
+            AppAccentColorPreference.color(from: "#0A84FF"),
+            AppAccentColorPreference.color(from: "#FFFF00"),
+            AppAccentColorPreference.color(from: "#001133")
+        ]
+        let lightSurfaces = [
+            Color(red: 0.98, green: 0.98, blue: 0.97),
+            Color(red: 0.92, green: 0.96, blue: 0.98),
+            Color.white
+        ]
+        let darkSurfaces = [
+            Color(red: 0.04, green: 0.04, blue: 0.05),
+            Color(red: 0.12, green: 0.12, blue: 0.14),
+            Color(red: 0.17, green: 0.19, blue: 0.23)
+        ]
+
+        for sample in samples {
+            try assertMinimumAccentContrast(
+                AppAccentColorPreference.accessibleStrokeColor(
+                    from: sample,
+                    colorScheme: .light
+                ),
+                against: lightSurfaces,
+                minimum: 3
+            )
+            try assertMinimumAccentContrast(
+                AppAccentColorPreference.accessibleStrokeColor(
+                    from: sample,
+                    colorScheme: .dark
+                ),
+                against: darkSurfaces,
+                minimum: 3
+            )
+        }
+    }
+
+    func testAppAccentInkRemainsReadableOnAccentTintedSurfaces() throws {
+        let samples = [
+            Color.black,
+            Color.white,
+            AppAccentColorPreference.color(from: "#0A84FF"),
+            AppAccentColorPreference.color(from: "#FFFF00"),
+            AppAccentColorPreference.color(from: "#001133")
+        ]
+        let surfaceSets: [(ColorScheme, [Color])] = [
+            (
+                .light,
+                [
+                    Color(red: 0.98, green: 0.98, blue: 0.97),
+                    Color(red: 0.92, green: 0.96, blue: 0.98),
+                    Color.white
+                ]
+            ),
+            (
+                .dark,
+                [
+                    Color(red: 0.04, green: 0.04, blue: 0.05),
+                    Color(red: 0.12, green: 0.12, blue: 0.14),
+                    Color(red: 0.17, green: 0.19, blue: 0.23)
+                ]
+            )
+        ]
+
+        for sample in samples {
+            for (colorScheme, surfaces) in surfaceSets {
+                let ink = AppAccentColorPreference.accessibleInkColor(
+                    from: sample,
+                    colorScheme: colorScheme
+                )
+
+                for surface in surfaces {
+                    for tint in [sample, ink] {
+                        for opacity in [0.06, 0.12, 0.18, 0.24] {
+                            let renderedSurface = try XCTUnwrap(
+                                AppAccentColorPreference.compositedColor(
+                                    overlay: tint,
+                                    opacity: opacity,
+                                    over: surface
+                                )
+                            )
+                            XCTAssertGreaterThanOrEqual(
+                                try XCTUnwrap(
+                                    AppAccentColorPreference.contrastRatio(
+                                        between: ink,
+                                        and: renderedSurface
+                                    )
+                                ),
+                                4.5
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func testAppAccentStrokeRemainsVisibleOnAccentTintedSurfaces() throws {
+        let samples = [
+            Color.black,
+            Color.white,
+            AppAccentColorPreference.color(from: "#0A84FF"),
+            AppAccentColorPreference.color(from: "#FFFF00"),
+            AppAccentColorPreference.color(from: "#001133")
+        ]
+        let surfaceSets: [(ColorScheme, [Color])] = [
+            (
+                .light,
+                [
+                    Color(red: 0.98, green: 0.98, blue: 0.97),
+                    Color(red: 0.92, green: 0.96, blue: 0.98),
+                    Color.white
+                ]
+            ),
+            (
+                .dark,
+                [
+                    Color(red: 0.04, green: 0.04, blue: 0.05),
+                    Color(red: 0.12, green: 0.12, blue: 0.14),
+                    Color(red: 0.17, green: 0.19, blue: 0.23)
+                ]
+            )
+        ]
+
+        for sample in samples {
+            for (colorScheme, surfaces) in surfaceSets {
+                let stroke =
+                    AppAccentColorPreference.accessibleStrokeColor(
+                        from: sample,
+                        colorScheme: colorScheme
+                    )
+
+                for surface in surfaces {
+                    for tint in [sample, stroke] {
+                        for opacity in [0.06, 0.12, 0.18, 0.24] {
+                            let renderedSurface = try XCTUnwrap(
+                                AppAccentColorPreference.compositedColor(
+                                    overlay: tint,
+                                    opacity: opacity,
+                                    over: surface
+                                )
+                            )
+                            XCTAssertGreaterThanOrEqual(
+                                try XCTUnwrap(
+                                    AppAccentColorPreference.contrastRatio(
+                                        between: stroke,
+                                        and: renderedSurface
+                                    )
+                                ),
+                                3
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func testAppAccentContrastRatioUsesWCAGSrgbAndIsSymmetric() throws {
+        let blackWhite = try XCTUnwrap(
+            AppAccentColorPreference.contrastRatio(
+                between: .black,
+                and: .white
+            )
+        )
+        let gray = AppAccentColorPreference.color(from: "#767676")
+        let grayWhite = try XCTUnwrap(
+            AppAccentColorPreference.contrastRatio(
+                between: gray,
+                and: .white
+            )
+        )
+        let whiteGray = try XCTUnwrap(
+            AppAccentColorPreference.contrastRatio(
+                between: .white,
+                and: gray
+            )
+        )
+
+        XCTAssertEqual(blackWhite, 21, accuracy: 0.001)
+        XCTAssertEqual(grayWhite, 4.54, accuracy: 0.02)
+        XCTAssertEqual(grayWhite, whiteGray, accuracy: 0.000_001)
+    }
+
+    private func assertMinimumAccentContrast(
+        _ foreground: Color,
+        against backgrounds: [Color],
+        minimum: Double,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        for background in backgrounds {
+            XCTAssertGreaterThanOrEqual(
+                try XCTUnwrap(
+                    AppAccentColorPreference.contrastRatio(
+                        between: foreground,
+                        and: background
+                    ),
+                    file: file,
+                    line: line
+                ),
+                minimum,
+                file: file,
+                line: line
+            )
+        }
+    }
+
     func testTextFileDecodingPrefersGB18030BeforeBOMLessUTF16() throws {
         let gb18030Bytes = Data([0xD6, 0xD0, 0xCE, 0xC4, 0xB2, 0xE2, 0xCA, 0xD4])
 
@@ -87,6 +431,149 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(Array(first.prefix(3)), ["new-2", "new-1", "existing-3"])
         XCTAssertEqual(first.count, 50)
         XCTAssertEqual(Set(first).count, first.count)
+    }
+
+    @MainActor
+    func testLongformWritingDeskContextCacheIgnoresDraftTypingAndInvalidatesStructuralChanges() {
+        var buildCount = 0
+        let appState = AppState(
+            userDefaults: makeIsolatedUserDefaults(),
+            projectStore: makeIsolatedProjectStore(),
+            credentialStore: makeCredentialStore(),
+            longformWritingDeskContextBuilder: { project in
+                buildCount += 1
+                return LongformStorySystem.buildWritingDeskContext(for: project)
+            }
+        )
+        let project = appState.importProjectBackup(
+            NovelProject(
+                id: "longform-cache-project",
+                title: "缓存测试",
+                genre: "悬疑",
+                summary: "调查一封来自未来的信。",
+                storyLength: .long,
+                updatedAt: "2026-07-28T00:00:00Z",
+                currentChapterTitle: "钟楼",
+                currentChapterNumber: 3,
+                writtenChapters: 2,
+                chapterFocus: "确认信件来源",
+                draftText: "",
+                outlineText: "第3章：进入钟楼。",
+                structureNotes: "必须发现时间戳异常。",
+                referenceContextText: "",
+                specialRequirements: "",
+                wordTargetText: "",
+                continuityNotes: "",
+                referenceDocuments: []
+            )
+        )
+
+        _ = appState.longformWritingDeskContext(for: project)
+        _ = appState.longformWritingDeskContext(for: project)
+        XCTAssertEqual(buildCount, 1)
+
+        for index in 0..<250 {
+            appState.updateDraftText("正文 \(index)", for: project.id)
+        }
+        let typedProject = try! XCTUnwrap(appState.project(for: project.id))
+        _ = appState.longformWritingDeskContext(for: typedProject)
+        XCTAssertEqual(buildCount, 1)
+
+        appState.updateReferenceContextText("仅用于生成请求的参考资料", for: project.id)
+        appState.updateWordTargetText("本章约 3000 字", for: project.id)
+        let nonStructuralProject = try! XCTUnwrap(appState.project(for: project.id))
+        _ = appState.longformWritingDeskContext(for: nonStructuralProject)
+        XCTAssertEqual(buildCount, 1)
+
+        appState.updateOutlineText("第3章：进入钟楼并发现第二封信。", for: project.id)
+        let structurallyUpdatedProject = try! XCTUnwrap(appState.project(for: project.id))
+        let refreshed =
+            appState.longformWritingDeskContext(for: structurallyUpdatedProject)
+        XCTAssertEqual(buildCount, 2)
+        XCTAssertTrue(refreshed.nextChapterBrief.mandatoryContinuities.contains {
+            $0.contains("第二封信")
+        })
+
+        appState.updateContinuityNotes(
+            "林岚已经确认第一封信的纸张来自旧钟楼。",
+            for: project.id
+        )
+        _ = appState.longformWritingDeskContext(
+            for: try! XCTUnwrap(appState.project(for: project.id))
+        )
+        XCTAssertEqual(buildCount, 3)
+
+        appState.updateCurrentChapterNumber(4, for: project.id)
+        _ = appState.longformWritingDeskContext(
+            for: try! XCTUnwrap(appState.project(for: project.id))
+        )
+        XCTAssertEqual(buildCount, 4)
+
+        appState.updateProject(project.id) {
+            $0.persistedMemoryBuckets = .empty
+        }
+        _ = appState.longformWritingDeskContext(
+            for: try! XCTUnwrap(appState.project(for: project.id))
+        )
+        XCTAssertEqual(buildCount, 5)
+
+        appState.updateProject(project.id) {
+            $0.persistedLongformRuntimeState = .empty
+        }
+        _ = appState.longformWritingDeskContext(
+            for: try! XCTUnwrap(appState.project(for: project.id))
+        )
+        XCTAssertEqual(buildCount, 6)
+
+        appState.applyEnhancedWritingUpdate(
+            nil,
+            review: ChapterReviewResult(
+                overallScore: 86,
+                dimensionScores: [:],
+                issues: [],
+                hasBlockingIssues: false,
+                antiPatterns: ["避免重复解释信件来源"],
+                overallSummary: "可继续推进"
+            ),
+            for: project.id
+        )
+        let reviewedProject = try! XCTUnwrap(appState.project(for: project.id))
+        _ = appState.longformWritingDeskContext(for: reviewedProject)
+        XCTAssertEqual(buildCount, 7)
+
+        appState.applyCloudSnapshot(
+            AccountProjectSnapshot(
+                activeProjectID: reviewedProject.id,
+                recentProjects: [reviewedProject.detachedPersistenceSnapshot()],
+                updatedAt: Date(timeIntervalSince1970: 1_775_000_000)
+            )
+        )
+        XCTAssertTrue(appState.longformWritingDeskContextCache.isEmpty)
+        XCTAssertTrue(
+            appState.longformWritingDeskContextGenerationByProjectID.isEmpty
+        )
+
+        let cloudMergedProject = try! XCTUnwrap(appState.project(for: project.id))
+        _ = appState.longformWritingDeskContext(for: cloudMergedProject)
+        XCTAssertEqual(buildCount, 8)
+        appState.reloadAccountScopedProjects()
+        XCTAssertTrue(appState.longformWritingDeskContextCache.isEmpty)
+        XCTAssertTrue(
+            appState.longformWritingDeskContextGenerationByProjectID.isEmpty
+        )
+
+        let reimportedProject = appState.importProjectBackup(reviewedProject)
+        _ = appState.longformWritingDeskContext(for: reimportedProject)
+        XCTAssertEqual(buildCount, 9)
+        appState.deleteProject(reimportedProject.id)
+        XCTAssertNil(
+            appState.longformWritingDeskContextCache[reimportedProject.id]
+        )
+        XCTAssertNil(
+            appState.longformWritingDeskContextGenerationByProjectID[
+                reimportedProject.id
+            ]
+        )
     }
 
     @MainActor
@@ -673,6 +1160,17 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(decoded?.timeIntervalSince1970, doubleValue)
     }
 
+    func testPersistedTimestampStorageValuePreservesSubsecondPrecision() {
+        let timestamp = Date(timeIntervalSince1970: 1_772_500_000.125)
+        let stored = PersistedTimestampCodec.storageValue(for: timestamp)
+
+        XCTAssertEqual(
+            PersistedTimestampCodec.parse(stored)?.timeIntervalSince1970 ?? 0,
+            timestamp.timeIntervalSince1970,
+            accuracy: 0.000_001
+        )
+    }
+
     func testPersistedTimestampCodecFromInt() {
         let intValue: Int = 1704067200
         let decoded = PersistedTimestampCodec.parse(String(intValue))
@@ -889,6 +1387,75 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(decoded.deletedProjects, snapshot.deletedProjects)
     }
 
+    func testCloudPayloadCodingRoundTripsFromDetachedTask() async throws {
+        let projectID = "detached-cloud-project"
+        let chapterID = "detached-cloud-chapter"
+        let chapter = ChapterDraft(
+            id: chapterID,
+            volumeNumber: 1,
+            chapterNumber: 1,
+            chapterTitle: "离线编码",
+            content: "验证 CloudKit payload 编解码不依赖主线程。"
+        )
+        var project = makeProject(
+            id: projectID,
+            title: "后台 CloudKit 编码",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        project.chapterDrafts = [chapter]
+        let detachedProject = project.detachedPersistenceSnapshot()
+        let snapshot = AccountProjectSnapshot(
+            activeProjectID: projectID,
+            recentProjects: [detachedProject],
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_100)
+        )
+
+        let result = try await Task.detached {
+            let encoder = CloudProjectJSONCoding.makeEncoder()
+            let decoder = CloudProjectJSONCoding.makeDecoder()
+
+            let snapshotData = try encoder.encode(snapshot)
+            let decodedSnapshot = try decoder.decode(
+                AccountProjectSnapshot.self,
+                from: snapshotData
+            )
+            let roundTripSnapshotData = try encoder.encode(decodedSnapshot)
+
+            let projectData = try CloudProjectPayloadCodec.encodeMacProject(
+                detachedProject,
+                preserving: nil
+            )
+            let decodedProject = try CloudProjectPayloadCodec.decodeMacProject(
+                from: projectData
+            )
+            let chapterData = try encoder.encode(chapter)
+            let decodedChapter = try decoder.decode(
+                ChapterDraft.self,
+                from: chapterData
+            )
+
+            return (
+                snapshotHash: CloudProjectPayloadCodec.payloadHash(
+                    for: snapshotData
+                ),
+                roundTripSnapshotHash: CloudProjectPayloadCodec.payloadHash(
+                    for: roundTripSnapshotData
+                ),
+                projectID: try CloudProjectPayloadCodec.projectID(
+                    in: try CloudProjectPayloadCodec.encodeMacProject(
+                        decodedProject,
+                        preserving: nil
+                    )
+                ),
+                chapterID: decodedChapter.id
+            )
+        }.value
+
+        XCTAssertEqual(result.snapshotHash, result.roundTripSnapshotHash)
+        XCTAssertEqual(result.projectID, projectID)
+        XCTAssertEqual(result.chapterID, chapterID)
+    }
+
     func testCloudProjectJSONCodingUsesFractionalUTCAndReadsLegacyDateForms() throws {
         struct DateProbe: Codable {
             let value: Date
@@ -1100,6 +1667,513 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(store.loadProjects(for: account.userID)?.map(\.id), [project.id])
     }
 
+    func testAccountBindingCopyFailureKeepsAccountProjectsAndCredentialUnchanged() async throws {
+        let targetScope = "target-account"
+        let store = makeIsolatedProjectStore(
+            testHooks: .init(beforeAtomicWrite: { url in
+                if url.path.contains("/account-\(targetScope)--") {
+                    throw InjectedPersistenceFailure()
+                }
+            })
+        )
+        let defaults = makeIsolatedUserDefaults()
+        let credentialStore = makeCredentialStore()
+        let credential = OfficialChannelCredential(
+            accessToken: "existing-access",
+            refreshToken: "existing-refresh",
+            expiresAt: Date().addingTimeInterval(600)
+        )
+        XCTAssertTrue(
+            OfficialChannelCredentialStore.save(
+                credential,
+                credentialStore: credentialStore
+            )
+        )
+        let localProject = makeProject(
+            id: "local-before-failed-bind",
+            title: "登录失败前的本地项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        let appState = AppState(
+            userDefaults: defaults,
+            projectStore: store,
+            credentialStore: credentialStore
+        )
+        appState.recentProjects = [localProject]
+
+        let didBind = await appState.bindAppleAccount(AppleAccountProfile(
+            userID: targetScope,
+            email: "writer@example.com",
+            fullName: "Writer"
+        ))
+
+        XCTAssertFalse(didBind)
+        XCTAssertNil(appState.activeAccount)
+        XCTAssertEqual(appState.recentProjects.map(\.id), [localProject.id])
+        XCTAssertEqual(appState.officialChannelCredential, credential)
+        XCTAssertEqual(
+            OfficialChannelCredentialStore.load(credentialStore: credentialStore),
+            credential
+        )
+        XCTAssertEqual(store.loadProjects(for: targetScope)?.isEmpty, true)
+    }
+
+    func testLegacyEmailScopeMigrationRetriesAfterTargetWriteFailure() throws {
+        nonisolated(unsafe) var shouldFailLocalWrites = false
+        let store = makeIsolatedProjectStore(
+            testHooks: .init(beforeAtomicWrite: { url in
+                if shouldFailLocalWrites, url.path.contains("/local/") {
+                    throw InjectedPersistenceFailure()
+                }
+            })
+        )
+        let defaults = makeIsolatedUserDefaults()
+        let legacyEmail = "writer@example.com"
+        let project = makeProject(
+            id: "legacy-email-project",
+            title: "旧邮箱 scope 项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        try store.saveProjects([project], for: legacyEmail)
+        defaults.set(
+            legacyEmail,
+            forKey: AppState.StorageKey.legacyActiveAccountEmail
+        )
+        shouldFailLocalWrites = true
+
+        XCTAssertFalse(
+            AppState.migrateLegacyEmailScopeIfNeeded(
+                defaults,
+                projectStore: store
+            )
+        )
+        XCTAssertFalse(
+            defaults.bool(forKey: AppState.StorageKey.didMigrateLegacyEmailScope)
+        )
+        XCTAssertEqual(
+            defaults.string(forKey: AppState.StorageKey.legacyActiveAccountEmail),
+            legacyEmail
+        )
+        XCTAssertEqual(store.loadProjects(for: legacyEmail)?.map(\.id), [project.id])
+
+        shouldFailLocalWrites = false
+        XCTAssertTrue(
+            AppState.migrateLegacyEmailScopeIfNeeded(
+                defaults,
+                projectStore: store
+            )
+        )
+        XCTAssertTrue(
+            defaults.bool(forKey: AppState.StorageKey.didMigrateLegacyEmailScope)
+        )
+        XCTAssertNil(
+            defaults.object(forKey: AppState.StorageKey.legacyActiveAccountEmail)
+        )
+        XCTAssertEqual(store.loadProjects(for: nil)?.map(\.id), [project.id])
+    }
+
+    func testLegacyEmailScopeMigrationMergesIntoExistingEmptyTarget() throws {
+        let store = makeIsolatedProjectStore()
+        let defaults = makeIsolatedUserDefaults()
+        let legacyEmail = "writer@example.com"
+        let project = makeProject(
+            id: "legacy-email-empty-target",
+            title: "空目标也要迁移",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_050)
+        )
+        try store.saveProjects([], for: nil)
+        try store.saveProjects([project], for: legacyEmail)
+        defaults.set(
+            legacyEmail,
+            forKey: AppState.StorageKey.legacyActiveAccountEmail
+        )
+        defaults.set(
+            project.id,
+            forKey: AppState.activeProjectIDStorageKey(for: legacyEmail)
+        )
+
+        XCTAssertTrue(
+            AppState.migrateLegacyEmailScopeIfNeeded(
+                defaults,
+                projectStore: store
+            )
+        )
+        XCTAssertEqual(store.loadProjects(for: nil)?.map(\.id), [project.id])
+        XCTAssertEqual(
+            defaults.string(
+                forKey: AppState.activeProjectIDStorageKey(for: nil)
+            ),
+            project.id
+        )
+        XCTAssertTrue(
+            defaults.bool(
+                forKey: AppState.StorageKey.didMigrateLegacyEmailScope
+            )
+        )
+        XCTAssertNil(
+            defaults.object(
+                forKey: AppState.StorageKey.legacyActiveAccountEmail
+            )
+        )
+    }
+
+    func testLegacyEmailScopeMigrationMergesExistingTargetAndTombstones() throws {
+        let store = makeIsolatedProjectStore()
+        let defaults = makeIsolatedUserDefaults()
+        let legacyEmail = "writer@example.com"
+        let sharedOld = makeProject(
+            id: "shared-project",
+            title: "目标旧版本",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_100)
+        )
+        let targetOnly = makeProject(
+            id: "target-deleted-project",
+            title: "应被旧 scope 墓碑删除",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_110)
+        )
+        let sharedNew = makeProject(
+            id: sharedOld.id,
+            title: "来源新版本",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_200)
+        )
+        let sourceOnly = makeProject(
+            id: "source-only-project",
+            title: "来源独有项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_210)
+        )
+        try store.saveProjects([sharedOld, targetOnly], for: nil)
+        try store.saveProjects(
+            [sharedNew, sourceOnly],
+            deletedProjects: [
+                ProjectDeletionTombstone(
+                    projectID: targetOnly.id,
+                    deletedAt: Date(timeIntervalSince1970: 1_772_000_300)
+                )
+            ],
+            for: legacyEmail
+        )
+        defaults.set(
+            legacyEmail,
+            forKey: AppState.StorageKey.legacyActiveAccountEmail
+        )
+        defaults.set(
+            targetOnly.id,
+            forKey: AppState.activeProjectIDStorageKey(for: nil)
+        )
+        defaults.set(
+            sourceOnly.id,
+            forKey: AppState.activeProjectIDStorageKey(for: legacyEmail)
+        )
+        defaults.set(
+            1_772_000_250.0,
+            forKey: AppState.projectSnapshotTimestampStorageKey(for: nil)
+        )
+        defaults.set(
+            1_772_000_275.0,
+            forKey: AppState.projectSnapshotTimestampStorageKey(
+                for: legacyEmail
+            )
+        )
+
+        XCTAssertTrue(
+            AppState.migrateLegacyEmailScopeIfNeeded(
+                defaults,
+                projectStore: store
+            )
+        )
+        let migrated = try XCTUnwrap(store.loadProjects(for: nil))
+        XCTAssertEqual(Set(migrated.map(\.id)), [sharedOld.id, sourceOnly.id])
+        XCTAssertEqual(
+            migrated.first { $0.id == sharedOld.id }?.title,
+            sharedNew.title
+        )
+        XCTAssertEqual(
+            store.loadProjectDeletionTombstones(for: nil).map(\.projectID),
+            [targetOnly.id]
+        )
+        XCTAssertEqual(
+            defaults.string(
+                forKey: AppState.activeProjectIDStorageKey(for: nil)
+            ),
+            sourceOnly.id
+        )
+        XCTAssertEqual(
+            defaults.double(
+                forKey: AppState.projectSnapshotTimestampStorageKey(for: nil)
+            ),
+            1_772_000_300.0
+        )
+    }
+
+    func testLegacyDefaultsMigrationRetriesAfterPersistenceFailure() throws {
+        nonisolated(unsafe) var shouldFailWrites = true
+        let store = makeIsolatedProjectStore(
+            testHooks: .init(beforeAtomicWrite: { url in
+                if shouldFailWrites, url.path.contains("/local/") {
+                    throw InjectedPersistenceFailure()
+                }
+            })
+        )
+        let defaults = makeIsolatedUserDefaults()
+        let project = makeProject(
+            id: "legacy-defaults-retry",
+            title: "旧默认值重试",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_100)
+        )
+        defaults.set(
+            try JSONEncoder().encode([project]),
+            forKey: AppState.LegacyStorageKey.recentProjects
+        )
+
+        XCTAssertFalse(
+            AppState.migrateLegacyUserDefaultsIfNeeded(
+                defaults,
+                projectStore: store
+            )
+        )
+        XCTAssertFalse(
+            defaults.bool(forKey: AppState.StorageKey.didMigrateLegacyDefaults)
+        )
+        XCTAssertNotNil(
+            defaults.data(forKey: AppState.LegacyStorageKey.recentProjects)
+        )
+
+        shouldFailWrites = false
+        XCTAssertTrue(
+            AppState.migrateLegacyUserDefaultsIfNeeded(
+                defaults,
+                projectStore: store
+            )
+        )
+        XCTAssertTrue(
+            defaults.bool(forKey: AppState.StorageKey.didMigrateLegacyDefaults)
+        )
+        XCTAssertNil(
+            defaults.data(forKey: AppState.LegacyStorageKey.recentProjects)
+        )
+        XCTAssertEqual(store.loadProjects(for: nil)?.map(\.id), [project.id])
+    }
+
+    func testMixedLegacyDefaultsMigratesValidProjectButKeepsRecoveryPayload() throws {
+        let store = makeIsolatedProjectStore()
+        let defaults = makeIsolatedUserDefaults()
+        let project = makeProject(
+            id: "legacy-valid-project",
+            title: "可恢复旧项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_200)
+        )
+        let validObject = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(project)
+        )
+        let mixedPayload = try JSONSerialization.data(withJSONObject: [
+            validObject,
+            ["id": "broken-project"]
+        ])
+        defaults.set(
+            mixedPayload,
+            forKey: AppState.LegacyStorageKey.recentProjects
+        )
+
+        let appState = AppState(
+            userDefaults: defaults,
+            projectStore: store,
+            credentialStore: makeCredentialStore()
+        )
+
+        XCTAssertEqual(appState.recentProjects.map(\.id), [project.id])
+        XCTAssertEqual(store.loadProjects(for: nil)?.map(\.id), [project.id])
+        XCTAssertFalse(
+            defaults.bool(forKey: AppState.StorageKey.didMigrateLegacyDefaults)
+        )
+        XCTAssertEqual(
+            defaults.data(forKey: AppState.LegacyStorageKey.recentProjects),
+            mixedPayload
+        )
+        XCTAssertTrue(
+            appState.projectLoadIssues.contains {
+                $0.kind == .legacyDefaultsMigrationIncomplete
+            }
+        )
+        XCTAssertNotNil(appState.projectLoadWarningMessage)
+    }
+
+    func testExistingShardedStoreMergesCompleteScopedLegacyPayload() throws {
+        let store = makeIsolatedProjectStore()
+        let defaults = makeIsolatedUserDefaults()
+        let storedOld = makeProject(
+            id: "scoped-shared-project",
+            title: "分片旧版本",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_200)
+        )
+        let legacyNew = makeProject(
+            id: storedOld.id,
+            title: "旧载荷新版本",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_300)
+        )
+        let legacyOnly = makeProject(
+            id: "scoped-legacy-only",
+            title: "旧载荷独有项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_250)
+        )
+        try store.saveProjects([storedOld], for: nil)
+        let storageKey = AppState.recentProjectsStorageKey(for: nil)
+        defaults.set(
+            try JSONEncoder().encode([legacyNew, legacyOnly]),
+            forKey: storageKey
+        )
+
+        let result = AppState.loadRecentProjectsReport(
+            for: nil,
+            from: defaults,
+            projectStore: store
+        )
+
+        XCTAssertEqual(result.legacyPayloadState, .migrated)
+        XCTAssertTrue(result.issues.isEmpty)
+        XCTAssertEqual(
+            Set(result.projects?.map(\.id) ?? []),
+            [storedOld.id, legacyOnly.id]
+        )
+        XCTAssertEqual(
+            result.projects?.first { $0.id == storedOld.id }?.title,
+            legacyNew.title
+        )
+        XCTAssertEqual(
+            Set(store.loadProjects(for: nil)?.map(\.id) ?? []),
+            [storedOld.id, legacyOnly.id]
+        )
+        XCTAssertNil(defaults.data(forKey: storageKey))
+    }
+
+    func testScopedLegacyPayloadClearsOnlyAfterMergedStoreWriteSucceeds() throws {
+        nonisolated(unsafe) var shouldFailWrites = false
+        let store = makeIsolatedProjectStore(
+            testHooks: .init(beforeAtomicWrite: { url in
+                if shouldFailWrites, url.path.contains("/local/") {
+                    throw InjectedPersistenceFailure()
+                }
+            })
+        )
+        let defaults = makeIsolatedUserDefaults()
+        let storedProject = makeProject(
+            id: "scoped-persisted-before-retry",
+            title: "已分片项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_200)
+        )
+        let legacyProject = makeProject(
+            id: "scoped-legacy-retry",
+            title: "等待重试的旧载荷",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_300)
+        )
+        try store.saveProjects([storedProject], for: nil)
+        let storageKey = AppState.recentProjectsStorageKey(for: nil)
+        let legacyPayload = try JSONEncoder().encode([legacyProject])
+        defaults.set(legacyPayload, forKey: storageKey)
+        shouldFailWrites = true
+
+        let failedLoad = AppState.loadRecentProjectsReport(
+            for: nil,
+            from: defaults,
+            projectStore: store
+        )
+
+        XCTAssertEqual(
+            failedLoad.legacyPayloadState,
+            .persistenceFailed
+        )
+        XCTAssertEqual(
+            failedLoad.issues.map(\.kind),
+            [.legacyProjectPayloadPersistenceFailed]
+        )
+        XCTAssertEqual(defaults.data(forKey: storageKey), legacyPayload)
+        XCTAssertEqual(
+            Set(failedLoad.projects?.map(\.id) ?? []),
+            [storedProject.id, legacyProject.id]
+        )
+
+        shouldFailWrites = false
+        let retriedLoad = AppState.loadRecentProjectsReport(
+            for: nil,
+            from: defaults,
+            projectStore: store
+        )
+
+        XCTAssertEqual(retriedLoad.legacyPayloadState, .migrated)
+        XCTAssertTrue(retriedLoad.issues.isEmpty)
+        XCTAssertEqual(
+            Set(store.loadProjects(for: nil)?.map(\.id) ?? []),
+            [storedProject.id, legacyProject.id]
+        )
+        XCTAssertNil(defaults.data(forKey: storageKey))
+    }
+
+    func testMixedScopedLegacyPayloadReportsPartialAcrossReloads() throws {
+        let store = makeIsolatedProjectStore()
+        let defaults = makeIsolatedUserDefaults()
+        let storedProject = makeProject(
+            id: "scoped-existing-project",
+            title: "已存在分片项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_200)
+        )
+        let project = makeProject(
+            id: "scoped-legacy-valid",
+            title: "可恢复 scope 项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_300)
+        )
+        try store.saveProjects([storedProject], for: nil)
+        let validObject = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(project)
+        )
+        let mixedPayload = try JSONSerialization.data(withJSONObject: [
+            validObject,
+            ["id": "scoped-broken-project"]
+        ])
+        let storageKey = AppState.recentProjectsStorageKey(for: nil)
+        defaults.set(mixedPayload, forKey: storageKey)
+
+        let firstLoad = AppState.loadRecentProjectsReport(
+            for: nil,
+            from: defaults,
+            projectStore: store
+        )
+        let secondLoad = AppState.loadRecentProjectsReport(
+            for: nil,
+            from: defaults,
+            projectStore: store
+        )
+
+        XCTAssertEqual(
+            firstLoad.projects?.map(\.id),
+            [project.id, storedProject.id]
+        )
+        XCTAssertEqual(
+            firstLoad.legacyPayloadState,
+            .partial(failedElementCount: 1)
+        )
+        XCTAssertEqual(
+            firstLoad.issues.map(\.kind),
+            [.legacyProjectPayloadPartial]
+        )
+        XCTAssertEqual(
+            secondLoad.projects?.map(\.id),
+            [project.id, storedProject.id]
+        )
+        XCTAssertEqual(
+            secondLoad.legacyPayloadState,
+            .partial(failedElementCount: 1)
+        )
+        XCTAssertTrue(
+            secondLoad.issues.contains {
+                $0.kind == .legacyProjectPayloadPartial
+            }
+        )
+        XCTAssertEqual(
+            store.loadProjects(for: nil)?.map(\.id),
+            [project.id, storedProject.id]
+        )
+        XCTAssertEqual(defaults.data(forKey: storageKey), mixedPayload)
+    }
+
     @MainActor
     func testRecentProjectsAutosavePersistsThroughActor() async throws {
         let userDefaults = makeIsolatedUserDefaults()
@@ -1119,6 +2193,28 @@ final class DomainModelsTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(350))
 
         XCTAssertEqual(store.loadProjects(for: nil)?.map(\.title), ["后台保存项目"])
+    }
+
+    @MainActor
+    func testAccountProjectHydrationDoesNotScheduleRedundantPersistence() throws {
+        let userDefaults = makeIsolatedUserDefaults()
+        let store = makeIsolatedProjectStore()
+        let project = makeProject(
+            id: "hydration-does-not-resave",
+            title: "水合项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        try store.saveProjects([project], for: nil)
+        let appState = AppState(
+            userDefaults: userDefaults,
+            projectStore: store,
+            credentialStore: makeCredentialStore()
+        )
+
+        appState.reloadAccountScopedProjects()
+
+        XCTAssertEqual(appState.recentProjects.map(\.id), [project.id])
+        XCTAssertTrue(appState.recentProjectsPersistTasks.isEmpty)
     }
 
     @MainActor
@@ -1236,7 +2332,7 @@ final class DomainModelsTests: XCTestCase {
     func testRevisionQualifiedCloudKitRecordNamesMatchIOSContractAndLegacyLayout() {
         let indexRecord = CKRecord(
             recordType: "ProjectSnapshot",
-            recordID: CKRecord.ID(recordName: "snapshot_apple_user")
+            recordID: CKRecord.ID(recordName: "snapshot_apple-user")
         )
         indexRecord["payloadRevision"] = "revision-7" as NSString
 
@@ -1244,23 +2340,248 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(
             ICloudProjectStore.projectRecordName(
                 for: "project-1",
-                scope: "apple user",
+                scope: "apple-user",
                 revision: "revision-7"
             ),
-            "project_apple_user_revision-7_project-1"
+            "project_apple-user_revision-7_project-1"
         )
         XCTAssertEqual(
             ICloudProjectStore.chapterRecordName(
                 for: "chapter-1",
                 projectID: "project-1",
-                scope: "apple user",
+                scope: "apple-user",
                 revision: "revision-7"
             ),
-            "chapter_apple_user_revision-7_project-1_chapter-1"
+            "chapter_apple-user_revision-7_project-1_chapter-1"
         )
         XCTAssertEqual(
-            ICloudProjectStore.projectRecordName(for: "project-1", scope: "apple user"),
-            "project_apple_user_project-1"
+            ICloudProjectStore.projectRecordName(for: "project-1", scope: "apple-user"),
+            "project_apple-user_project-1"
+        )
+
+        indexRecord["payloadRevision"] = NSNumber(value: 7)
+        XCTAssertThrowsError(
+            try ICloudProjectStore.validatedPayloadRevision(from: indexRecord)
+        )
+        indexRecord["payloadRevision"] = "   " as NSString
+        XCTAssertThrowsError(
+            try ICloudProjectStore.validatedPayloadRevision(from: indexRecord)
+        )
+    }
+
+    func testCloudKitRecordNamesDisambiguateSanitizedComponentCollisions() {
+        let slashProjectName = ICloudProjectStore.projectRecordName(
+            for: "project/a",
+            scope: "apple-user-1",
+            revision: "revision/1"
+        )
+        let questionProjectName = ICloudProjectStore.projectRecordName(
+            for: "project?a",
+            scope: "apple-user-1",
+            revision: "revision/1"
+        )
+        let slashRevisionName = ICloudProjectStore.projectRecordName(
+            for: "project-a",
+            scope: "apple-user-1",
+            revision: "revision/1"
+        )
+        let questionRevisionName = ICloudProjectStore.projectRecordName(
+            for: "project-a",
+            scope: "apple-user-1",
+            revision: "revision?1"
+        )
+        let slashChapterName = ICloudProjectStore.chapterRecordName(
+            for: "chapter/a",
+            projectID: "project-a",
+            scope: "apple-user-1"
+        )
+        let questionChapterName = ICloudProjectStore.chapterRecordName(
+            for: "chapter?a",
+            projectID: "project-a",
+            scope: "apple-user-1"
+        )
+
+        XCTAssertNotEqual(slashProjectName, questionProjectName)
+        XCTAssertNotEqual(slashRevisionName, questionRevisionName)
+        XCTAssertNotEqual(slashChapterName, questionChapterName)
+        XCTAssertEqual(
+            slashProjectName,
+            ICloudProjectStore.projectRecordName(
+                for: "project/a",
+                scope: "apple-user-1",
+                revision: "revision/1"
+            )
+        )
+    }
+
+    func testCloudKitScopeIdentifiersDisambiguateLossyCollisions() {
+        let slashScope = "a/b"
+        let questionScope = "a?b"
+        let slashIdentifier =
+            ICloudProjectStore.scopeIdentifier(for: slashScope)
+        let questionIdentifier =
+            ICloudProjectStore.scopeIdentifier(for: questionScope)
+
+        XCTAssertNotEqual(slashIdentifier, questionIdentifier)
+        XCTAssertNotEqual(
+            ICloudProjectStore.snapshotRecordName(for: slashScope),
+            ICloudProjectStore.snapshotRecordName(for: questionScope)
+        )
+        XCTAssertNotEqual(
+            ICloudProjectStore.projectRecordName(
+                for: "project-1",
+                scope: slashScope
+            ),
+            ICloudProjectStore.projectRecordName(
+                for: "project-1",
+                scope: questionScope
+            )
+        )
+        XCTAssertNotEqual(
+            ICloudProjectStore.chapterRecordName(
+                for: "chapter-1",
+                projectID: "project-1",
+                scope: slashScope
+            ),
+            ICloudProjectStore.chapterRecordName(
+                for: "chapter-1",
+                projectID: "project-1",
+                scope: questionScope
+            )
+        )
+        XCTAssertEqual(
+            ICloudProjectStore.scopeIdentifier(for: "apple-user-1"),
+            "apple-user-1"
+        )
+        XCTAssertEqual(
+            slashIdentifier,
+            ICloudProjectStore.scopeIdentifier(for: slashScope)
+        )
+        XCTAssertLessThanOrEqual(slashIdentifier.utf8.count, 64)
+    }
+
+    func testLegacyExplicitCloudKitScopeManifestRemainsReadable() throws {
+        let scope = "a/b"
+        let legacyScope = "a_b"
+        let explicitProjectName = "project_a_b_revision-7_project-1"
+        let legacyIndex = CKRecord(
+            recordType: "ProjectSnapshot",
+            recordID: CKRecord.ID(recordName: "snapshot_a_b")
+        )
+        legacyIndex["scope"] = legacyScope as NSString
+        legacyIndex["projectIDs"] = ["project-1"] as NSArray
+        legacyIndex["projectRecordNames"] =
+            [explicitProjectName] as NSArray
+        legacyIndex["payloadRevision"] = "revision-7" as NSString
+
+        XCTAssertNoThrow(
+            try ICloudProjectStore.validateIndexRecordForRewrite(
+                legacyIndex,
+                scope: scope
+            )
+        )
+        XCTAssertEqual(
+            try ICloudProjectStore.validatedIndexedProjectRecordIDs(
+                from: legacyIndex,
+                scope: scope
+            )?.map(\.recordName),
+            [explicitProjectName]
+        )
+
+        legacyIndex["scope"] =
+            ICloudProjectStore.scopeIdentifier(for: scope) as NSString
+        XCTAssertNoThrow(
+            try ICloudProjectStore.validateIndexRecordForRewrite(
+                legacyIndex,
+                scope: scope
+            )
+        )
+    }
+
+    func testCloudKitRecordNamesBoundOverlongComponents() {
+        let scope = String(repeating: "s", count: 44)
+        let longProjectID = String(repeating: "p", count: 4_000)
+        let longChapterID = String(repeating: "c", count: 4_000)
+        let longRevision = String(repeating: "r", count: 4_000)
+
+        let projectName = ICloudProjectStore.projectRecordName(
+            for: longProjectID,
+            scope: scope,
+            revision: longRevision
+        )
+        let chapterName = ICloudProjectStore.chapterRecordName(
+            for: longChapterID,
+            projectID: longProjectID,
+            scope: scope,
+            revision: longRevision
+        )
+
+        XCTAssertLessThanOrEqual(projectName.utf8.count, 255)
+        XCTAssertLessThanOrEqual(chapterName.utf8.count, 255)
+        XCTAssertEqual(
+            chapterName,
+            ICloudProjectStore.chapterRecordName(
+                for: longChapterID,
+                projectID: longProjectID,
+                scope: scope,
+                revision: longRevision
+            )
+        )
+    }
+
+    func testLegacyCloudKitIndexWithoutExplicitNamesUsesLegacySanitization() throws {
+        let scope = "apple-user-1"
+        let index = CKRecord(
+            recordType: "ProjectSnapshot",
+            recordID: CKRecord.ID(recordName: "snapshot_apple-user-1")
+        )
+        index["projectIDs"] = ["project/a"] as NSArray
+        index["payloadRevision"] = "revision?1" as NSString
+
+        let legacyProjectRecordID = try XCTUnwrap(
+            ICloudProjectStore.indexedProjectRecordIDs(
+                from: index,
+                scope: scope
+            )?.first
+        )
+        XCTAssertEqual(
+            legacyProjectRecordID.recordName,
+            "project_apple-user-1_revision_1_project_a"
+        )
+
+        let projectRecord = CKRecord(
+            recordType: "ProjectPayload",
+            recordID: legacyProjectRecordID
+        )
+        projectRecord["chapterIDs"] = ["chapter/a"] as NSArray
+
+        XCTAssertEqual(
+            try ICloudProjectStore.indexedChapterRecordIDs(
+                from: [legacyProjectRecordID: projectRecord],
+                indexRecord: index,
+                scope: scope
+            ).map(\.recordName),
+            ["chapter_apple-user-1_revision_1_project_a_chapter_a"]
+        )
+
+        let migratedProjectRecordName =
+            ICloudProjectStore.projectRecordName(
+                for: "project/a",
+                scope: scope,
+                revision: "revision?1"
+            )
+        XCTAssertNotEqual(
+            migratedProjectRecordName,
+            legacyProjectRecordID.recordName
+        )
+        index["projectRecordNames"] =
+            [migratedProjectRecordName] as NSArray
+        XCTAssertEqual(
+            ICloudProjectStore.indexedProjectRecordIDs(
+                from: index,
+                scope: scope
+            )?.map(\.recordName),
+            [migratedProjectRecordName]
         )
     }
 
@@ -1353,6 +2674,16 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertNil(ICloudProjectStore.indexedProjectRecordIDs(from: index, scope: "scope"))
 
         index["projectIDs"] = ["project-1"] as NSArray
+        index["projectRecordNames"] = [NSNumber(value: 1)] as NSArray
+        XCTAssertNil(ICloudProjectStore.indexedProjectRecordIDs(from: index, scope: "scope"))
+        XCTAssertThrowsError(
+            try ICloudProjectStore.validatedIndexedProjectRecordIDs(
+                from: index,
+                scope: "scope"
+            )
+        )
+
+        index["projectIDs"] = ["project-1"] as NSArray
         index["projectRecordNames"] = ["project-explicit"] as NSArray
         let projectRecordID = CKRecord.ID(recordName: "project-explicit")
         let project = CKRecord(recordType: "ProjectPayload", recordID: projectRecordID)
@@ -1370,6 +2701,144 @@ final class DomainModelsTests: XCTestCase {
                 return XCTFail("Expected missingPayload, got \(error)")
             }
         }
+
+        project["chapterIDs"] = [NSNumber(value: 1)] as NSArray
+        project["chapterRecordNames"] = nil
+        XCTAssertThrowsError(
+            try ICloudProjectStore.indexedChapterRecordIDs(
+                from: [projectRecordID: project],
+                indexRecord: index,
+                scope: "scope"
+            )
+        )
+
+        project["chapterIDs"] = ["chapter-1"] as NSArray
+        project["chapterRecordNames"] = [NSNumber(value: 1)] as NSArray
+        XCTAssertThrowsError(
+            try ICloudProjectStore.indexedChapterRecordIDs(
+                from: [projectRecordID: project],
+                indexRecord: index,
+                scope: "scope"
+            )
+        )
+    }
+
+    func testExplicitProjectManifestRequiresCompleteChapterManifest() throws {
+        let index = CKRecord(
+            recordType: "ProjectSnapshot",
+            recordID: CKRecord.ID(recordName: "snapshot_scope")
+        )
+        index["projectIDs"] = ["project-1"] as NSArray
+        index["projectRecordNames"] = ["project-explicit"] as NSArray
+        let projectRecordID = CKRecord.ID(recordName: "project-explicit")
+        let project = CKRecord(
+            recordType: "ProjectPayload",
+            recordID: projectRecordID
+        )
+
+        XCTAssertThrowsError(
+            try ICloudProjectStore.indexedChapterRecordIDs(
+                from: [projectRecordID: project],
+                indexRecord: index,
+                scope: "scope"
+            )
+        )
+
+        project["chapterIDs"] = ["chapter-1"] as NSArray
+        XCTAssertThrowsError(
+            try ICloudProjectStore.indexedChapterRecordIDs(
+                from: [projectRecordID: project],
+                indexRecord: index,
+                scope: "scope"
+            )
+        )
+
+        project["chapterIDs"] = nil
+        project["chapterRecordNames"] = ["chapter-explicit"] as NSArray
+        XCTAssertThrowsError(
+            try ICloudProjectStore.indexedChapterRecordIDs(
+                from: [projectRecordID: project],
+                indexRecord: index,
+                scope: "scope"
+            )
+        )
+
+        project["chapterIDs"] = [] as NSArray
+        project["chapterRecordNames"] = [] as NSArray
+        XCTAssertEqual(
+            try ICloudProjectStore.indexedChapterRecordIDs(
+                from: [projectRecordID: project],
+                indexRecord: index,
+                scope: "scope"
+            ),
+            []
+        )
+    }
+
+    func testCloudKitIndexRewriteValidatesTypeScopeAndActiveProject() throws {
+        let index = CKRecord(
+            recordType: "ProjectSnapshot",
+            recordID: CKRecord.ID(recordName: "snapshot_scope")
+        )
+        XCTAssertNoThrow(
+            try ICloudProjectStore.validateIndexRecordForRewrite(
+                index,
+                scope: "scope"
+            )
+        )
+
+        let wrongType = CKRecord(
+            recordType: "ChapterPayload",
+            recordID: CKRecord.ID(recordName: "snapshot_wrong_type")
+        )
+        XCTAssertThrowsError(
+            try ICloudProjectStore.validateIndexRecordForRewrite(
+                wrongType,
+                scope: "scope"
+            )
+        )
+
+        index["projectIDs"] = ["project-1"] as NSArray
+        index["projectRecordNames"] = ["project-explicit"] as NSArray
+        XCTAssertThrowsError(
+            try ICloudProjectStore.validateIndexRecordForRewrite(
+                index,
+                scope: "scope"
+            )
+        )
+
+        index["scope"] = "foreign-scope" as NSString
+        XCTAssertThrowsError(
+            try ICloudProjectStore.validateIndexRecordForRewrite(
+                index,
+                scope: "scope"
+            )
+        )
+
+        index["scope"] = "scope" as NSString
+        index["activeProjectID"] = "foreign-project" as NSString
+        XCTAssertThrowsError(
+            try ICloudProjectStore.validateIndexRecordForRewrite(
+                index,
+                scope: "scope"
+            )
+        )
+
+        index["activeProjectID"] = NSNumber(value: 1)
+        XCTAssertThrowsError(
+            try ICloudProjectStore.validateIndexRecordForRewrite(
+                index,
+                scope: "scope"
+            )
+        )
+
+        index["activeProjectID"] = "project-1" as NSString
+        XCTAssertNoThrow(
+            try ICloudProjectStore.validateIndexRecordForRewrite(
+                index,
+                scope: "scope"
+            )
+        )
     }
 
     func testIndexedCloudKitReaderRejectsDuplicateManifestEntries() throws {
@@ -1462,6 +2931,685 @@ final class DomainModelsTests: XCTestCase {
             Date(timeIntervalSince1970: 1_772_000_100) as NSDate
         ] as NSArray
         XCTAssertThrowsError(try ICloudProjectStore.deletionTombstones(from: index))
+
+        index["deletedProjectIDs"] = [NSNumber(value: 1)] as NSArray
+        index["deletedProjectDates"] = [NSNumber(value: 2)] as NSArray
+        XCTAssertThrowsError(try ICloudProjectStore.deletionTombstones(from: index))
+    }
+
+    func testPendingCloudKitCleanupManifestRejectsMalformedValues() throws {
+        let index = CKRecord(
+            recordType: "ProjectSnapshot",
+            recordID: CKRecord.ID(recordName: "snapshot_scope")
+        )
+        XCTAssertEqual(
+            try ICloudProjectStore.pendingCleanupRecordNames(from: index),
+            []
+        )
+
+        index["pendingCleanupRecordNames"] = [
+            "project-old",
+            "chapter-old"
+        ] as NSArray
+        XCTAssertEqual(
+            try ICloudProjectStore.pendingCleanupRecordNames(from: index),
+            ["project-old", "chapter-old"]
+        )
+
+        index["pendingCleanupRecordNames"] = [NSNumber(value: 1)] as NSArray
+        XCTAssertThrowsError(
+            try ICloudProjectStore.pendingCleanupRecordNames(from: index)
+        )
+        index["pendingCleanupRecordNames"] = ["duplicate", "duplicate"] as NSArray
+        XCTAssertThrowsError(
+            try ICloudProjectStore.pendingCleanupRecordNames(from: index)
+        )
+        index["pendingCleanupRecordNames"] = ["   "] as NSArray
+        XCTAssertThrowsError(
+            try ICloudProjectStore.pendingCleanupRecordNames(from: index)
+        )
+    }
+
+    func testStructuredPendingCleanupManifestRoundTripsAlignedUniqueAndSorted() throws {
+        func target(
+            chapterID: String,
+            payload: String
+        ) -> ContentAddressedPayloadTarget {
+            let payloadHash = CloudProjectPayloadCodec.payloadHash(
+                for: Data(payload.utf8)
+            )
+            let revision = CloudProjectPayloadCodec.chapterRevision(
+                payloadHash: payloadHash
+            )
+            return ContentAddressedPayloadTarget(
+                recordID: CKRecord.ID(
+                    recordName: ICloudProjectStore.chapterRecordName(
+                        for: chapterID,
+                        projectID: "project-1",
+                        scope: "scope",
+                        revision: revision
+                    )
+                ),
+                payloadHash: payloadHash,
+                recordType: "ChapterPayload",
+                scope: "scope",
+                projectID: "project-1",
+                chapterID: chapterID
+            )
+        }
+
+        let reservationB = try ICloudProjectStore.pendingCleanupReservation(
+            from: target(chapterID: "chapter-b", payload: "payload-b")
+        )
+        let reservationA = try ICloudProjectStore.pendingCleanupReservation(
+            from: target(chapterID: "chapter-a", payload: "payload-a")
+        )
+        let manifest = try PendingCleanupManifest(
+            reservations: [reservationB, reservationA],
+            legacyRecordNames: ["legacy-pending"]
+        )
+        let index = CKRecord(
+            recordType: "ProjectSnapshot",
+            recordID: CKRecord.ID(recordName: "snapshot_scope")
+        )
+        index["scope"] = "scope" as NSString
+        try ICloudProjectStore.setPendingCleanupManifest(
+            manifest,
+            on: index
+        )
+
+        XCTAssertEqual(
+            try ICloudProjectStore.pendingCleanupManifest(
+                from: index,
+                scope: "scope"
+            ),
+            manifest
+        )
+        XCTAssertEqual(
+            try ICloudProjectStore.pendingCleanupRecordNames(from: index),
+            manifest.recordNames
+        )
+        XCTAssertEqual(manifest.reservations.map(\.recordName), [
+            reservationA.recordName,
+            reservationB.recordName
+        ].sorted())
+        XCTAssertNotNil(index["pendingCleanupReservations"] as? NSData)
+
+        let encodedReservations = try XCTUnwrap(
+            index["pendingCleanupReservations"] as? NSData
+        )
+        index["pendingCleanupRecordNames"] = ["legacy-pending"] as NSArray
+        XCTAssertThrowsError(
+            try ICloudProjectStore.pendingCleanupManifest(
+                from: index,
+                scope: "scope"
+            )
+        )
+        index["pendingCleanupRecordNames"] = manifest.recordNames as NSArray
+        index["pendingCleanupReservations"] =
+            Data("malformed".utf8) as NSData
+        XCTAssertThrowsError(
+            try ICloudProjectStore.pendingCleanupManifest(
+                from: index,
+                scope: "scope"
+            )
+        )
+        index["pendingCleanupReservations"] = encodedReservations
+    }
+
+    func testProjectPendingCleanupReservationEncodingDoesNotGrowWithChapterCount() throws {
+        let payloadHash = CloudProjectPayloadCodec.payloadHash(
+            for: Data("project-payload".utf8)
+        )
+        func target(chapterCount: Int) -> ContentAddressedPayloadTarget {
+            let chapterIDs = (0..<chapterCount).map { "chapter-\($0)" }
+            let chapterRecordNames = (0..<chapterCount).map {
+                "chapter-record-\($0)"
+            }
+            let references = zip(chapterIDs, chapterRecordNames).map {
+                (chapterID: $0.0, recordName: $0.1)
+            }
+            let revision = CloudProjectPayloadCodec.projectRevision(
+                payloadHash: payloadHash,
+                chapterReferences: references
+            )
+            return ContentAddressedPayloadTarget(
+                recordID: CKRecord.ID(
+                    recordName: ICloudProjectStore.projectRecordName(
+                        for: "project-1",
+                        scope: "scope",
+                        revision: revision
+                    )
+                ),
+                payloadHash: payloadHash,
+                recordType: "ProjectPayload",
+                scope: "scope",
+                projectID: "project-1",
+                chapterIDs: chapterIDs,
+                chapterRecordNames: chapterRecordNames
+            )
+        }
+
+        let emptyReservation = try ICloudProjectStore.pendingCleanupReservation(
+            from: target(chapterCount: 0)
+        )
+        let largeReservation = try ICloudProjectStore.pendingCleanupReservation(
+            from: target(chapterCount: 2_000)
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let emptyData = try encoder.encode(emptyReservation)
+        let largeData = try encoder.encode(largeReservation)
+
+        XCTAssertEqual(emptyData.count, largeData.count)
+        XCTAssertLessThan(largeData.count, 512)
+        XCTAssertFalse(
+            String(decoding: largeData, as: UTF8.self)
+                .contains("chapter-1999")
+        )
+    }
+
+    func testCloudPayloadOwnershipChecksModernAndLegacyMetadata() {
+        let projectRecordID = CKRecord.ID(recordName: "project-old")
+        let modernProjectOwnership = CloudPayloadRecordOwnership(
+            recordID: projectRecordID,
+            recordType: "ProjectPayload",
+            scope: "scope",
+            projectID: "project-1",
+            chapterID: nil,
+            requiresCompleteMetadata: true
+        )
+        let projectRecord = CKRecord(
+            recordType: "ProjectPayload",
+            recordID: projectRecordID
+        )
+        XCTAssertFalse(modernProjectOwnership.matches(projectRecord))
+
+        projectRecord["scope"] = "scope" as NSString
+        projectRecord["projectID"] = "project-1" as NSString
+        XCTAssertTrue(modernProjectOwnership.matches(projectRecord))
+
+        projectRecord["scope"] = "foreign-scope" as NSString
+        XCTAssertFalse(modernProjectOwnership.matches(projectRecord))
+        projectRecord["scope"] = "scope" as NSString
+        projectRecord["projectID"] = "foreign-project" as NSString
+        XCTAssertFalse(modernProjectOwnership.matches(projectRecord))
+
+        let chapterRecordID = CKRecord.ID(recordName: "chapter-old")
+        let modernChapterOwnership = CloudPayloadRecordOwnership(
+            recordID: chapterRecordID,
+            recordType: "ChapterPayload",
+            scope: "scope",
+            projectID: "project-1",
+            chapterID: "chapter-1",
+            requiresCompleteMetadata: true
+        )
+        let chapterRecord = CKRecord(
+            recordType: "ChapterPayload",
+            recordID: chapterRecordID
+        )
+        chapterRecord["scope"] = "scope" as NSString
+        chapterRecord["projectID"] = "project-1" as NSString
+        XCTAssertFalse(modernChapterOwnership.matches(chapterRecord))
+        chapterRecord["chapterID"] = "foreign-chapter" as NSString
+        XCTAssertFalse(modernChapterOwnership.matches(chapterRecord))
+        chapterRecord["chapterID"] = "chapter-1" as NSString
+        XCTAssertTrue(modernChapterOwnership.matches(chapterRecord))
+
+        let legacyRecordID = CKRecord.ID(recordName: "project-legacy")
+        let legacyOwnership = CloudPayloadRecordOwnership(
+            recordID: legacyRecordID,
+            recordType: "ProjectPayload",
+            scope: "scope",
+            projectID: "project-1",
+            chapterID: nil,
+            requiresCompleteMetadata: false
+        )
+        let legacyRecord = CKRecord(
+            recordType: "ProjectPayload",
+            recordID: legacyRecordID
+        )
+        XCTAssertTrue(legacyOwnership.matches(legacyRecord))
+        legacyRecord["scope"] = "foreign-scope" as NSString
+        XCTAssertFalse(legacyOwnership.matches(legacyRecord))
+        legacyRecord["scope"] = nil
+        legacyRecord["projectID"] = "foreign-project" as NSString
+        XCTAssertFalse(legacyOwnership.matches(legacyRecord))
+    }
+
+    func testCleanupValidationRejectsForeignManifestRecordsAndRetainsUnownedLegacyPending() throws {
+        let legacyRecordID = CKRecord.ID(recordName: "project-legacy")
+        let chapterRecordID = CKRecord.ID(recordName: "chapter-manifest")
+        let pendingRecordID = CKRecord.ID(recordName: "project-pending")
+        let missingRecordID = CKRecord.ID(recordName: "project-missing")
+
+        let legacyExpectation = CloudPayloadRecordOwnership(
+            recordID: legacyRecordID,
+            recordType: "ProjectPayload",
+            scope: "scope",
+            projectID: "project-1",
+            chapterID: nil,
+            requiresCompleteMetadata: false
+        )
+        let chapterExpectation = CloudPayloadRecordOwnership(
+            recordID: chapterRecordID,
+            recordType: "ChapterPayload",
+            scope: "scope",
+            projectID: "project-1",
+            chapterID: "chapter-1",
+            requiresCompleteMetadata: true
+        )
+        var expectations: [CKRecord.ID: CloudPayloadRecordOwnership] = [:]
+        try ICloudProjectStore.insertCleanupExpectation(
+            legacyExpectation,
+            into: &expectations
+        )
+        try ICloudProjectStore.insertCleanupExpectation(
+            chapterExpectation,
+            into: &expectations
+        )
+        XCTAssertThrowsError(
+            try ICloudProjectStore.insertCleanupExpectation(
+                CloudPayloadRecordOwnership(
+                    recordID: legacyRecordID,
+                    recordType: "ProjectPayload",
+                    scope: "scope",
+                    projectID: "foreign-project",
+                    chapterID: nil,
+                    requiresCompleteMetadata: false
+                ),
+                into: &expectations
+            )
+        )
+
+        let legacyRecord = CKRecord(
+            recordType: "ProjectPayload",
+            recordID: legacyRecordID
+        )
+        let chapterRecord = CKRecord(
+            recordType: "ChapterPayload",
+            recordID: chapterRecordID
+        )
+        chapterRecord["scope"] = "scope" as NSString
+        chapterRecord["projectID"] = "project-1" as NSString
+        chapterRecord["chapterID"] = "chapter-1" as NSString
+        let pendingRecord = CKRecord(
+            recordType: "ProjectPayload",
+            recordID: pendingRecordID
+        )
+        pendingRecord["scope"] = "scope" as NSString
+        pendingRecord["projectID"] = "project-1" as NSString
+
+        let legacyPendingManifest = try PendingCleanupManifest(
+            reservations: [],
+            legacyRecordNames: [
+                pendingRecordID.recordName,
+                missingRecordID.recordName
+            ]
+        )
+        let plan = try ICloudProjectStore.validatedCleanupPlan(
+            candidateRecordIDs: [
+                legacyRecordID,
+                chapterRecordID,
+                pendingRecordID,
+                missingRecordID
+            ],
+            recordsByID: [
+                legacyRecordID: legacyRecord,
+                chapterRecordID: chapterRecord,
+                pendingRecordID: pendingRecord
+            ],
+            manifestExpectations: expectations,
+            pendingCleanupManifest: legacyPendingManifest,
+            scope: "scope"
+        )
+        XCTAssertEqual(
+            plan.recordIDsToDelete.map(\.recordName),
+            ["chapter-manifest", "project-legacy"]
+        )
+        XCTAssertEqual(
+            plan.retainedPendingManifest.legacyRecordNames,
+            ["project-pending"]
+        )
+
+        chapterRecord["projectID"] = "foreign-project" as NSString
+        XCTAssertThrowsError(
+            try ICloudProjectStore.validatedCleanupPlan(
+                candidateRecordIDs: [chapterRecordID],
+                recordsByID: [chapterRecordID: chapterRecord],
+                manifestExpectations: expectations,
+                pendingCleanupManifest: try PendingCleanupManifest(
+                    reservations: [],
+                    legacyRecordNames: []
+                ),
+                scope: "scope"
+            )
+        )
+    }
+
+    func testStructuredPendingCleanupCleansInterruptedUploadWithoutProjectManifest() throws {
+        let payload = Data("interrupted-upload".utf8)
+        let payloadHash = CloudProjectPayloadCodec.payloadHash(for: payload)
+        let revision = CloudProjectPayloadCodec.chapterRevision(
+            payloadHash: payloadHash
+        )
+        let recordID = CKRecord.ID(
+            recordName: ICloudProjectStore.chapterRecordName(
+                for: "chapter-new",
+                projectID: "project-new",
+                scope: "scope",
+                revision: revision
+            )
+        )
+        let target = ContentAddressedPayloadTarget(
+            recordID: recordID,
+            payloadHash: payloadHash,
+            recordType: "ChapterPayload",
+            scope: "scope",
+            projectID: "project-new",
+            chapterID: "chapter-new"
+        )
+        let reservation = try ICloudProjectStore.pendingCleanupReservation(
+            from: target
+        )
+        let manifest = try PendingCleanupManifest(
+            reservations: [reservation],
+            legacyRecordNames: []
+        )
+
+        let assetURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try payload.write(to: assetURL, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: assetURL) }
+        let record = CKRecord(
+            recordType: "ChapterPayload",
+            recordID: recordID
+        )
+        record["scope"] = "scope" as NSString
+        record["projectID"] = "project-new" as NSString
+        record["chapterID"] = "chapter-new" as NSString
+        record["payloadHash"] = payloadHash as NSString
+        record["payloadAsset"] = CKAsset(fileURL: assetURL)
+
+        // No manifest expectation simulates another device whose project list
+        // never observed the pre-publication upload.
+        let plan = try ICloudProjectStore.validatedCleanupPlan(
+            candidateRecordIDs: [recordID],
+            recordsByID: [recordID: record],
+            manifestExpectations: [:],
+            pendingCleanupManifest: manifest,
+            scope: "scope"
+        )
+        XCTAssertEqual(plan.recordIDsToDelete, [recordID])
+        XCTAssertEqual(plan.retainedPendingManifest.recordNames, [])
+    }
+
+    func testStructuredPendingCleanupRetainsHashAssetAndRecordNameMismatches() throws {
+        let expectedPayload = Data("expected".utf8)
+        let wrongPayload = Data("wrong".utf8)
+        let payloadHash = CloudProjectPayloadCodec.payloadHash(
+            for: expectedPayload
+        )
+        let revision = CloudProjectPayloadCodec.chapterRevision(
+            payloadHash: payloadHash
+        )
+        func reservation(
+            chapterID: String,
+            recordName: String? = nil
+        ) -> PendingCleanupReservation {
+            PendingCleanupReservation(
+                recordName: recordName
+                    ?? ICloudProjectStore.chapterRecordName(
+                        for: chapterID,
+                        projectID: "project-shared",
+                        scope: "scope",
+                        revision: revision
+                    ),
+                recordType: "ChapterPayload",
+                scope: "scope",
+                projectID: "project-shared",
+                chapterID: chapterID,
+                payloadHash: payloadHash
+            )
+        }
+        func record(
+            for reservation: PendingCleanupReservation,
+            storedHash: String,
+            assetURL: URL
+        ) -> CKRecord {
+            let record = CKRecord(
+                recordType: "ChapterPayload",
+                recordID: reservation.recordID
+            )
+            record["scope"] = "scope" as NSString
+            record["projectID"] = "project-shared" as NSString
+            record["chapterID"] = reservation.chapterID! as NSString
+            record["payloadHash"] = storedHash as NSString
+            record["payloadAsset"] = CKAsset(fileURL: assetURL)
+            return record
+        }
+
+        let expectedURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        let wrongURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try expectedPayload.write(to: expectedURL, options: .atomic)
+        try wrongPayload.write(to: wrongURL, options: .atomic)
+        defer {
+            try? FileManager.default.removeItem(at: expectedURL)
+            try? FileManager.default.removeItem(at: wrongURL)
+        }
+
+        let hashMismatch = reservation(chapterID: "chapter-hash")
+        let assetMismatch = reservation(chapterID: "chapter-asset")
+        let nameMismatch = reservation(
+            chapterID: "chapter-name",
+            recordName: "forged-record-name"
+        )
+        let manifest = try PendingCleanupManifest(
+            reservations: [hashMismatch, assetMismatch, nameMismatch],
+            legacyRecordNames: []
+        )
+        let recordsByID = [
+            hashMismatch.recordID: record(
+                for: hashMismatch,
+                storedHash: String(repeating: "0", count: 64),
+                assetURL: expectedURL
+            ),
+            assetMismatch.recordID: record(
+                for: assetMismatch,
+                storedHash: payloadHash,
+                assetURL: wrongURL
+            ),
+            nameMismatch.recordID: record(
+                for: nameMismatch,
+                storedHash: payloadHash,
+                assetURL: expectedURL
+            )
+        ]
+
+        let plan = try ICloudProjectStore.validatedCleanupPlan(
+            candidateRecordIDs: Set(recordsByID.keys),
+            recordsByID: recordsByID,
+            manifestExpectations: [:],
+            pendingCleanupManifest: manifest,
+            scope: "scope"
+        )
+        XCTAssertEqual(plan.recordIDsToDelete, [])
+        XCTAssertEqual(
+            plan.retainedPendingManifest.recordNames,
+            manifest.recordNames
+        )
+    }
+
+    func testProjectPendingCleanupRevalidatesActualChapterReferencesBeforeDelete() throws {
+        let payload = Data("project-payload".utf8)
+        let payloadHash = CloudProjectPayloadCodec.payloadHash(for: payload)
+        let chapterIDs = ["chapter-a", "chapter-b"]
+        let chapterRecordNames = ["record-a", "record-b"]
+        let references = zip(chapterIDs, chapterRecordNames).map {
+            (chapterID: $0.0, recordName: $0.1)
+        }
+        let revision = CloudProjectPayloadCodec.projectRevision(
+            payloadHash: payloadHash,
+            chapterReferences: references
+        )
+        let recordID = CKRecord.ID(
+            recordName: ICloudProjectStore.projectRecordName(
+                for: "project-1",
+                scope: "scope",
+                revision: revision
+            )
+        )
+        let reservation = try ICloudProjectStore.pendingCleanupReservation(
+            from: ContentAddressedPayloadTarget(
+                recordID: recordID,
+                payloadHash: payloadHash,
+                recordType: "ProjectPayload",
+                scope: "scope",
+                projectID: "project-1",
+                chapterIDs: chapterIDs,
+                chapterRecordNames: chapterRecordNames
+            )
+        )
+        let manifest = try PendingCleanupManifest(
+            reservations: [reservation],
+            legacyRecordNames: []
+        )
+        let assetURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try payload.write(to: assetURL, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: assetURL) }
+        let record = CKRecord(
+            recordType: "ProjectPayload",
+            recordID: recordID
+        )
+        record["scope"] = "scope" as NSString
+        record["projectID"] = "project-1" as NSString
+        record["payloadHash"] = payloadHash as NSString
+        record["payloadAsset"] = CKAsset(fileURL: assetURL)
+
+        func cleanupPlan() throws -> ValidatedCleanupPlan {
+            try ICloudProjectStore.validatedCleanupPlan(
+                candidateRecordIDs: [recordID],
+                recordsByID: [recordID: record],
+                manifestExpectations: [:],
+                pendingCleanupManifest: manifest,
+                scope: "scope"
+            )
+        }
+
+        record["chapterIDs"] = ["chapter-b", "chapter-a"] as NSArray
+        record["chapterRecordNames"] = ["record-b", "record-a"] as NSArray
+        var plan = try cleanupPlan()
+        XCTAssertEqual(plan.recordIDsToDelete, [])
+        XCTAssertEqual(plan.retainedPendingManifest, manifest)
+
+        record["chapterIDs"] = chapterIDs as NSArray
+        record["chapterRecordNames"] = [
+            "record-a",
+            "record-tampered"
+        ] as NSArray
+        plan = try cleanupPlan()
+        XCTAssertEqual(plan.recordIDsToDelete, [])
+        XCTAssertEqual(plan.retainedPendingManifest, manifest)
+
+        record["chapterRecordNames"] = chapterRecordNames as NSArray
+        plan = try cleanupPlan()
+        XCTAssertEqual(plan.recordIDsToDelete, [recordID])
+        XCTAssertEqual(plan.retainedPendingManifest.recordNames, [])
+    }
+
+    func testLegacyPendingCleanupEntryPersistsUntilOwnershipCanBeProven() throws {
+        let existingID = CKRecord.ID(recordName: "legacy-existing")
+        let missingID = CKRecord.ID(recordName: "legacy-missing")
+        let index = CKRecord(
+            recordType: "ProjectSnapshot",
+            recordID: CKRecord.ID(recordName: "snapshot_scope")
+        )
+        index["scope"] = "scope" as NSString
+        index["pendingCleanupRecordNames"] = [
+            existingID.recordName,
+            missingID.recordName
+        ] as NSArray
+        let legacyManifest = try ICloudProjectStore.pendingCleanupManifest(
+            from: index,
+            scope: "scope"
+        )
+        XCTAssertEqual(legacyManifest.reservations, [])
+        XCTAssertEqual(
+            legacyManifest.legacyRecordNames,
+            ["legacy-existing", "legacy-missing"]
+        )
+
+        let existingRecord = CKRecord(
+            recordType: "ProjectPayload",
+            recordID: existingID
+        )
+        existingRecord["scope"] = "scope" as NSString
+        existingRecord["projectID"] = "project-1" as NSString
+        let plan = try ICloudProjectStore.validatedCleanupPlan(
+            candidateRecordIDs: [existingID, missingID],
+            recordsByID: [existingID: existingRecord],
+            manifestExpectations: [:],
+            pendingCleanupManifest: legacyManifest,
+            scope: "scope"
+        )
+        XCTAssertEqual(plan.recordIDsToDelete, [])
+        XCTAssertEqual(
+            plan.retainedPendingManifest.legacyRecordNames,
+            [existingID.recordName]
+        )
+
+        let emptyDeletionManifest = try PendingCleanupManifest(
+            reservations: [],
+            legacyRecordNames: []
+        )
+        let transaction = try XCTUnwrap(
+            try ICloudRecordBatching.cleanupTransactions(
+                deleting: [],
+                deletionManifest: emptyDeletionManifest,
+                retainedManifest: plan.retainedPendingManifest,
+                revision: "revision-a"
+            ).first
+        )
+        XCTAssertEqual(
+            transaction.remainingCleanupRecordNames,
+            [existingID.recordName]
+        )
+    }
+
+    func testCloudKitFetchRequiresExplicitResultForEveryRequestedRecord() throws {
+        let recordID = CKRecord.ID(recordName: "pending-record")
+        XCTAssertThrowsError(
+            try ICloudProjectStore.validatedFetchedRecords(
+                [:],
+                requested: [recordID]
+            )
+        )
+
+        let unknownItem = NSError(
+            domain: CKErrorDomain,
+            code: CKError.Code.unknownItem.rawValue
+        )
+        XCTAssertTrue(
+            try ICloudProjectStore.validatedFetchedRecords(
+                [recordID: .failure(unknownItem)],
+                requested: [recordID]
+            ).isEmpty
+        )
+
+        let record = CKRecord(
+            recordType: "ChapterPayload",
+            recordID: recordID
+        )
+        XCTAssertEqual(
+            try ICloudProjectStore.validatedFetchedRecords(
+                [recordID: .success(record)],
+                requested: [recordID]
+            )[recordID]?.recordID,
+            recordID
+        )
     }
 
     func testCloudKitCleanupKeepsOnlyTrueDeletionFailures() {
@@ -1486,6 +3634,420 @@ final class DomainModelsTests: XCTestCase {
                 expected: [successID, alreadyDeletedID, failedID, missingResultID]
             ).map(\.recordName),
             ["failed", "missing-result"]
+        )
+    }
+
+    func testContentAddressedUploadPlanUsesCreateOnlySavePolicy() {
+        let createID = CKRecord.ID(recordName: "payload-create")
+        let existingID = CKRecord.ID(recordName: "payload-existing")
+        let plan = ContentAddressedUploadPlan(
+            recordIDsToCreate: [createID]
+        )
+
+        XCTAssertEqual(
+            plan.savePolicy(for: createID),
+            .ifServerRecordUnchanged
+        )
+        XCTAssertNil(plan.savePolicy(for: existingID))
+        XCTAssertEqual(
+            ContentAddressedUploadPlan.createOnlySavePolicy,
+            .ifServerRecordUnchanged
+        )
+    }
+
+    func testCloudKitErrorCodeFindsServerRecordChangedInsidePartialFailure() {
+        let recordID = CKRecord.ID(recordName: "conflicting-index")
+        let serverRecordChanged = NSError(
+            domain: CKErrorDomain,
+            code: CKError.Code.serverRecordChanged.rawValue
+        )
+        let conflictPartial = NSError(
+            domain: CKErrorDomain,
+            code: CKError.Code.partialFailure.rawValue,
+            userInfo: [
+                CKPartialErrorsByItemIDKey: [
+                    recordID: serverRecordChanged
+                ] as NSDictionary
+            ]
+        )
+
+        XCTAssertEqual(
+            ICloudProjectStore.cloudKitErrorCode(in: conflictPartial),
+            .serverRecordChanged
+        )
+
+        let unrelatedPartial = NSError(
+            domain: CKErrorDomain,
+            code: CKError.Code.partialFailure.rawValue,
+            userInfo: [
+                CKPartialErrorsByItemIDKey: [
+                    recordID: NSError(
+                        domain: CKErrorDomain,
+                        code: CKError.Code.unknownItem.rawValue
+                    )
+                ] as NSDictionary
+            ]
+        )
+        XCTAssertEqual(
+            ICloudProjectStore.cloudKitErrorCode(in: unrelatedPartial),
+            .partialFailure
+        )
+        XCTAssertNil(
+            ICloudProjectStore.cloudKitErrorCode(
+                in: NSError(domain: "OpenWritingTests", code: 1)
+            )
+        )
+    }
+
+    func testIndexCASDecisionAlreadyPublishedRetriesAndFails() {
+        func makeIndex(
+            projectRecordNames: [String] = ["project-payload"],
+            pendingCleanupRecordNames: [String] = ["stale-payload"],
+            pendingCleanupReservations: Data =
+                Data("reservation-a".utf8)
+        ) -> CKRecord {
+            let record = CKRecord(
+                recordType: "ProjectSnapshot",
+                recordID: CKRecord.ID(recordName: "snapshot_scope")
+            )
+            record["scope"] = "scope" as NSString
+            record["activeProjectID"] = "project-1" as NSString
+            record["payloadRevision"] = "revision-1" as NSString
+            record["projectIDs"] = ["project-1"] as NSArray
+            record["projectRecordNames"] =
+                projectRecordNames as NSArray
+            record["deletedProjectIDs"] = [] as NSArray
+            record["deletedProjectDates"] = [] as NSArray
+            record["pendingCleanupRecordNames"] =
+                pendingCleanupRecordNames as NSArray
+            record["pendingCleanupReservations"] =
+                pendingCleanupReservations as NSData
+            record["updatedAt"] =
+                Date(timeIntervalSince1970: 1_772_000_000) as NSDate
+            return record
+        }
+
+        let expected = makeIndex()
+        XCTAssertEqual(
+            ICloudProjectStore.indexCASDecision(
+                serverRecord: makeIndex(),
+                expectedRecord: expected,
+                attempt: 0
+            ),
+            .alreadyPublished
+        )
+        XCTAssertEqual(
+            ICloudProjectStore.indexCASDecision(
+                serverRecord: makeIndex(
+                    projectRecordNames: ["conflicting-project-payload"]
+                ),
+                expectedRecord: expected,
+                attempt: 0
+            ),
+            .retry
+        )
+        XCTAssertEqual(
+            ICloudProjectStore.indexCASDecision(
+                serverRecord: makeIndex(
+                    pendingCleanupRecordNames: ["different-stale-payload"]
+                ),
+                expectedRecord: expected,
+                attempt: 2
+            ),
+            .fail
+        )
+        XCTAssertEqual(
+            ICloudProjectStore.indexCASDecision(
+                serverRecord: makeIndex(
+                    pendingCleanupReservations:
+                        Data("reservation-b".utf8)
+                ),
+                expectedRecord: expected,
+                attempt: 0
+            ),
+            .retry
+        )
+        XCTAssertEqual(
+            ICloudProjectStore.indexCASDecision(
+                serverRecord: nil,
+                expectedRecord: expected,
+                attempt: 0
+            ),
+            .retry
+        )
+    }
+
+    func testPendingCleanupReservationMergesStructuredMetadataAndSorts() throws {
+        let (_, uploadingManifest) = try makeStructuredPendingCleanupManifest(
+            count: 2
+        )
+        let existing = try PendingCleanupManifest(
+            reservations: [],
+            legacyRecordNames: ["payload-c"]
+        )
+        let uploadingTargets = uploadingManifest.reservations.map {
+            ContentAddressedPayloadTarget(
+                recordID: $0.recordID,
+                payloadHash: $0.payloadHash,
+                recordType: $0.recordType,
+                scope: $0.scope,
+                projectID: $0.projectID,
+                chapterID: $0.chapterID
+            )
+        }.reversed()
+
+        let merged = try ICloudProjectStore.pendingCleanupReservation(
+            existing: existing,
+            uploadingTargets: Array(uploadingTargets)
+        )
+        XCTAssertEqual(
+            merged.recordNames,
+            (uploadingManifest.recordNames + ["payload-c"]).sorted()
+        )
+        XCTAssertEqual(
+            merged.reservations.map(\.recordName),
+            uploadingManifest.reservations.map(\.recordName)
+        )
+    }
+
+    private func makeStructuredPendingCleanupManifest(
+        count: Int,
+        scope: String = "scope"
+    ) throws -> ([CKRecord.ID], PendingCleanupManifest) {
+        let reservations = (0..<count).map { index in
+            let chapterID = "chapter-\(index)"
+            let projectID = "project-\(index)"
+            let payloadHash = CloudProjectPayloadCodec.payloadHash(
+                for: Data("payload-\(index)".utf8)
+            )
+            let revision = CloudProjectPayloadCodec.chapterRevision(
+                payloadHash: payloadHash
+            )
+            return PendingCleanupReservation(
+                recordName: ICloudProjectStore.chapterRecordName(
+                    for: chapterID,
+                    projectID: projectID,
+                    scope: scope,
+                    revision: revision
+                ),
+                recordType: "ChapterPayload",
+                scope: scope,
+                projectID: projectID,
+                chapterID: chapterID,
+                payloadHash: payloadHash
+            )
+        }
+        let manifest = try PendingCleanupManifest(
+            reservations: reservations,
+            legacyRecordNames: []
+        )
+        return (manifest.reservations.map(\.recordID), manifest)
+    }
+
+    func testCloudKitCleanupTransactionsReserveOneSlotForIndexCAS() throws {
+        let (recordIDs, deletionManifest) =
+            try makeStructuredPendingCleanupManifest(count: 401)
+        let emptyManifest = try PendingCleanupManifest(
+            reservations: [],
+            legacyRecordNames: []
+        )
+        let plans = try ICloudRecordBatching.cleanupTransactions(
+            deleting: recordIDs,
+            deletionManifest: deletionManifest,
+            retainedManifest: emptyManifest,
+            revision: "revision-a"
+        )
+
+        XCTAssertEqual(plans.map { $0.deletingRecordIDs.count }, [199, 199, 3])
+        XCTAssertEqual(plans.map(\.operationRecordCount), [200, 200, 4])
+        XCTAssertEqual(
+            plans.map { $0.remainingCleanupRecordNames.count },
+            [202, 3, 0]
+        )
+        XCTAssertTrue(
+            plans.allSatisfy {
+                $0.remainingCleanupManifest.legacyRecordNames.isEmpty
+                    && $0.remainingCleanupManifest.reservations.count
+                        == $0.remainingCleanupRecordNames.count
+            }
+        )
+        XCTAssertTrue(plans.allSatisfy(\.atomically))
+        XCTAssertTrue(
+            plans.allSatisfy {
+                $0.savePolicy == .ifServerRecordUnchanged
+                    && $0.expectedRevision == "revision-a"
+            }
+        )
+        XCTAssertEqual(
+            plans.flatMap { $0.deletingRecordIDs }.map(\.recordName).sorted(),
+            recordIDs.map(\.recordName).sorted()
+        )
+
+        let publishOnly = try XCTUnwrap(
+            try ICloudRecordBatching.cleanupTransactions(
+                deleting: [],
+                deletionManifest: emptyManifest,
+                retainedManifest: emptyManifest,
+                revision: "revision-a"
+            ).first
+        )
+        XCTAssertEqual(publishOnly.operationRecordCount, 1)
+        XCTAssertEqual(publishOnly.deletingRecordIDs, [])
+        XCTAssertEqual(publishOnly.remainingCleanupRecordNames, [])
+    }
+
+    func testInterruptedCleanupKeepsUnprocessedPayloadNamesPending() throws {
+        let (recordIDs, deletionManifest) =
+            try makeStructuredPendingCleanupManifest(count: 201)
+        let emptyManifest = try PendingCleanupManifest(
+            reservations: [],
+            legacyRecordNames: []
+        )
+        let plans = try ICloudRecordBatching.cleanupTransactions(
+            deleting: recordIDs,
+            deletionManifest: deletionManifest,
+            retainedManifest: emptyManifest,
+            revision: "revision-a"
+        )
+
+        XCTAssertEqual(plans.count, 2)
+        let firstTransaction = try XCTUnwrap(plans.first)
+        let interruptedTransaction = try XCTUnwrap(plans.last)
+        XCTAssertEqual(firstTransaction.deletingRecordIDs.count, 199)
+        XCTAssertEqual(
+            Set(firstTransaction.remainingCleanupRecordNames),
+            Set(interruptedTransaction.deletingRecordIDs.map(\.recordName))
+        )
+        XCTAssertEqual(
+            firstTransaction.remainingCleanupManifest.reservations.count,
+            interruptedTransaction.deletingRecordIDs.count
+        )
+        XCTAssertEqual(interruptedTransaction.deletingRecordIDs.count, 2)
+        XCTAssertEqual(interruptedTransaction.remainingCleanupRecordNames, [])
+    }
+
+    func testAtomicCleanupCASMakesConcurrentManifestPublishConflictOrPreservePayload() throws {
+        struct FakeAtomicCloudDatabase {
+            var indexChangeTag = 0
+            var indexRevision = "revision-old"
+            var referencedPayloadNames: Set<String> = []
+            var payloadNames: Set<String> = []
+
+            mutating func apply(
+                _ plan: CloudCleanupTransactionPlan,
+                expectedChangeTag: Int,
+                referencing payloadNamesToReference: Set<String>
+            ) -> Bool {
+                guard plan.atomically,
+                      plan.savePolicy == .ifServerRecordUnchanged,
+                      indexChangeTag == expectedChangeTag,
+                      Set(plan.deletingRecordIDs.map(\.recordName))
+                        .isDisjoint(with: payloadNamesToReference) else {
+                    return false
+                }
+
+                indexRevision = plan.expectedRevision
+                referencedPayloadNames = payloadNamesToReference
+                payloadNames.subtract(plan.deletingRecordIDs.map(\.recordName))
+                indexChangeTag += 1
+                return true
+            }
+        }
+
+        let (oldPayloadIDs, deletionManifest) =
+            try makeStructuredPendingCleanupManifest(count: 1)
+        let oldPayloadID = try XCTUnwrap(oldPayloadIDs.first)
+        let emptyManifest = try PendingCleanupManifest(
+            reservations: [],
+            legacyRecordNames: []
+        )
+        let cleanupA = try XCTUnwrap(
+            try ICloudRecordBatching.cleanupTransactions(
+                deleting: [oldPayloadID],
+                deletionManifest: deletionManifest,
+                retainedManifest: emptyManifest,
+                revision: "revision-a"
+            ).first
+        )
+        let publishB = try XCTUnwrap(
+            try ICloudRecordBatching.cleanupTransactions(
+                deleting: [],
+                deletionManifest: emptyManifest,
+                retainedManifest: emptyManifest,
+                revision: "revision-b"
+            ).first
+        )
+
+        var bWins = FakeAtomicCloudDatabase()
+        bWins.referencedPayloadNames = [oldPayloadID.recordName]
+        bWins.payloadNames = [oldPayloadID.recordName]
+        let aValidatedChangeTag = bWins.indexChangeTag
+        let bValidatedChangeTag = bWins.indexChangeTag
+        XCTAssertTrue(bWins.payloadNames.contains(oldPayloadID.recordName))
+        XCTAssertTrue(
+            bWins.apply(
+                publishB,
+                expectedChangeTag: bValidatedChangeTag,
+                referencing: [oldPayloadID.recordName]
+            )
+        )
+        XCTAssertFalse(
+            bWins.apply(
+                cleanupA,
+                expectedChangeTag: aValidatedChangeTag,
+                referencing: []
+            )
+        )
+        XCTAssertTrue(bWins.payloadNames.contains(oldPayloadID.recordName))
+        XCTAssertTrue(
+            bWins.referencedPayloadNames.contains(oldPayloadID.recordName)
+        )
+
+        var aWins = FakeAtomicCloudDatabase()
+        aWins.referencedPayloadNames = [oldPayloadID.recordName]
+        aWins.payloadNames = [oldPayloadID.recordName]
+        let secondAValidatedChangeTag = aWins.indexChangeTag
+        let secondBValidatedChangeTag = aWins.indexChangeTag
+        XCTAssertTrue(aWins.payloadNames.contains(oldPayloadID.recordName))
+        XCTAssertTrue(
+            aWins.apply(
+                cleanupA,
+                expectedChangeTag: secondAValidatedChangeTag,
+                referencing: []
+            )
+        )
+        XCTAssertFalse(
+            aWins.apply(
+                publishB,
+                expectedChangeTag: secondBValidatedChangeTag,
+                referencing: [oldPayloadID.recordName]
+            )
+        )
+        XCTAssertFalse(aWins.payloadNames.contains(oldPayloadID.recordName))
+        XCTAssertFalse(
+            aWins.referencedPayloadNames.contains(oldPayloadID.recordName)
+        )
+    }
+
+    func testCleanupIndexRevisionMustRemainOwnedByCurrentPublication() throws {
+        let index = CKRecord(
+            recordType: "ProjectSnapshot",
+            recordID: CKRecord.ID(recordName: "snapshot_scope")
+        )
+        index["scope"] = "scope" as NSString
+        index["payloadRevision"] = "revision-a" as NSString
+
+        XCTAssertNoThrow(
+            try ICloudProjectStore.validateCleanupIndexRecord(
+                index,
+                expectedRevision: "revision-a"
+            )
+        )
+        XCTAssertThrowsError(
+            try ICloudProjectStore.validateCleanupIndexRecord(
+                index,
+                expectedRevision: "revision-b"
+            )
         )
     }
 
@@ -1656,6 +4218,202 @@ final class DomainModelsTests: XCTestCase {
         )
     }
 
+    func testPreviousCloudProjectPayloadMustBeReadableBeforeRewrite() throws {
+        let recordID = CKRecord.ID(recordName: "previous-project-payload")
+        let record = CKRecord(recordType: "ProjectPayload", recordID: recordID)
+
+        XCTAssertThrowsError(
+            try ICloudProjectStore.preservedProjectPayloadData(
+                from: record,
+                expectedProjectID: "project-1",
+                scope: "scope",
+                requiresCompleteMetadata: false
+            )
+        )
+
+        let assetURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("OpenWriting-previous-payload-\(UUID().uuidString).json")
+        let payload = try CloudProjectPayloadCodec.encodeEnvelope(
+            platformPayload: Data(#"{"id":"project-1"}"#.utf8),
+            platform: .iOS,
+            preserving: nil
+        )
+        try payload.write(to: assetURL)
+        record["payloadAsset"] = CKAsset(fileURL: assetURL)
+
+        let preserved = try ICloudProjectStore.preservedProjectPayloadData(
+            from: record,
+            expectedProjectID: "project-1",
+            scope: "scope",
+            requiresCompleteMetadata: false
+        )
+        XCTAssertEqual(preserved.projectID, "project-1")
+        XCTAssertEqual(preserved.data, payload)
+
+        try FileManager.default.removeItem(at: assetURL)
+        XCTAssertThrowsError(
+            try ICloudProjectStore.preservedProjectPayloadData(
+                from: record,
+                expectedProjectID: "project-1",
+                scope: "scope",
+                requiresCompleteMetadata: false
+            )
+        )
+    }
+
+    func testPreviousCloudProjectPayloadAppliesLegacyAndModernHashRules() throws {
+        let record = CKRecord(
+            recordType: "ProjectPayload",
+            recordID: CKRecord.ID(recordName: "previous-project-hash-mismatch")
+        )
+        record["projectID"] = "project-1" as NSString
+        record["scope"] = "scope" as NSString
+        let payload = try CloudProjectPayloadCodec.encodeEnvelope(
+            platformPayload: Data(#"{"id":"project-1"}"#.utf8),
+            platform: .iOS,
+            preserving: nil
+        )
+        let assetURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("OpenWriting-previous-hash-\(UUID().uuidString).json")
+        try payload.write(to: assetURL)
+        defer { try? FileManager.default.removeItem(at: assetURL) }
+        record["payloadAsset"] = CKAsset(fileURL: assetURL)
+
+        XCTAssertNoThrow(
+            try ICloudProjectStore.preservedProjectPayloadData(
+                from: record,
+                expectedProjectID: "project-1",
+                scope: "scope",
+                requiresCompleteMetadata: false
+            )
+        )
+        XCTAssertThrowsError(
+            try ICloudProjectStore.preservedProjectPayloadData(
+                from: record,
+                expectedProjectID: "project-1",
+                scope: "scope",
+                requiresCompleteMetadata: true
+            )
+        )
+
+        record["payloadHash"] = "not-the-payload-hash" as NSString
+        XCTAssertThrowsError(
+            try ICloudProjectStore.preservedProjectPayloadData(
+                from: record,
+                expectedProjectID: "project-1",
+                scope: "scope",
+                requiresCompleteMetadata: false
+            )
+        )
+
+        record["payloadHash"] = CloudProjectPayloadCodec.payloadHash(for: payload) as NSString
+        record["updatedAt"] = Date(timeIntervalSince1970: 1_772_000_000) as NSDate
+        XCTAssertNoThrow(
+            try ICloudProjectStore.preservedProjectPayloadData(
+                from: record,
+                expectedProjectID: "project-1",
+                scope: "scope",
+                requiresCompleteMetadata: true
+            )
+        )
+    }
+
+    func testPreviousCloudProjectPayloadRejectsEnvelopeProjectIDMismatch() throws {
+        let record = CKRecord(
+            recordType: "ProjectPayload",
+            recordID: CKRecord.ID(recordName: "previous-project-id-mismatch")
+        )
+        record["projectID"] = "project-1" as NSString
+        let payload = try CloudProjectPayloadCodec.encodeEnvelope(
+            platformPayload: Data(#"{"id":"project-2"}"#.utf8),
+            platform: .iOS,
+            preserving: nil
+        )
+        let assetURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("OpenWriting-previous-id-\(UUID().uuidString).json")
+        try payload.write(to: assetURL)
+        defer { try? FileManager.default.removeItem(at: assetURL) }
+        record["payloadAsset"] = CKAsset(fileURL: assetURL)
+        record["payloadHash"] = CloudProjectPayloadCodec.payloadHash(for: payload) as NSString
+
+        XCTAssertThrowsError(
+            try ICloudProjectStore.preservedProjectPayloadData(
+                from: record,
+                expectedProjectID: "project-1",
+                scope: "scope",
+                requiresCompleteMetadata: false
+            )
+        )
+    }
+
+    func testPreviousCloudProjectPayloadRejectsPresentMismatchedMetadata() throws {
+        let payload = try CloudProjectPayloadCodec.encodeEnvelope(
+            platformPayload: Data(#"{"id":"project-1"}"#.utf8),
+            platform: .iOS,
+            preserving: nil
+        )
+        let assetURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("OpenWriting-previous-metadata-\(UUID().uuidString).json")
+        try payload.write(to: assetURL)
+        defer { try? FileManager.default.removeItem(at: assetURL) }
+
+        let record = CKRecord(
+            recordType: "ProjectPayload",
+            recordID: CKRecord.ID(recordName: "previous-project-metadata-mismatch")
+        )
+        record["payloadAsset"] = CKAsset(fileURL: assetURL)
+        record["scope"] = "other-scope" as NSString
+        XCTAssertThrowsError(
+            try ICloudProjectStore.preservedProjectPayloadData(
+                from: record,
+                expectedProjectID: "project-1",
+                scope: "scope",
+                requiresCompleteMetadata: false
+            )
+        )
+
+        record["scope"] = "scope" as NSString
+        record["projectID"] = "project-2" as NSString
+        XCTAssertThrowsError(
+            try ICloudProjectStore.preservedProjectPayloadData(
+                from: record,
+                expectedProjectID: "project-1",
+                scope: "scope",
+                requiresCompleteMetadata: false
+            )
+        )
+
+        record["projectID"] = "project-1" as NSString
+        record["payloadHash"] = CloudProjectPayloadCodec.payloadHash(for: payload) as NSString
+        record["updatedAt"] = Date(timeIntervalSince1970: 1_772_000_000) as NSDate
+        XCTAssertNoThrow(
+            try ICloudProjectStore.preservedProjectPayloadData(
+                from: record,
+                expectedProjectID: "project-1",
+                scope: "scope",
+                requiresCompleteMetadata: true
+            )
+        )
+
+        let wrongTypeRecord = CKRecord(
+            recordType: "ChapterPayload",
+            recordID: CKRecord.ID(recordName: "previous-project-wrong-type")
+        )
+        wrongTypeRecord["payloadAsset"] = CKAsset(fileURL: assetURL)
+        wrongTypeRecord["scope"] = "scope" as NSString
+        wrongTypeRecord["projectID"] = "project-1" as NSString
+        wrongTypeRecord["payloadHash"] =
+            CloudProjectPayloadCodec.payloadHash(for: payload) as NSString
+        XCTAssertThrowsError(
+            try ICloudProjectStore.preservedProjectPayloadData(
+                from: wrongTypeRecord,
+                expectedProjectID: "project-1",
+                scope: "scope",
+                requiresCompleteMetadata: true
+            )
+        )
+    }
+
     func testContentAddressedMetadataUsesCanonicalMillisecondTimestamp() throws {
         let original = Date(timeIntervalSince1970: 1_710_000_000.123_456)
         let encoded = try CloudProjectJSONCoding.makeEncoder().encode(original)
@@ -1728,6 +4486,16 @@ final class DomainModelsTests: XCTestCase {
         record["chapterIDs"] = [""] as NSArray
         record["chapterRecordNames"] = [""] as NSArray
         XCTAssertFalse(invalidPair.matchesMetadata(in: record))
+
+        let emptyTarget = ContentAddressedPayloadTarget(
+            recordID: recordID,
+            payloadHash: "hash",
+            chapterIDs: [],
+            chapterRecordNames: []
+        )
+        record["chapterIDs"] = [NSNumber(value: 1)] as NSArray
+        record["chapterRecordNames"] = [NSNumber(value: 2)] as NSArray
+        XCTAssertFalse(emptyTarget.matchesMetadata(in: record))
     }
 
     @MainActor
@@ -1880,7 +4648,7 @@ final class DomainModelsTests: XCTestCase {
         var localShared = makeProject(
             id: "shared",
             title: "共享项目",
-            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+            updatedAt: Date(timeIntervalSince1970: 1_772_020_000)
         )
         var localChapter = ChapterDraft(
             id: "chapter-1",
@@ -1913,7 +4681,7 @@ final class DomainModelsTests: XCTestCase {
             updatedAt: Date(timeIntervalSince1970: 1_772_015_000)
         )
 
-        let merged = AppState.mergeCloudProjects(local: [localShared, localOnly], remote: [remoteShared])
+        let merged = CloudProjectMergePolicy.mergeCloudProjects(local: [localShared, localOnly], remote: [remoteShared])
 
         XCTAssertTrue(merged.contains { $0.id == localOnly.id })
         let shared = merged.first { $0.id == "shared" }
@@ -1942,7 +4710,7 @@ final class DomainModelsTests: XCTestCase {
         var remote = makeProject(
             id: "shared",
             title: "共享项目",
-            updatedAt: Date(timeIntervalSince1970: 1_772_010_000)
+            updatedAt: Date(timeIntervalSince1970: 1_772_020_000)
         )
         var remoteChapter = ChapterDraft(
             id: "chapter-1",
@@ -1952,12 +4720,111 @@ final class DomainModelsTests: XCTestCase {
         )
         remoteChapter.savedAtDate = Date(timeIntervalSince1970: 1_772_020_000)
         remote.chapterDrafts = [remoteChapter]
+        remote.chapterCatalog = [ChapterDraftMetadata(chapterDraft: remoteChapter)]
 
-        let merged = AppState.mergeCloudProjects(local: [local], remote: [remote])
+        let merged = CloudProjectMergePolicy.mergeCloudProjects(local: [local], remote: [remote])
 
         XCTAssertEqual(merged.first?.chapterDrafts.first?.chapterTitle, "远端章节")
         XCTAssertEqual(merged.first?.chapterCatalog.first?.chapterTitle, "远端章节")
         XCTAssertEqual(merged.first?.updatedAtDate, remoteChapter.savedAtDate)
+    }
+
+    func testCloudMergeDoesNotResurrectNestedValuesFromOlderRemoteProject() throws {
+        let newerTimestamp = Date(timeIntervalSince1970: 1_772_100_200)
+        let olderTimestamp = Date(timeIntervalSince1970: 1_772_100_100)
+        var local = makeProject(
+            id: "nested-deletion-pull",
+            title: "已删除子实体",
+            updatedAt: newerTimestamp
+        )
+        local.chapterDrafts = []
+        local.chapterCatalog = []
+        local.referenceDocuments = []
+        local.foreshadowList = ForeshadowList()
+        local.plotThreadList = PlotThreadList()
+        local.persistedMemoryBuckets = nil
+        local.qualityReviewReports = []
+        local.persistedAntiPatterns = nil
+
+        var remote = makeProject(
+            id: local.id,
+            title: local.title,
+            updatedAt: olderTimestamp
+        )
+        var chapter = ChapterDraft(
+            id: "deleted-chapter",
+            chapterNumber: 1,
+            chapterTitle: "已删除章节",
+            content: "旧端正文"
+        )
+        chapter.savedAtDate = olderTimestamp
+        remote.chapterDrafts = [chapter]
+        remote.chapterCatalog = [ChapterDraftMetadata(chapterDraft: chapter)]
+        remote.referenceDocuments = [
+            ReferenceDocument(
+                id: "deleted-reference",
+                title: "已删除资料",
+                content: "旧端资料",
+                importedAt: "2026-02-26T00:00:00Z"
+            )
+        ]
+        remote.foreshadowList = ForeshadowList(entries: [
+            ForeshadowEntry(
+                id: "deleted-foreshadow",
+                title: "已删除伏笔",
+                firstChapter: 1,
+                createdAt: olderTimestamp,
+                updatedAt: olderTimestamp
+            )
+        ])
+        remote.plotThreadList = PlotThreadList(threads: [
+            PlotThread(
+                id: "deleted-thread",
+                title: "已删除线程",
+                createdAt: olderTimestamp,
+                updatedAt: olderTimestamp
+            )
+        ])
+        var memory = MemoryBuckets.empty
+        memory.characterState = [
+            MemoryItem(
+                id: "deleted-memory",
+                category: .characterState,
+                subject: "主角",
+                field: "位置",
+                value: "旧城",
+                sourceChapter: 1,
+                updatedAt: olderTimestamp
+            )
+        ]
+        remote.persistedMemoryBuckets = memory
+        remote.qualityReviewReports = [
+            QualityReviewReport(
+                chapterNumber: 1,
+                chapterTitle: "已删除审查",
+                dimensionResults: [],
+                overallSummary: "旧端审查记录"
+            )
+        ]
+        remote.persistedAntiPatterns = ["已删除反模式"]
+
+        let merged = try XCTUnwrap(
+            CloudProjectMergePolicy.mergeCloudProjectState(
+                local: [local],
+                localDeletedProjects: [],
+                remote: [remote],
+                remoteDeletedProjects: []
+            ).projects.first
+        )
+
+        XCTAssertTrue(merged.chapterDrafts.isEmpty)
+        XCTAssertTrue(merged.chapterCatalog.isEmpty)
+        XCTAssertTrue(merged.referenceDocuments.isEmpty)
+        XCTAssertTrue(merged.foreshadowList.entries.isEmpty)
+        XCTAssertTrue(merged.plotThreadList.threads.isEmpty)
+        XCTAssertNil(merged.persistedMemoryBuckets)
+        XCTAssertTrue(merged.qualityReviewReports.isEmpty)
+        XCTAssertNil(merged.persistedAntiPatterns)
     }
 
     @MainActor
@@ -1974,7 +4841,7 @@ final class DomainModelsTests: XCTestCase {
             deletedAt: deletionTime
         )
 
-        let deletionWins = AppState.mergeCloudProjectState(
+        let deletionWins = CloudProjectMergePolicy.mergeCloudProjectState(
             local: [deletedProject],
             localDeletedProjects: [],
             remote: [],
@@ -1988,7 +4855,7 @@ final class DomainModelsTests: XCTestCase {
             title: "删除后恢复编辑",
             updatedAt: Date(timeIntervalSince1970: 1_710_000_000.127)
         )
-        let editWins = AppState.mergeCloudProjectState(
+        let editWins = CloudProjectMergePolicy.mergeCloudProjectState(
             local: [newerProject],
             localDeletedProjects: [],
             remote: [],
@@ -1996,6 +4863,391 @@ final class DomainModelsTests: XCTestCase {
         )
         XCTAssertEqual(editWins.projects.map(\.id), [newerProject.id])
         XCTAssertTrue(editWins.deletedProjects.isEmpty)
+    }
+
+    func testCloudSelectionUsesOnlySurvivingProjectsInPriorityOrder() {
+        let survivingIDs: Set<NovelProject.ID> = [
+            "selected",
+            "local-active",
+            "remote-active"
+        ]
+
+        XCTAssertEqual(
+            CloudProjectMergePolicy.preservedCloudSelection(
+                selectedProjectID: "selected",
+                activeProjectID: "local-active",
+                snapshotActiveProjectID: "remote-active",
+                projectIDs: survivingIDs
+            ),
+            "selected"
+        )
+        XCTAssertEqual(
+            CloudProjectMergePolicy.preservedCloudSelection(
+                selectedProjectID: "deleted",
+                activeProjectID: "local-active",
+                snapshotActiveProjectID: "remote-active",
+                projectIDs: survivingIDs
+            ),
+            "local-active"
+        )
+        XCTAssertEqual(
+            CloudProjectMergePolicy.preservedCloudSelection(
+                selectedProjectID: "deleted",
+                activeProjectID: "also-deleted",
+                snapshotActiveProjectID: "remote-active",
+                projectIDs: survivingIDs
+            ),
+            "remote-active"
+        )
+        XCTAssertNil(
+            CloudProjectMergePolicy.preservedCloudSelection(
+                selectedProjectID: "deleted",
+                activeProjectID: "also-deleted",
+                snapshotActiveProjectID: "missing",
+                projectIDs: survivingIDs
+            )
+        )
+    }
+
+    func testCloudProjectMergePolicyRunsFromDetachedTask() async {
+        let project = makeProject(
+            id: "detached-merge",
+            title: "后台合并",
+            updatedAt: Date(timeIntervalSince1970: 1_710_000_000.125)
+        )
+
+        let merged = await Task.detached {
+            CloudProjectMergePolicy.mergeCloudProjectState(
+                local: [project],
+                localDeletedProjects: [],
+                remote: [],
+                remoteDeletedProjects: []
+            )
+        }.value
+
+        XCTAssertEqual(merged.projects.map(\.id), [project.id])
+        XCTAssertTrue(merged.deletedProjects.isEmpty)
+    }
+
+    @MainActor
+    func testFreshCloudStoreWriteMergesRemoteStateTombstonesAndSelection() throws {
+        let localShared = makeProject(
+            id: "shared",
+            title: "本机旧标题",
+            updatedAt: Date(timeIntervalSince1970: 200)
+        )
+        let remoteShared = makeProject(
+            id: "shared",
+            title: "远端新标题",
+            updatedAt: Date(timeIntervalSince1970: 300)
+        )
+        let localOnly = makeProject(
+            id: "local-only",
+            title: "本机独有",
+            updatedAt: Date(timeIntervalSince1970: 210)
+        )
+        let remoteOnly = makeProject(
+            id: "remote-only",
+            title: "远端独有",
+            updatedAt: Date(timeIntervalSince1970: 220)
+        )
+        let deletedByRemote = makeProject(
+            id: "deleted-by-remote",
+            title: "远端已删除",
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        let deletedByLocal = makeProject(
+            id: "deleted-by-local",
+            title: "本机已删除",
+            updatedAt: Date(timeIntervalSince1970: 110)
+        )
+        let localDeletion = ProjectDeletionTombstone(
+            projectID: deletedByLocal.id,
+            deletedAt: Date(timeIntervalSince1970: 180)
+        )
+        let remoteDeletion = ProjectDeletionTombstone(
+            projectID: deletedByRemote.id,
+            deletedAt: Date(timeIntervalSince1970: 170)
+        )
+        let local = AccountProjectSnapshot(
+            activeProjectID: deletedByRemote.id,
+            recentProjects: [localShared, localOnly, deletedByRemote],
+            deletedProjects: [localDeletion],
+            updatedAt: Date(timeIntervalSince1970: 250)
+        )
+        let remote = AccountProjectSnapshot(
+            activeProjectID: remoteOnly.id,
+            recentProjects: [remoteShared, remoteOnly, deletedByLocal],
+            deletedProjects: [remoteDeletion],
+            updatedAt: Date(timeIntervalSince1970: 350)
+        )
+
+        let merged = ICloudProjectStore.mergedSnapshotForFreshWrite(
+            local: local,
+            remote: remote
+        )
+
+        XCTAssertEqual(merged.updatedAt, remote.updatedAt)
+        XCTAssertEqual(merged.activeProjectID, remoteOnly.id)
+        XCTAssertEqual(
+            Set(merged.recentProjects.map(\.id)),
+            Set(["shared", "local-only", "remote-only"])
+        )
+        XCTAssertEqual(
+            merged.recentProjects.first { $0.id == "shared" }?.title,
+            remoteShared.title
+        )
+        XCTAssertEqual(
+            Set(merged.deletedProjects.map(\.projectID)),
+            Set([deletedByLocal.id, deletedByRemote.id])
+        )
+        XCTAssertTrue(
+            merged.activeProjectID.map {
+                merged.recentProjects.map(\.id).contains($0)
+            } ?? true
+        )
+    }
+
+    @MainActor
+    func testFreshCloudStoreWriteNormalizesLocalDeletionWithoutRemoteIndex() {
+        let project = makeProject(
+            id: "locally-deleted",
+            title: "本机删除",
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        let tombstone = ProjectDeletionTombstone(
+            projectID: project.id,
+            deletedAt: Date(timeIntervalSince1970: 101)
+        )
+        let local = AccountProjectSnapshot(
+            activeProjectID: project.id,
+            recentProjects: [project],
+            deletedProjects: [tombstone],
+            updatedAt: Date(timeIntervalSince1970: 102)
+        )
+
+        let merged = ICloudProjectStore.mergedSnapshotForFreshWrite(
+            local: local,
+            remote: nil
+        )
+
+        XCTAssertTrue(merged.recentProjects.isEmpty)
+        XCTAssertEqual(merged.deletedProjects, [tombstone])
+        XCTAssertNil(merged.activeProjectID)
+        XCTAssertEqual(merged.updatedAt, local.updatedAt)
+    }
+
+    func testFreshCloudStoreWriteDoesNotResurrectDeletedNestedValues() {
+        let sharedTimestamp = Date(timeIntervalSince1970: 1_772_500_000.125)
+        var remoteProject = makeProject(
+            id: "nested-deletion",
+            title: "子实体删除",
+            updatedAt: sharedTimestamp
+        )
+        remoteProject.referenceDocuments = [
+            ReferenceDocument(
+                id: "deleted-document",
+                title: "待删除资料",
+                content: "远端旧内容",
+                importedAt: "2026-07-29T00:00:00Z"
+            )
+        ]
+        remoteProject.persistedAntiPatterns = ["已删除规则"]
+
+        var localProject = remoteProject
+        localProject.referenceDocuments = []
+        localProject.persistedAntiPatterns = []
+        let local = AccountProjectSnapshot(
+            activeProjectID: localProject.id,
+            recentProjects: [localProject],
+            updatedAt: sharedTimestamp
+        )
+        let remote = AccountProjectSnapshot(
+            activeProjectID: remoteProject.id,
+            recentProjects: [remoteProject],
+            updatedAt: sharedTimestamp
+        )
+
+        let merged = ICloudProjectStore.mergedSnapshotForFreshWrite(
+            local: local,
+            remote: remote
+        )
+
+        XCTAssertTrue(merged.recentProjects[0].referenceDocuments.isEmpty)
+        XCTAssertEqual(merged.recentProjects[0].persistedAntiPatterns, [])
+        XCTAssertNoThrow(
+            try ICloudProjectStore.validateSnapshotForWrite(merged)
+        )
+    }
+
+    func testFreshCloudStoreWriteRejectsEqualTimestampLocalIncompleteChapterManifest() {
+        let sharedTimestamp = Date(timeIntervalSince1970: 1_772_500_100.125)
+        var remoteProject = makeProject(
+            id: "incomplete-local-manifest",
+            title: "章节清单完整性",
+            updatedAt: sharedTimestamp
+        )
+        let firstChapter = ChapterDraft(
+            id: "chapter-1",
+            chapterNumber: 1,
+            chapterTitle: "第一章",
+            content: "第一章正文"
+        )
+        let secondChapter = ChapterDraft(
+            id: "chapter-2",
+            chapterNumber: 2,
+            chapterTitle: "第二章",
+            content: "第二章正文"
+        )
+        remoteProject.chapterDrafts = [firstChapter, secondChapter]
+        remoteProject.chapterCatalog = [
+            ChapterDraftMetadata(chapterDraft: firstChapter),
+            ChapterDraftMetadata(chapterDraft: secondChapter)
+        ]
+
+        var localProject = remoteProject
+        localProject.chapterDrafts = [firstChapter]
+        let merged = ICloudProjectStore.mergedSnapshotForFreshWrite(
+            local: AccountProjectSnapshot(
+                activeProjectID: localProject.id,
+                recentProjects: [localProject],
+                updatedAt: sharedTimestamp
+            ),
+            remote: AccountProjectSnapshot(
+                activeProjectID: remoteProject.id,
+                recentProjects: [remoteProject],
+                updatedAt: sharedTimestamp
+            )
+        )
+
+        XCTAssertEqual(merged.recentProjects[0].chapterDrafts.map(\.id), ["chapter-1"])
+        XCTAssertThrowsError(
+            try ICloudProjectStore.validateSnapshotForWrite(merged)
+        ) { error in
+            XCTAssertTrue(
+                error.localizedDescription.contains(
+                    "chapterCatalog 引用了不存在的 chapterDraft"
+                )
+            )
+        }
+    }
+
+    func testCloudSnapshotWriteRejectsDuplicateChapterDraftIDsRegardlessOfPayload() {
+        let timestamp = Date(timeIntervalSince1970: 1_772_500_200.125)
+        let original = ChapterDraft(
+            id: "duplicate-chapter",
+            chapterNumber: 1,
+            chapterTitle: "第一章",
+            content: "相同正文"
+        )
+        var differentPayload = ChapterDraft(
+            id: "duplicate-chapter",
+            chapterNumber: 2,
+            chapterTitle: "第二章",
+            content: "不同正文"
+        )
+        differentPayload.savedAtDate = timestamp.addingTimeInterval(1)
+
+        for duplicate in [original, differentPayload] {
+            var project = makeProject(
+                id: "duplicate-chapter-project",
+                title: "重复章节",
+                updatedAt: timestamp
+            )
+            project.chapterDrafts = [original, duplicate]
+            project.chapterCatalog = [
+                ChapterDraftMetadata(chapterDraft: original)
+            ]
+            let snapshot = AccountProjectSnapshot(
+                activeProjectID: project.id,
+                recentProjects: [project],
+                updatedAt: timestamp
+            )
+
+            XCTAssertThrowsError(
+                try ICloudProjectStore.validateSnapshotForWrite(snapshot)
+            ) { error in
+                XCTAssertTrue(
+                    error.localizedDescription.contains(
+                        "重复的 chapterDraft ID"
+                    )
+                )
+            }
+        }
+    }
+
+    func testCloudSnapshotWriteRejectsDuplicateProjectAndChapterCatalogIDs() {
+        let timestamp = Date(timeIntervalSince1970: 1_772_500_300.125)
+        let chapter = ChapterDraft(
+            id: "chapter-1",
+            chapterNumber: 1,
+            chapterTitle: "第一章",
+            content: "正文"
+        )
+        var project = makeProject(
+            id: "duplicate-project",
+            title: "重复项目",
+            updatedAt: timestamp
+        )
+        project.chapterDrafts = [chapter]
+        let metadata = ChapterDraftMetadata(chapterDraft: chapter)
+        project.chapterCatalog = [metadata, metadata]
+
+        XCTAssertThrowsError(
+            try ICloudProjectStore.validateSnapshotForWrite(
+                AccountProjectSnapshot(
+                    activeProjectID: project.id,
+                    recentProjects: [project],
+                    updatedAt: timestamp
+                )
+            )
+        )
+
+        project.chapterCatalog = [metadata]
+        XCTAssertThrowsError(
+            try ICloudProjectStore.validateSnapshotForWrite(
+                AccountProjectSnapshot(
+                    activeProjectID: project.id,
+                    recentProjects: [project, project],
+                    updatedAt: timestamp
+                )
+            )
+        )
+    }
+
+    @MainActor
+    func testCloudStoreLoadAndSavePropagateCancellationBeforeConfiguration() async {
+        let store = ICloudProjectStore(container: nil)
+        let loadTask = Task {
+            try? await Task.sleep(for: .seconds(10))
+            return try await store.loadSnapshot(for: "cancelled-load")
+        }
+        loadTask.cancel()
+
+        do {
+            _ = try await loadTask.value
+            XCTFail("Cancelled CloudKit load should throw CancellationError.")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+
+        let snapshot = AccountProjectSnapshot(
+            activeProjectID: nil,
+            recentProjects: [],
+            updatedAt: Date(timeIntervalSince1970: 1)
+        )
+        let saveTask = Task {
+            try? await Task.sleep(for: .seconds(10))
+            try await store.saveSnapshot(snapshot, for: "cancelled-save")
+        }
+        saveTask.cancel()
+
+        do {
+            try await saveTask.value
+            XCTFail("Cancelled CloudKit save should throw CancellationError.")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
     }
 
     @MainActor
@@ -2020,7 +5272,7 @@ final class DomainModelsTests: XCTestCase {
         var remote = makeProject(
             id: local.id,
             title: "字段合并",
-            updatedAt: Date(timeIntervalSince1970: 1_710_000_020)
+            updatedAt: Date(timeIntervalSince1970: 1_710_000_010)
         )
         remote.structureNotes = "远端新增的章节骨架"
         var remoteMemory = GlobalMemorySnapshot.empty
@@ -2035,7 +5287,7 @@ final class DomainModelsTests: XCTestCase {
         remote.qualityReviewReports = [remoteReport]
 
         let merged = try XCTUnwrap(
-            AppState.mergeCloudProjectState(
+            CloudProjectMergePolicy.mergeCloudProjectState(
                 local: [local],
                 localDeletedProjects: [],
                 remote: [remote],
@@ -2070,12 +5322,12 @@ final class DomainModelsTests: XCTestCase {
         var remote = makeProject(
             id: local.id,
             title: "大纲冲突",
-            updatedAt: Date(timeIntervalSince1970: 1_710_000_020)
+            updatedAt: Date(timeIntervalSince1970: 1_710_000_010)
         )
         remote.outlineText = "版本乙：主角离开城池"
 
         let firstMerge = try XCTUnwrap(
-            AppState.mergeCloudProjectState(
+            CloudProjectMergePolicy.mergeCloudProjectState(
                 local: [local],
                 localDeletedProjects: [],
                 remote: [remote],
@@ -2087,7 +5339,7 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertTrue(firstMerge.outlineText.contains(remote.outlineText))
 
         let repeatedMerge = try XCTUnwrap(
-            AppState.mergeCloudProjectState(
+            CloudProjectMergePolicy.mergeCloudProjectState(
                 local: [firstMerge],
                 localDeletedProjects: [],
                 remote: [local],
@@ -2262,10 +5514,10 @@ final class DomainModelsTests: XCTestCase {
         remote.chapterDrafts = [remoteChapter]
 
         let localRemote = try XCTUnwrap(
-            AppState.mergeCloudProjects(local: [local], remote: [remote]).first
+            CloudProjectMergePolicy.mergeCloudProjects(local: [local], remote: [remote]).first
         )
         let remoteLocal = try XCTUnwrap(
-            AppState.mergeCloudProjects(local: [remote], remote: [local]).first
+            CloudProjectMergePolicy.mergeCloudProjects(local: [remote], remote: [local]).first
         )
         let encoder = CloudProjectJSONCoding.makeEncoder()
 
@@ -2274,10 +5526,10 @@ final class DomainModelsTests: XCTestCase {
             try encoder.encode(remoteLocal)
         )
         let absorbedLocal = try XCTUnwrap(
-            AppState.mergeCloudProjects(local: [localRemote], remote: [local]).first
+            CloudProjectMergePolicy.mergeCloudProjects(local: [localRemote], remote: [local]).first
         )
         let absorbedRemote = try XCTUnwrap(
-            AppState.mergeCloudProjects(local: [localRemote], remote: [remote]).first
+            CloudProjectMergePolicy.mergeCloudProjects(local: [localRemote], remote: [remote]).first
         )
         XCTAssertEqual(
             try encoder.encode(localRemote),
@@ -2335,7 +5587,7 @@ final class DomainModelsTests: XCTestCase {
             foreshadowingNotes: "旧船票"
         )
         let configuredDate = Date(timeIntervalSince1970: 1_710_200_000)
-        let defaultDate = configuredDate.addingTimeInterval(100)
+        let defaultDate = configuredDate
         var configured = makeProject(
             id: "default-aware-fields",
             title: "默认值保护",
@@ -2353,10 +5605,10 @@ final class DomainModelsTests: XCTestCase {
         defaults.genreTemplateId = " \n "
 
         let configuredDefaults = try XCTUnwrap(
-            AppState.mergeCloudProjects(local: [configured], remote: [defaults]).first
+            CloudProjectMergePolicy.mergeCloudProjects(local: [configured], remote: [defaults]).first
         )
         let defaultsConfigured = try XCTUnwrap(
-            AppState.mergeCloudProjects(local: [defaults], remote: [configured]).first
+            CloudProjectMergePolicy.mergeCloudProjects(local: [defaults], remote: [configured]).first
         )
         let encoder = CloudProjectJSONCoding.makeEncoder()
 
@@ -2369,13 +5621,13 @@ final class DomainModelsTests: XCTestCase {
         )
 
         let absorbedConfigured = try XCTUnwrap(
-            AppState.mergeCloudProjects(
+            CloudProjectMergePolicy.mergeCloudProjects(
                 local: [configuredDefaults],
                 remote: [configured]
             ).first
         )
         let absorbedDefaults = try XCTUnwrap(
-            AppState.mergeCloudProjects(
+            CloudProjectMergePolicy.mergeCloudProjects(
                 local: [configuredDefaults],
                 remote: [defaults]
             ).first
@@ -2440,10 +5692,10 @@ final class DomainModelsTests: XCTestCase {
         second.genreTemplateId = "template-omega"
 
         let firstSecond = try XCTUnwrap(
-            AppState.mergeCloudProjects(local: [first], remote: [second]).first
+            CloudProjectMergePolicy.mergeCloudProjects(local: [first], remote: [second]).first
         )
         let secondFirst = try XCTUnwrap(
-            AppState.mergeCloudProjects(local: [second], remote: [first]).first
+            CloudProjectMergePolicy.mergeCloudProjects(local: [second], remote: [first]).first
         )
         let encoder = CloudProjectJSONCoding.makeEncoder()
 
@@ -2465,7 +5717,7 @@ final class DomainModelsTests: XCTestCase {
 
         for operand in [first, second] {
             let absorbed = try XCTUnwrap(
-                AppState.mergeCloudProjects(
+                CloudProjectMergePolicy.mergeCloudProjects(
                     local: [firstSecond],
                     remote: [operand]
                 ).first
@@ -2608,10 +5860,10 @@ final class DomainModelsTests: XCTestCase {
         )
 
         let localRemote = try XCTUnwrap(
-            AppState.mergeCloudProjects(local: [local], remote: [remote]).first
+            CloudProjectMergePolicy.mergeCloudProjects(local: [local], remote: [remote]).first
         )
         let remoteLocal = try XCTUnwrap(
-            AppState.mergeCloudProjects(local: [remote], remote: [local]).first
+            CloudProjectMergePolicy.mergeCloudProjects(local: [remote], remote: [local]).first
         )
         let encoder = CloudProjectJSONCoding.makeEncoder()
 
@@ -2658,7 +5910,7 @@ final class DomainModelsTests: XCTestCase {
 
         for operand in [local, remote] {
             let absorbed = try XCTUnwrap(
-                AppState.mergeCloudProjects(
+                CloudProjectMergePolicy.mergeCloudProjects(
                     local: [localRemote],
                     remote: [operand]
                 ).first
@@ -2698,10 +5950,10 @@ final class DomainModelsTests: XCTestCase {
         second.qualityReviewReports = [try report(summary: "版本乙", score: 89)]
 
         let firstSecond = try XCTUnwrap(
-            AppState.mergeCloudProjects(local: [first], remote: [second]).first
+            CloudProjectMergePolicy.mergeCloudProjects(local: [first], remote: [second]).first
         )
         let secondFirst = try XCTUnwrap(
-            AppState.mergeCloudProjects(local: [second], remote: [first]).first
+            CloudProjectMergePolicy.mergeCloudProjects(local: [second], remote: [first]).first
         )
         let encoder = CloudProjectJSONCoding.makeEncoder()
         XCTAssertEqual(
@@ -2711,7 +5963,7 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(firstSecond.qualityReviewReports.count, 1)
 
         let projectA = makeProject(id: "project-a", title: "同名", updatedAt: timestamp)
-        let ordered = AppState.mergeCloudProjects(
+        let ordered = CloudProjectMergePolicy.mergeCloudProjects(
             local: [first],
             remote: [projectA]
         )
@@ -2719,7 +5971,7 @@ final class DomainModelsTests: XCTestCase {
     }
 
     @MainActor
-    func testCloudMergePreservesOlderDraftAndRuntimeWhenNewerBaseIsEmpty() throws {
+    func testCloudMergeDoesNotRestoreOlderDraftAndRuntimeWhenNewerBaseIsEmpty() throws {
         var newer = makeProject(
             id: "nonloss-base",
             title: "非丢失合并",
@@ -2746,15 +5998,12 @@ final class DomainModelsTests: XCTestCase {
         )
 
         let merged = try XCTUnwrap(
-            AppState.mergeCloudProjects(local: [newer], remote: [older]).first
+            CloudProjectMergePolicy.mergeCloudProjects(local: [newer], remote: [older]).first
         )
 
-        XCTAssertEqual(merged.draftText, older.draftText)
-        XCTAssertNotNil(merged.persistedLongformRuntimeState)
-        XCTAssertEqual(
-            merged.persistedLastReviewResult?.overallSummary,
-            "需要保留的审查"
-        )
+        XCTAssertTrue(merged.draftText.isEmpty)
+        XCTAssertNil(merged.persistedLongformRuntimeState)
+        XCTAssertNil(merged.persistedLastReviewResult)
     }
 
     @MainActor
@@ -2822,12 +6071,12 @@ final class DomainModelsTests: XCTestCase {
         )
 
         let firstSecond = try XCTUnwrap(
-            AppState.mergeCloudProjects(local: [first], remote: [second])
+            CloudProjectMergePolicy.mergeCloudProjects(local: [first], remote: [second])
                 .first?
                 .persistedLongformRuntimeState
         )
         let secondFirst = try XCTUnwrap(
-            AppState.mergeCloudProjects(local: [second], remote: [first])
+            CloudProjectMergePolicy.mergeCloudProjects(local: [second], remote: [first])
                 .first?
                 .persistedLongformRuntimeState
         )
@@ -2857,7 +6106,7 @@ final class DomainModelsTests: XCTestCase {
         )
         second.outlineText = "重复项版本乙"
 
-        let merged = AppState.mergeCloudProjects(
+        let merged = CloudProjectMergePolicy.mergeCloudProjects(
             local: [first, second],
             remote: []
         )
@@ -2951,6 +6200,100 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertTrue(appState.pendingCloudSynchronizationForcePull)
     }
 
+    func testOlderTopLevelCloudSnapshotReconcilesRemoteOnlyProjectAndPersists() async throws {
+        let store = makeIsolatedProjectStore()
+        let account = AppleAccountProfile(
+            userID: "older-cloud-snapshot-account",
+            email: "",
+            fullName: ""
+        )
+        let appState = AppState(
+            userDefaults: makeIsolatedUserDefaults(),
+            projectStore: store,
+            credentialStore: makeCredentialStore()
+        )
+        let localSnapshotTimestamp = 1_772_200_300.0
+        let localProject = makeProject(
+            id: "local-project",
+            title: "本机项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_200_200)
+        )
+        let remoteOnlyProject = makeProject(
+            id: "remote-only-project",
+            title: "远端独有项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_200_100)
+        )
+        appState.activeAccount = account
+        appState.isHydratingAccountScopedData = true
+        appState.recentProjects = [localProject]
+        appState.activeProjectID = localProject.id
+        appState.selectedProjectID = localProject.id
+        appState.isHydratingAccountScopedData = false
+        appState.currentProjectSnapshotTimestamp = localSnapshotTimestamp
+
+        let didPersist = await appState.reconcileAndPersistCloudSnapshot(
+            AccountProjectSnapshot(
+                activeProjectID: remoteOnlyProject.id,
+                recentProjects: [remoteOnlyProject],
+                updatedAt: Date(timeIntervalSince1970: 1_772_200_000)
+            )
+        )
+
+        XCTAssertTrue(didPersist)
+        XCTAssertEqual(
+            Set(appState.recentProjects.map(\.id)),
+            Set([localProject.id, remoteOnlyProject.id])
+        )
+        XCTAssertEqual(
+            appState.currentProjectSnapshotTimestamp,
+            localSnapshotTimestamp
+        )
+        let persistedProjects = try XCTUnwrap(
+            store.loadProjects(for: account.userID)
+        )
+        XCTAssertEqual(
+            Set(persistedProjects.map(\.id)),
+            Set([localProject.id, remoteOnlyProject.id])
+        )
+    }
+
+    func testCloudSnapshotReconciliationReturnsFailureWhenLocalPersistenceFails() async {
+        let store = makeIsolatedProjectStore(
+            testHooks: .init(beforeAtomicWrite: { url in
+                if url.lastPathComponent == "index.json" {
+                    throw InjectedPersistenceFailure()
+                }
+            })
+        )
+        let appState = AppState(
+            userDefaults: makeIsolatedUserDefaults(),
+            projectStore: store,
+            credentialStore: makeCredentialStore()
+        )
+        appState.activeAccount = AppleAccountProfile(
+            userID: "cloud-pull-save-failure",
+            email: "",
+            fullName: ""
+        )
+        let remoteProject = makeProject(
+            id: "remote-project",
+            title: "远端项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_300_100)
+        )
+
+        let didPersist = await appState.reconcileAndPersistCloudSnapshot(
+            AccountProjectSnapshot(
+                activeProjectID: remoteProject.id,
+                recentProjects: [remoteProject],
+                updatedAt: Date(timeIntervalSince1970: 1_772_300_100)
+            )
+        )
+
+        XCTAssertFalse(didPersist)
+        XCTAssertNotNil(appState.lastProjectPersistenceErrorMessage)
+        XCTAssertEqual(appState.recentProjects.map(\.id), [remoteProject.id])
+    }
+
     private func makeIsolatedUserDefaults() -> UserDefaults {
         let suiteName = "OpenWritingTests.\(UUID().uuidString)"
         let userDefaults = UserDefaults(suiteName: suiteName)!
@@ -3023,6 +6366,29 @@ final class DomainModelsTests: XCTestCase {
         )
         project.updatedAtDate = updatedAt
         return project
+    }
+
+    private func makeLongformPrewriteProject() -> NovelProject {
+        NovelProject(
+            id: "prewrite-semantic-project",
+            title: "雾港谜案",
+            genre: "悬疑",
+            summary: "林岚调查雾港潮汐密钥失窃案。",
+            storyLength: .long,
+            updatedAt: "2026-07-28T12:00:00Z",
+            currentChapterTitle: "钟楼截击",
+            currentChapterNumber: 1,
+            writtenChapters: 0,
+            chapterFocus: "林岚将在雾港钟楼截住代号 XJ-9 的巡夜人并夺回潮汐密钥。",
+            draftText: "",
+            outlineText: "林岚追查雾港潮汐密钥与 XJ-9 巡夜人的失踪案。",
+            volumePlanNotes: "雾港谜案第一卷围绕潮汐密钥展开，卷末由林岚揭穿 XJ-9 的伪装并打开外海危机。",
+            referenceContextText: "",
+            specialRequirements: "",
+            wordTargetText: "",
+            continuityNotes: "",
+            referenceDocuments: []
+        )
     }
 
     // MARK: - Quality Review Schema Tests
@@ -3524,6 +6890,135 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertTrue(ContextRanker.extractEntities(from: "主角进入\(entity)。").contains(entity))
     }
 
+    func testContextRankerExtractsAndRanksMixedScriptEntitiesCaseInsensitively() {
+        var project = NovelProject(
+            title: "混合实体排序",
+            genre: "科幻",
+            summary: "追查编号线索。"
+        )
+        project.chapterFocus = "追踪 XJ-9 并前往 A区7号。"
+        let unrelated = ContextSection(
+            label: "无关编号",
+            content: "QZ-4 被转移到 B区8号。",
+            category: .manualReference
+        )
+        let matching = ContextSection(
+            label: "命中编号",
+            content: "xj-9 最后出现在 A区7号。",
+            category: .manualReference
+        )
+
+        let entities = ContextRanker.extractEntities(from: project.chapterFocus)
+        let ranked = ContextRanker.rank([unrelated, matching], project: project)
+
+        XCTAssertTrue(entities.contains("XJ-9"))
+        XCTAssertTrue(entities.contains("A区7号"))
+        XCTAssertEqual(ranked.map(\.label), ["命中编号", "无关编号"])
+    }
+
+    func testContextRankerPreservesInputOrderWhenScoresAreEqual() {
+        let project = NovelProject(
+            title: "稳定排序",
+            genre: "悬疑",
+            summary: "验证相同分数。"
+        )
+        let sections = ["第三", "第一", "第二"].map {
+            ContextSection(label: $0, content: "neutral", category: .other)
+        }
+
+        let ranked = ContextRanker.rank(sections, project: project)
+
+        XCTAssertEqual(ranked.map(\.label), ["第三", "第一", "第二"])
+    }
+
+    func testPrewriteValidatorRejectsDefaultAndParaphrasedGenericChapterFocus() throws {
+        let genericFocuses = [
+            "继续补齐当前章节的目标、冲突和场景节奏。",
+            "请逐步完善这一章的人物目标、矛盾推进以及场面节拍。"
+        ]
+
+        for focus in genericFocuses {
+            var project = makeLongformPrewriteProject()
+            project.chapterFocus = focus
+
+            let result = PrewriteValidator.validate(project: project)
+            let focusCheck = try XCTUnwrap(
+                result.checklistItems.first { $0.id == "chapter_focus" }
+            )
+            let directiveCheck = try XCTUnwrap(
+                result.checklistItems.first { $0.id == "longform_chapter_directive" }
+            )
+
+            XCTAssertFalse(focusCheck.passed, focus)
+            XCTAssertFalse(directiveCheck.passed, focus)
+            XCTAssertTrue(
+                result.blockingReasons.contains { $0.contains("当前章真实目标") },
+                focus
+            )
+        }
+    }
+
+    func testPrewriteValidatorAcceptsProjectSpecificChapterFocus() throws {
+        let result = PrewriteValidator.validate(project: makeLongformPrewriteProject())
+        let focusCheck = try XCTUnwrap(
+            result.checklistItems.first { $0.id == "chapter_focus" }
+        )
+        let directiveCheck = try XCTUnwrap(
+            result.checklistItems.first { $0.id == "longform_chapter_directive" }
+        )
+
+        XCTAssertTrue(result.isReady, result.blockingReasons.joined(separator: "\n"))
+        XCTAssertTrue(focusCheck.passed)
+        XCTAssertTrue(directiveCheck.passed)
+    }
+
+    func testPrewriteValidatorAcceptsOnlyCurrentMatchingContractFingerprint() throws {
+        var project = NovelProject(
+            id: "contract-fingerprint-project",
+            title: "合同指纹校验",
+            genre: "悬疑",
+            summary: "验证长篇合同只约束当前章节。",
+            storyLength: .long,
+            updatedAt: "2026-07-28T12:00:00Z",
+            currentChapterTitle: "仓库截获",
+            currentChapterNumber: 1,
+            writtenChapters: 0,
+            chapterFocus: "Rhea 在 ZX-9 仓库截获红色账本。",
+            draftText: "",
+            outlineText: "Rhea 前往 ZX-9 仓库追查红色账本的来源。",
+            volumePlanNotes: "第一卷由 Rhea 追查 ZX-9 仓库的红色账本，卷末揭开港口走私链并引出外海主谋。",
+            referenceContextText: "",
+            specialRequirements: "",
+            wordTargetText: "",
+            continuityNotes: "",
+            referenceDocuments: []
+        )
+        let contract = LongformStorySystem.buildRuntimeContract(for: project)
+        XCTAssertFalse(contract.prewrite.isBlocked, contract.prewrite.blockingReasons.joined(separator: "\n"))
+        var runtime = LongformStoryRuntimeState.empty
+        runtime.record(contract: contract)
+        project.longformRuntimeState = runtime
+        project.outlineText = "总纲只保留合同校验边界，不包含旧角色、旧地点或旧编号。"
+        project.chapterFocus = "RHEA 在 ZX9 仓库，截获红色账本！"
+
+        let currentResult = PrewriteValidator.validate(project: project)
+        let currentDirective = try XCTUnwrap(
+            currentResult.checklistItems.first { $0.id == "longform_chapter_directive" }
+        )
+        XCTAssertTrue(currentDirective.passed)
+        XCTAssertTrue(currentResult.isReady, currentResult.blockingReasons.joined(separator: "\n"))
+
+        project.currentChapterNumber = 2
+        project.currentChapterTitle = "第二章"
+        let staleResult = PrewriteValidator.validate(project: project)
+        let staleDirective = try XCTUnwrap(
+            staleResult.checklistItems.first { $0.id == "longform_chapter_directive" }
+        )
+
+        XCTAssertFalse(staleDirective.passed)
+        XCTAssertTrue(staleResult.blockingReasons.contains { $0.contains("当前章真实目标") })
+    }
+
     func testForeshadowOverdueUsesCurrentChapter() {
         let entry = ForeshadowEntry(
             title: "断剑来历",
@@ -3647,9 +7142,52 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertFalse(first.contains("低优先级参考"))
     }
 
+    func testRankedContextBudgetReservesCriticalContextAfterOversizedCandidate() {
+        let sections = [
+            ContextSection(
+                label: "待返修候选正文",
+                content: "CANDIDATE-HEAD " + String(repeating: "候选正文", count: 5_000)
+                    + " CANDIDATE-TAIL",
+                category: .currentDraft
+            ),
+            ContextSection(
+                label: "草稿箱当前正文",
+                content: "CURRENT-DRAFT-SENTINEL " + String(repeating: "当前正文", count: 1_000),
+                category: .currentDraft
+            ),
+            ContextSection(
+                label: "增强记忆",
+                content: "MEMORY-SENTINEL " + String(repeating: "连续性记忆", count: 1_000),
+                category: .enhancedMemory
+            ),
+            ContextSection(
+                label: "本次续写拍点",
+                content: "PLAN-SENTINEL " + String(repeating: "执行拍点", count: 1_000),
+                category: .activeThreads
+            ),
+            ContextSection(
+                label: "额外指令",
+                content: "INSTRUCTION-SENTINEL " + String(repeating: "用户指令", count: 1_000),
+                category: .specialRequirements
+            )
+        ]
+
+        let rendered = RankedContextBudget.render(sections)
+
+        XCTAssertLessThanOrEqual(rendered.count, RankedContextBudget.maximumCharacters)
+        XCTAssertTrue(rendered.contains("CANDIDATE-HEAD"))
+        XCTAssertTrue(rendered.contains("CANDIDATE-TAIL"))
+        XCTAssertTrue(rendered.contains("CURRENT-DRAFT-SENTINEL"))
+        XCTAssertTrue(rendered.contains("MEMORY-SENTINEL"))
+        XCTAssertTrue(rendered.contains("PLAN-SENTINEL"))
+        XCTAssertTrue(rendered.contains("INSTRUCTION-SENTINEL"))
+        XCTAssertTrue(rendered.contains("[本节上下文已截断]"))
+    }
+
     func testLegacyLongformRuntimeHealthIssueDecodesControlledKindWithoutKindField() throws {
         let expectedKinds: [(String, LongformRuntimeHealthIssueKind)] = [
             ("写前门禁未通过", .prewriteGate),
+            ("长篇合同尚未落盘", .contractNotPersisted),
             ("分卷目录存在断卷", .missingVolumeSequence),
             ("章节目录存在断章", .missingChapterSequence),
             ("保存章节未进入提交链", .uncommittedSavedChapter),
@@ -3670,6 +7208,121 @@ final class DomainModelsTests: XCTestCase {
 
             XCTAssertEqual(issue.kind, expectedKind, "Unexpected kind for \(title)")
         }
+    }
+
+    func testContractPersistenceNoticeFilteringUsesKindInsteadOfDisplayTitle() {
+        let renamedContractNotice = LongformRuntimeHealthIssue(
+            id: "contract-not-persisted",
+            kind: .contractNotPersisted,
+            status: .warning,
+            title: "合同将在首次章节提交后保存",
+            detail: "本地化后的详情",
+            repairHint: "本地化后的修复提示"
+        )
+        let misleadingTitle = LongformRuntimeHealthIssue(
+            id: "different-issue",
+            kind: .other,
+            status: .warning,
+            title: "长篇合同尚未落盘",
+            detail: "同名但不是合同持久化提示",
+            repairHint: "仍应进入写作上下文"
+        )
+
+        XCTAssertFalse(renamedContractNotice.shouldIncludeInWritingContext)
+        XCTAssertTrue(misleadingTitle.shouldIncludeInWritingContext)
+    }
+
+    func testRuntimeHealthEmitsContractPersistenceNoticeWithStableKind() throws {
+        let issue = try XCTUnwrap(
+            LongformStorySystem
+                .buildRuntimeHealth(for: makeLongformPrewriteProject())
+                .issues
+                .first { $0.kind == .contractNotPersisted }
+        )
+
+        XCTAssertEqual(issue.title, "长篇合同尚未落盘")
+        XCTAssertFalse(issue.shouldIncludeInWritingContext)
+    }
+
+    func testRejectedCurrentCommitDoesNotEmitDuplicateGenericGateBlocker() throws {
+        var project = makeLongformPrewriteProject()
+        let contract = LongformStorySystem.buildRuntimeContract(for: project)
+        let commit = LongformChapterCommit(
+            id: "rejected-current-commit",
+            chapterNumber: project.currentChapterNumber,
+            volumeNumber: project.currentVolumeNumber,
+            chapterTitle: project.currentChapterTitle,
+            status: .rejected,
+            createdAt: Date(timeIntervalSince1970: 1_710_000_000),
+            plannedNodes: [],
+            coveredNodes: [],
+            missedNodes: [],
+            rejectionReasons: ["写后审查存在阻断问题"],
+            revisionHints: ["修复当前章连续性"],
+            acceptedEvents: [],
+            extractedMemoryItems: [],
+            dominantThreadType: .quest,
+            reviewStatus: .failed,
+            reviewSummary: "当前章连续性未通过。",
+            projectionStatus: [:]
+        )
+        let writeGate = LongformStorySystem.buildWriteGateReport(
+            commit: commit,
+            contract: contract
+        )
+        var runtime = LongformStoryRuntimeState.empty
+        runtime.record(contract: contract)
+        runtime.record(commit: commit)
+        runtime.record(writeGate: writeGate)
+        project.longformRuntimeState = runtime
+
+        let health = LongformStorySystem.buildRuntimeHealth(for: project)
+        let rejectedIssue = try XCTUnwrap(
+            health.blockingIssues.first { $0.kind == .latestCommitRejected }
+        )
+
+        XCTAssertTrue(
+            ChapterRepairEligibility.canRepair(
+                rejectedIssue,
+                in: project,
+                allowsCurrentChapterRepair: true
+            )
+        )
+        XCTAssertFalse(
+            health.blockingIssues.contains {
+                $0.kind == .other && $0.title.contains("门禁阻断")
+            }
+        )
+    }
+
+    @MainActor
+    func testStoryPillarNavigationUsesStableIDInsteadOfDisplayTitle() {
+        let appState = AppState(
+            userDefaults: makeIsolatedUserDefaults(),
+            projectStore: makeIsolatedProjectStore(),
+            credentialStore: makeCredentialStore()
+        )
+        let renamedChapterTree = StoryPillar(
+            id: .chapterTree,
+            title: "故事结构",
+            detail: "本地化后的章节树标题"
+        )
+        let misleadingCharacterArc = StoryPillar(
+            id: .characterArc,
+            title: "章节树",
+            detail: "标题相同但语义仍是角色弧线"
+        )
+
+        XCTAssertEqual(
+            appState.navigationDestination(for: renamedChapterTree).rawValue,
+            SidebarItem.outline.rawValue
+        )
+        XCTAssertEqual(
+            appState.navigationDestination(for: misleadingCharacterArc).rawValue,
+            SidebarItem.projects.rawValue
+        )
+        XCTAssertEqual(renamedChapterTree.id, .chapterTree)
+        XCTAssertEqual(misleadingCharacterArc.id, .characterArc)
     }
 
     func testLegacyLongformCommitReviewStatusMigrationIsFailClosed() throws {
@@ -3913,6 +7566,158 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertNil(project.persistedStrandWeaveState)
     }
 
+    func testCloudProjectPayloadCodecExtractsEnvelopeAndLegacyProjectIDs() throws {
+        let envelope = try CloudProjectPayloadCodec.encodeEnvelope(
+            platformPayload: Data(#"{"id":"envelope-project"}"#.utf8),
+            platform: .iOS,
+            preserving: nil
+        )
+        XCTAssertEqual(
+            try CloudProjectPayloadCodec.projectID(in: envelope),
+            "envelope-project"
+        )
+        XCTAssertEqual(
+            try CloudProjectPayloadCodec.projectID(
+                in: Data(#"{"id":"legacy-project","title":"旧格式"}"#.utf8)
+            ),
+            "legacy-project"
+        )
+        XCTAssertThrowsError(
+            try CloudProjectPayloadCodec.projectID(in: Data(#"{"id":"   "}"#.utf8))
+        )
+        XCTAssertThrowsError(
+            try CloudProjectPayloadCodec.projectID(
+                in: Data(
+                    #"{"_cloudProjectPayloadVersion":"1","id":"must-not-downgrade"}"#.utf8
+                )
+            )
+        )
+        XCTAssertThrowsError(
+            try CloudProjectPayloadCodec.projectID(
+                in: Data(
+                    #"{"_cloudProjectPayloadVersion":2,"_common":{"id":"future"},"_platforms":{}}"#.utf8
+                )
+            )
+        )
+    }
+
+    func testCloudProjectPayloadCodecRejectsBooleanAndFractionalEnvelopeVersions() throws {
+        let malformedEnvelopes = [
+            Data(
+                #"{"_cloudProjectPayloadVersion":true,"_common":{"id":"project-1"},"_platforms":{"iOS":{"id":"project-1"}}}"#.utf8
+            ),
+            Data(
+                #"{"_cloudProjectPayloadVersion":1.5,"_common":{"id":"project-1"},"_platforms":{"iOS":{"id":"project-1"}}}"#.utf8
+            )
+        ]
+        let currentMacPayload = Data(
+            #"{"genre":"科幻","id":"project-1","schemaVersion":2,"summary":"","title":"新版","storyLength":"long"}"#.utf8
+        )
+
+        for malformedEnvelope in malformedEnvelopes {
+            XCTAssertThrowsError(
+                try CloudProjectPayloadCodec.decodeMacProject(from: malformedEnvelope)
+            )
+            XCTAssertThrowsError(
+                try CloudProjectPayloadCodec.encodeEnvelope(
+                    platformPayload: currentMacPayload,
+                    platform: .macOS,
+                    preserving: malformedEnvelope
+                )
+            )
+        }
+    }
+
+    func testCloudProjectPayloadCodecRequiresObjectPlatformsAndConsistentPlatformIDs() throws {
+        let malformedEnvelopes = [
+            Data(
+                #"{"_cloudProjectPayloadVersion":1,"_common":[],"_platforms":{}}"#.utf8
+            ),
+            Data(
+                #"{"_cloudProjectPayloadVersion":1,"_common":{"id":"project-1"},"_platforms":[]}"#.utf8
+            ),
+            Data(
+                #"{"_cloudProjectPayloadVersion":1,"_common":{"id":"project-1"},"_platforms":{"iOS":"invalid"}}"#.utf8
+            ),
+            Data(
+                #"{"_cloudProjectPayloadVersion":1,"_common":{"id":"project-1"},"_platforms":{"macOS":{"title":"missing id"}}}"#.utf8
+            ),
+            Data(
+                #"{"_cloudProjectPayloadVersion":1,"_common":{"id":"project-1"},"_platforms":{"iOS":{"id":"   "}}}"#.utf8
+            )
+        ]
+
+        for malformedEnvelope in malformedEnvelopes {
+            XCTAssertThrowsError(
+                try CloudProjectPayloadCodec.decodeMacProject(from: malformedEnvelope)
+            )
+        }
+    }
+
+    func testCloudProjectPayloadCodecPreservesUnknownTopLevelFieldsOnRewrite() throws {
+        let previousEnvelope = Data(
+            #"{"_cloudProjectPayloadVersion":1,"_common":{"id":"project-1","title":"旧标题"},"_platforms":{"iOS":{"id":"project-1","iosOnly":"keep"}},"transport":{"etag":"abc"},"vendorFlag":true}"#.utf8
+        )
+        let currentMacPayload = Data(
+            #"{"genre":"科幻","id":"project-1","schemaVersion":2,"summary":"","title":"新版","storyLength":"long"}"#.utf8
+        )
+
+        let rewritten = try CloudProjectPayloadCodec.encodeEnvelope(
+            platformPayload: currentMacPayload,
+            platform: .macOS,
+            preserving: previousEnvelope
+        )
+        let root = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: rewritten) as? [String: Any]
+        )
+        let transport = try XCTUnwrap(root["transport"] as? [String: Any])
+
+        XCTAssertEqual(transport["etag"] as? String, "abc")
+        XCTAssertEqual(root["vendorFlag"] as? Bool, true)
+        XCTAssertEqual(
+            try CloudProjectPayloadCodec.projectID(in: rewritten),
+            "project-1"
+        )
+    }
+
+    func testMacEnvelopeRewritePreservesUnknownMacFieldsButDoesNotResurrectClearedKnownFields() throws {
+        var project = makeProject(
+            id: "project-1",
+            title: "新版标题",
+            updatedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        project.genreTemplateId = nil
+        let previousEnvelope = Data(
+            #"{"_cloudProjectPayloadVersion":1,"_common":{"id":"project-1","title":"旧标题"},"_platforms":{"macOS":{"genre":"科幻","genreTemplateId":"stale-template","id":"project-1","schemaVersion":2,"summary":"","title":"旧标题","storyLength":"long","vendorMacOnly":{"token":"KEEP"}},"iOS":{"id":"project-1","iosOnly":"keep"}}}"#.utf8
+        )
+
+        let rewritten = try CloudProjectPayloadCodec.encodeMacProject(
+            project,
+            preserving: previousEnvelope
+        )
+        let rewrittenMacData = try XCTUnwrap(
+            CloudProjectPayloadCodec.platformPayload(named: .macOS, in: rewritten)
+        )
+        let rewrittenMac = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: rewrittenMacData) as? [String: Any]
+        )
+        let vendorField = try XCTUnwrap(rewrittenMac["vendorMacOnly"] as? [String: Any])
+
+        XCTAssertEqual(vendorField["token"] as? String, "KEEP")
+        XCTAssertEqual(rewrittenMac["title"] as? String, project.title)
+        XCTAssertNil(rewrittenMac["genreTemplateId"])
+        XCTAssertEqual(
+            try CloudProjectPayloadCodec.platformPayload(named: .iOS, in: rewritten),
+            try JSONSerialization.data(
+                withJSONObject: [
+                    "id": "project-1",
+                    "iosOnly": "keep"
+                ],
+                options: [.sortedKeys]
+            )
+        )
+    }
+
     func testCloudProjectPayloadCodecAppliesCommonFieldsOverMacPayload() throws {
         let fixture = try Data(contentsOf: cloudProjectPayloadFixtureURL())
 
@@ -4122,7 +7927,7 @@ final class DomainModelsTests: XCTestCase {
             #"{"genre":"科幻","id":"legacy-project","schemaVersion":2,"summary":"","title":"新版","storyLength":"long"}"#.utf8
         )
         let legacyMacPayload = Data(
-            #"{"genre":"科幻","id":"legacy-project","macLegacyOnly":"keep","schemaVersion":1,"summary":"","title":"旧版","storyLength":"long"}"#.utf8
+            #"{"genre":"科幻","genreTemplateId":"legacy-template","id":"legacy-project","macLegacyOnly":"keep","schemaVersion":1,"summary":"","title":"旧版","storyLength":"long"}"#.utf8
         )
         let migratedMac = try CloudProjectPayloadCodec.encodeEnvelope(
             platformPayload: currentMacPayload,
@@ -4142,7 +7947,7 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(migratedMacObject["title"] as? String, "新版")
 
         let legacyIOSPayload = Data(
-            #"{"genre":"科幻","id":"legacy-project","referenceContextItems":[],"summary":"","title":"iOS 旧版","storyLength":"long"}"#.utf8
+            #"{"genre":"科幻","id":"legacy-project","referenceContextItems":[],"schemaVersion":2,"summary":"","title":"iOS 旧版","storyLength":"long"}"#.utf8
         )
         let migratedIOS = try CloudProjectPayloadCodec.encodeEnvelope(
             platformPayload: currentMacPayload,
@@ -4155,6 +7960,114 @@ final class DomainModelsTests: XCTestCase {
                 withJSONObject: JSONSerialization.jsonObject(with: legacyIOSPayload),
                 options: [.sortedKeys]
             )
+        )
+
+        let legacyIOSFallbackPayload = Data(
+            #"{"genre":"科幻","id":"legacy-project","persistedAntiPatterns":[],"schemaVersion":2,"summary":"","title":"iOS 旧版 fallback","storyLength":"long"}"#.utf8
+        )
+        let migratedIOSFallback = try CloudProjectPayloadCodec.encodeEnvelope(
+            platformPayload: currentMacPayload,
+            platform: .macOS,
+            preserving: legacyIOSFallbackPayload
+        )
+        XCTAssertEqual(
+            try CloudProjectPayloadCodec.platformPayload(
+                named: .iOS,
+                in: migratedIOSFallback
+            ),
+            try JSONSerialization.data(
+                withJSONObject: JSONSerialization.jsonObject(
+                    with: legacyIOSFallbackPayload
+                ),
+                options: [.sortedKeys]
+            )
+        )
+
+        let ambiguousLegacyPayload = Data(
+            #"{"genre":"科幻","genreTemplateId":"mac-marker","id":"legacy-project","referenceContextItems":[],"schemaVersion":2,"summary":"","title":"双平台标记","storyLength":"long"}"#.utf8
+        )
+        XCTAssertThrowsError(
+            try CloudProjectPayloadCodec.encodeEnvelope(
+                platformPayload: currentMacPayload,
+                platform: .macOS,
+                preserving: ambiguousLegacyPayload
+            )
+        ) { error in
+            guard let codecError =
+                    error as? CloudProjectPayloadCodec.CodecError,
+                  case .malformedEnvelope = codecError else {
+                return XCTFail(
+                    "Dual-platform legacy markers should fail closed with malformedEnvelope; got \(error)."
+                )
+            }
+        }
+    }
+
+    func testCloudProjectPayloadCodecMigratesRealLegacyMacLongformPayload() throws {
+        var legacyProject = makeProject(
+            id: "legacy-mac-longform",
+            title: "旧版长篇项目",
+            updatedAt: Date(timeIntervalSince1970: 1_772_500_000.125)
+        )
+        legacyProject.persistedAntiPatterns = ["重复句式"]
+        legacyProject.persistedLongformRuntimeState = .empty
+        legacyProject.persistedLastReviewResult = ChapterReviewResult(
+            overallScore: 88,
+            dimensionScores: [:],
+            issues: [],
+            hasBlockingIssues: false,
+            antiPatterns: ["重复句式"],
+            overallSummary: "可继续"
+        )
+        var legacyMetadata = legacyProject
+        legacyMetadata.chapterDrafts = []
+        let legacyEncoder = JSONEncoder()
+        legacyEncoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        legacyEncoder.dateEncodingStrategy = .iso8601
+        let legacyFlatPayload = try legacyEncoder.encode(legacyMetadata)
+        let legacyObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: legacyFlatPayload)
+                as? [String: Any]
+        )
+
+        XCTAssertNotNil(legacyObject["globalMemorySnapshot"])
+        XCTAssertNotNil(legacyObject["strandWeaveTracker"])
+        XCTAssertNotNil(legacyObject["persistedAntiPatterns"])
+        XCTAssertNotNil(legacyObject["persistedLastReviewResult"])
+        XCTAssertNotNil(legacyObject["persistedLongformRuntimeState"])
+        XCTAssertNil(legacyObject["_cloudProjectPayloadVersion"])
+
+        var currentProject = legacyProject
+        currentProject.draftText = "迁移后的草稿"
+        currentProject.updatedAtDate = legacyProject.updatedAtDate
+            .addingTimeInterval(1)
+        let migrated = try CloudProjectPayloadCodec.encodeMacProject(
+            currentProject,
+            preserving: legacyFlatPayload
+        )
+        let decoded = try CloudProjectPayloadCodec.decodeMacProject(
+            from: migrated
+        )
+
+        XCTAssertNil(
+            try CloudProjectPayloadCodec.platformPayload(
+                named: .iOS,
+                in: migrated
+            )
+        )
+        XCTAssertEqual(decoded.id, currentProject.id)
+        XCTAssertEqual(decoded.draftText, currentProject.draftText)
+        XCTAssertEqual(
+            decoded.persistedAntiPatterns,
+            currentProject.persistedAntiPatterns
+        )
+        XCTAssertEqual(
+            decoded.persistedLongformRuntimeState,
+            currentProject.persistedLongformRuntimeState
+        )
+        XCTAssertEqual(
+            decoded.persistedLastReviewResult?.overallScore,
+            currentProject.persistedLastReviewResult?.overallScore
         )
     }
 
@@ -4212,6 +8125,21 @@ final class DomainModelsTests: XCTestCase {
         XCTAssertEqual(
             (object["schemaVersion"] as? NSNumber)?.intValue,
             ChapterDraft.currentSchemaVersion
+        )
+        let version = ChapterDraftVersion(
+            id: "version-1",
+            chapterTitle: "旧稿",
+            content: "历史 正文",
+            reason: "自动保存",
+            savedAt: "2026-07-17T11:00:00Z"
+        )
+        let versionObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(version))
+                as? [String: Any]
+        )
+        XCTAssertEqual(
+            (versionObject["wordCount"] as? NSNumber)?.intValue,
+            version.wordCount
         )
 
         let legacy = try JSONDecoder().decode(

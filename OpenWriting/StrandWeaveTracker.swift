@@ -1,4 +1,3 @@
-import Combine
 import Foundation
 
 // MARK: - Strand Weave Rhythm System
@@ -110,15 +109,15 @@ nonisolated struct RhythmAlert: Identifiable {
 }
 
 /// Strand Weave 追踪器
-nonisolated final class StrandWeaveTracker: ObservableObject, Codable {
+nonisolated final class StrandWeaveTracker: Codable {
     /// 章节记录
-    @Published var records: [ChapterStrandRecord]
+    var records: [ChapterStrandRecord]
 
     /// 理想比例（默认 Quest 60%, Fire 20%, Constellation 20%）
-    @Published var idealRatio: [StrandType: Double]
+    var idealRatio: [StrandType: Double]
 
     /// 节奏红线配置
-    @Published var redLineConfig: RhythmRedLineConfig
+    var redLineConfig: RhythmRedLineConfig
 
     enum CodingKeys: String, CodingKey {
         case records, questRatio, fireRatio, constellationRatio
@@ -411,7 +410,7 @@ nonisolated struct RhythmRedLineConfig: Codable {
 
 // MARK: - Lightweight Strand State
 
-struct StrandWeaveState: Codable, Hashable {
+nonisolated struct StrandWeaveState: Codable, Hashable {
     struct Entry: Identifiable, Codable, Hashable {
         let id: String
         let volumeNumber: Int

@@ -5,6 +5,8 @@ import UniformTypeIdentifiers
 
 struct HomeDashboardView: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appAccentForegroundColor) private var accentForegroundColor
+    @Environment(\.appAccentInkColor) private var accentInkColor
     @Bindable var appState: AppState
     let openSettings: () -> Void
     @State private var heroMinY: CGFloat = 0
@@ -103,8 +105,8 @@ struct HomeDashboardView: View {
                 palette: palette,
                 tint: LinearGradient(
                     colors: [
-                        palette.warmAccent.opacity(palette.isDark ? 0.26 : 0.20),
                         palette.coolAccent.opacity(palette.isDark ? 0.24 : 0.18),
+                        palette.coolAccent.opacity(palette.isDark ? 0.12 : 0.08),
                         palette.successAccent.opacity(palette.isDark ? 0.16 : 0.12)
                     ],
                     startPoint: .topLeading,
@@ -199,7 +201,7 @@ struct HomeDashboardView: View {
                 tint: LinearGradient(
                     colors: [
                         palette.coolAccent.opacity(palette.isDark ? 0.24 : 0.16),
-                        palette.warmAccent.opacity(palette.isDark ? 0.18 : 0.14),
+                        palette.coolAccent.opacity(palette.isDark ? 0.08 : 0.05),
                         .clear
                     ],
                     startPoint: .topTrailing,
@@ -306,7 +308,7 @@ struct HomeDashboardView: View {
         case .idle:
             return palette.textPrimary
         case .checking:
-            return palette.coolAccent
+            return accentInkColor
         case .ready:
             return palette.successAccent
         case .needsAttention:
@@ -507,7 +509,7 @@ struct HomeDashboardView: View {
                     palette: palette,
                     tint: LinearGradient(
                         colors: [
-                            palette.warmAccent.opacity(palette.isDark ? 0.14 : 0.09),
+                            palette.coolAccent.opacity(palette.isDark ? 0.14 : 0.09),
                             .clear
                         ],
                         startPoint: .topLeading,
@@ -570,7 +572,7 @@ struct HomeDashboardView: View {
 
                     Label(actionTitle, systemImage: "arrow.right")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(palette.coolAccent)
+                        .foregroundStyle(.appAccentInk)
                 }
             }
             .contentShape(Rectangle())
@@ -743,22 +745,12 @@ struct HomeDashboardView: View {
             ForEach(appState.inspirationSignals) { signal in
                 HStack(spacing: 14) {
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    palette.warmAccent.opacity(0.94),
-                                    palette.coolAccent.opacity(0.96),
-                                    palette.successAccent.opacity(0.92)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
+                        .fill(palette.coolAccent)
                         .frame(width: 62, height: 62)
                         .overlay(
                             Image(systemName: "sparkles")
                                 .font(.title3)
-                                .foregroundStyle(.white.opacity(0.95))
+                                .foregroundStyle(accentForegroundColor)
                         )
                         .rotation3DEffect(.degrees(14), axis: (x: 1, y: -1, z: 0))
                         .shadow(color: palette.coolAccent.opacity(0.34), radius: 18, y: 12)
@@ -942,12 +934,12 @@ struct HomeDashboardView: View {
         HStack(spacing: 8) {
             Text(index)
                 .font(.caption2.weight(.bold))
-                .foregroundStyle(.white.opacity(0.95))
+                .foregroundStyle(accentForegroundColor)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 5)
                 .background(
                     Capsule()
-                        .fill(palette.coolAccent.opacity(0.92))
+                        .fill(palette.coolAccent)
                 )
 
             Text(title)
@@ -969,7 +961,7 @@ struct HomeDashboardView: View {
     private func homeSignalChip(_ title: String) -> some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(palette.warmAccent)
+                .fill(palette.coolAccent)
                 .frame(width: 8, height: 8)
 
             Text(title)

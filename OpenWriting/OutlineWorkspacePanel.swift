@@ -3,6 +3,8 @@ import SwiftUI
 
 struct OutlineWorkspacePanel: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appAccentInkColor) private var accentInkColor
+    @Environment(\.appAccentStrokeColor) private var accentStrokeColor
     @Bindable var appState: AppState
 
     @State private var selectedSavedChapterID: ChapterDraft.ID?
@@ -418,13 +420,13 @@ struct OutlineWorkspacePanel: View {
             accentColor: palette.activeAccent,
             textPrimary: palette.textPrimary,
             textSecondary: palette.textSecondary,
-            selectedNumberColor: palette.activeAccent,
+            selectedNumberColor: accentInkColor,
             numberColor: palette.textSecondary,
             selectedNumberBackground: palette.activeAccent.opacity(0.14),
             numberBackground: palette.mutedCapsuleFill,
             selectedRowBackground: palette.selectedPanel,
             rowBackground: palette.panelBase.opacity(palette.isDark ? 0.68 : 0.52),
-            selectedRowBorder: palette.activeAccent.opacity(0.32),
+            selectedRowBorder: accentStrokeColor,
             rowBorder: palette.editorBorder,
             rowCornerRadius: 18,
             showsPreviewText: false,

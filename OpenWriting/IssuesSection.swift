@@ -3,6 +3,7 @@ import SwiftUI
 // MARK: - Issues Section
 
 struct IssuesSection: View {
+    @Environment(\.appAccentInkColor) private var accentInkColor
     let blockingIssues: [ReviewIssue]
     let nonBlockingIssues: [ReviewIssue]
     let palette: DashboardPalette
@@ -40,7 +41,7 @@ struct IssuesSection: View {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(spacing: 8) {
                         Image(systemName: "list.bullet.clipboard")
-                            .foregroundStyle(palette.coolAccent)
+                            .foregroundStyle(.appAccentInk)
 
                         Text("📝 改进建议（\(nonBlockingIssues.count)）")
                             .font(.headline.weight(.bold))
@@ -62,7 +63,7 @@ struct IssuesSection: View {
                         severityGroup(
                             title: "中优先级",
                             icon: "info.circle.fill",
-                            color: palette.coolAccent,
+                            color: accentInkColor,
                             issues: mediumIssues
                         )
                     }
@@ -109,7 +110,7 @@ struct IssuesSection: View {
                 palette: palette,
                 tint: LinearGradient(
                     colors: [
-                        palette.warmAccent.opacity(palette.isDark ? 0.06 : 0.04),
+                        sectionTint.opacity(palette.isDark ? 0.06 : 0.04),
                         .clear
                     ],
                     startPoint: .topLeading,
@@ -121,6 +122,15 @@ struct IssuesSection: View {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .strokeBorder(palette.stroke, lineWidth: 1)
         )
+    }
+
+    private var sectionTint: Color {
+        if !blockingIssues.isEmpty || !highIssues.isEmpty {
+            return palette.warmAccent
+        }
+        return nonBlockingIssues.isEmpty
+            ? palette.successAccent
+            : palette.coolAccent
     }
 
     @ViewBuilder

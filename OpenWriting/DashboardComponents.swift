@@ -3,6 +3,7 @@ import SwiftUI
 
 struct CurrentProjectSnapshotCard: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appAccentForegroundColor) private var accentForegroundColor
     let project: NovelProject
     let action: () -> Void
 
@@ -28,7 +29,7 @@ struct CurrentProjectSnapshotCard: View {
                         HStack(spacing: 8) {
                             Text(project.genre)
                                 .font(.subheadline.weight(.medium))
-                                .foregroundStyle(palette.coolAccent)
+                                .foregroundStyle(.appAccentInk)
 
                             Text(project.storyLengthTitle)
                                 .font(.caption.weight(.semibold))
@@ -81,8 +82,8 @@ struct CurrentProjectSnapshotCard: View {
                     palette: palette,
                     tint: LinearGradient(
                         colors: [
-                            palette.warmAccent.opacity(palette.isDark ? 0.12 : 0.08),
                             palette.coolAccent.opacity(palette.isDark ? 0.10 : 0.06),
+                            palette.coolAccent.opacity(palette.isDark ? 0.04 : 0.025),
                             .clear
                         ],
                         startPoint: .topLeading,
@@ -102,38 +103,16 @@ struct CurrentProjectSnapshotCard: View {
     private var coverView: some View {
         ZStack(alignment: .bottomLeading) {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            palette.coolAccent.opacity(0.95),
-                            palette.warmAccent.opacity(0.88),
-                            palette.successAccent.opacity(0.80)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.black.opacity(palette.isDark ? 0.20 : 0.08),
-                            .clear
-                        ],
-                        startPoint: .bottomLeading,
-                        endPoint: .topTrailing
-                    )
-                )
+                .fill(palette.coolAccent)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(project.title.prefix(2))
                     .font(.system(size: 26, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.96))
+                    .foregroundStyle(accentForegroundColor)
 
                 Text(project.genre)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.84))
+                    .foregroundStyle(accentForegroundColor)
                     .lineLimit(2)
             }
             .padding(14)
@@ -149,6 +128,7 @@ struct CurrentProjectSnapshotCard: View {
 
 struct ModelConnectionSummaryCard: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appAccentInkColor) private var accentInkColor
     @Bindable var appState: AppState
 
     private var palette: DashboardPalette {
@@ -205,7 +185,7 @@ struct ModelConnectionSummaryCard: View {
         case .idle:
             return palette.textSecondary
         case .checking:
-            return palette.activeAccent
+            return accentInkColor
         case .ready:
             return palette.readyAccent
         case .needsAttention:
@@ -305,7 +285,7 @@ struct DashboardPanel<Content: View>: View {
                 tint: LinearGradient(
                     colors: [
                         palette.coolAccent.opacity(palette.isDark ? 0.10 : 0.06),
-                        palette.warmAccent.opacity(palette.isDark ? 0.08 : 0.05),
+                        palette.coolAccent.opacity(palette.isDark ? 0.04 : 0.025),
                         .clear
                     ],
                     startPoint: .topLeading,
@@ -334,6 +314,9 @@ struct DashboardPanel<Content: View>: View {
 
 struct QuickActionRow: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appAccentForegroundColor) private var accentForegroundColor
+    @Environment(\.appAccentInkColor) private var accentInkColor
+    @Environment(\.appAccentStrokeColor) private var accentStrokeColor
     let title: String
     let subtitle: String
     let symbolName: String
@@ -348,21 +331,12 @@ struct QuickActionRow: View {
         Button(action: action) {
             HStack(alignment: .top, spacing: 14) {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                palette.coolAccent.opacity(0.92),
-                                palette.successAccent.opacity(0.88)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
+                    .fill(palette.coolAccent)
                     .frame(width: 42, height: 42)
                     .overlay(
                         Image(systemName: symbolName)
                             .font(.title3.weight(.semibold))
-                            .foregroundStyle(.white.opacity(0.95))
+                            .foregroundStyle(accentForegroundColor)
                     )
                     .rotation3DEffect(.degrees(isHovered ? 0 : 8), axis: (x: 1, y: -1, z: 0))
                     .shadow(color: palette.coolAccent.opacity(isHovered ? 0.34 : 0.22), radius: isHovered ? 14 : 10, y: 7)
@@ -382,7 +356,7 @@ struct QuickActionRow: View {
 
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.bold))
-                    .foregroundStyle(palette.coolAccent.opacity(isHovered ? 0.88 : 0.42))
+                    .foregroundStyle(accentInkColor)
                     .padding(.top, 13)
             }
             .padding(16)
@@ -403,7 +377,10 @@ struct QuickActionRow: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .strokeBorder(isHovered ? palette.coolAccent.opacity(0.26) : palette.stroke, lineWidth: 1)
+                    .strokeBorder(
+                        isHovered ? accentStrokeColor : palette.stroke,
+                        lineWidth: 1
+                    )
             )
         }
         .buttonStyle(.plain)

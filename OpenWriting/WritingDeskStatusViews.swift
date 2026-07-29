@@ -178,6 +178,7 @@ struct QualityReviewDashboardPresentation: Identifiable {
 
 struct WritingDeskSectionCard<Content: View>: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appAccentInkColor) private var accentInkColor
     let title: String
     let badgeText: String?
     let statusLabel: String?
@@ -266,7 +267,10 @@ struct WritingDeskSectionCard<Content: View>: View {
                     Button(action: action.action) {
                         Image(systemName: action.symbolName)
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(action.tintColor ?? (action.isPrimary ? palette.activeAccent : .primary))
+                            .foregroundStyle(
+                                action.tintColor
+                                    ?? (action.isPrimary ? accentInkColor : .primary)
+                            )
                             .frame(width: 38, height: 38)
                             .background(
                                 Circle()

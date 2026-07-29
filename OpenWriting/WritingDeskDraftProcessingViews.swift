@@ -13,6 +13,7 @@ struct WritingDeskToolbarAction: Identifiable {
 
 struct DraftPolishProgressBadge: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appAccentStrokeColor) private var accentStrokeColor
     let mode: DraftPolishMode
 
     private var palette: DashboardPalette {
@@ -33,7 +34,7 @@ struct DraftPolishProgressBadge: View {
         .background(.regularMaterial, in: Capsule())
         .overlay(
             Capsule()
-                .strokeBorder(palette.activeAccent.opacity(0.28), lineWidth: 1)
+                .strokeBorder(accentStrokeColor, lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(palette.isDark ? 0.22 : 0.10), radius: 12, y: 5)
         .allowsHitTesting(false)
@@ -92,7 +93,7 @@ struct DraftSelectionPolishRequestPanel: View {
             HStack(spacing: 10) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(palette.activeAccent)
+                    .foregroundStyle(.appAccentInk)
                     .frame(width: 30, height: 30)
                     .background(Circle().fill(palette.toolbarButtonFill))
 
@@ -185,7 +186,7 @@ struct DraftPolishResultPanel: View {
             HStack(spacing: 10) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(palette.activeAccent)
+                    .foregroundStyle(.appAccentInk)
                     .frame(width: 32, height: 32)
                     .background(Circle().fill(palette.toolbarButtonFill))
 

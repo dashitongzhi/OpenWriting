@@ -1,4 +1,5 @@
 import AppKit
+import Foundation
 import Observation
 import SwiftUI
 
@@ -77,9 +78,296 @@ enum AppAppearance: String, CaseIterable, Identifiable {
     }
 }
 
+enum AppAccentColorMode: String, CaseIterable, Identifiable {
+    static let storageKey = "appAccentColorMode"
+
+    case custom
+    case system
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .custom:
+            return "自定义"
+        case .system:
+            return "跟随系统"
+        }
+    }
+}
+
+@MainActor
+enum AppAccentColorPreference {
+    static let customColorStorageKey = "appAccentCustomColor"
+    static let defaultCustomColorHex = "#0A84FF"
+
+    static func resolvedColor(
+        modeRawValue: String,
+        customColorHex: String
+    ) -> Color {
+        let mode = AppAccentColorMode(rawValue: modeRawValue) ?? .custom
+        switch mode {
+        case .custom:
+            return color(from: customColorHex)
+        case .system:
+            return Color(nsColor: .controlAccentColor)
+        }
+    }
+
+    static func color(from rawValue: String) -> Color {
+        let hex = normalizedHex(rawValue) ?? defaultCustomColorHex
+        let value = UInt64(hex.dropFirst(), radix: 16) ?? 0x0A84FF
+        return Color(
+            red: Double((value >> 16) & 0xFF) / 255,
+            green: Double((value >> 8) & 0xFF) / 255,
+            blue: Double(value & 0xFF) / 255
+        )
+    }
+
+    static func foregroundColor(on color: Color) -> Color {
+        guard let components = sRGBComponents(from: color) else {
+            return .white
+        }
+        return components.relativeLuminance > 0.179 ? .black : .white
+    }
+
+    static func accessibleInkColor(
+        from color: Color,
+        colorScheme: ColorScheme
+    ) -> Color {
+        // Text and icons can sit on accent-tinted surfaces up to 24% opacity.
+        accessibleColor(
+            from: color,
+            colorScheme: colorScheme,
+            darkTargetLuminance: 0.64,
+            lightTargetLuminance: 0.06
+        )
+    }
+
+    static func accessibleStrokeColor(
+        from color: Color,
+        colorScheme: ColorScheme
+    ) -> Color {
+        // Selected borders can share the same accent-tinted surface.
+        accessibleColor(
+            from: color,
+            colorScheme: colorScheme,
+            darkTargetLuminance: 0.33,
+            lightTargetLuminance: 0.12
+        )
+    }
+
+    private static func accessibleColor(
+        from color: Color,
+        colorScheme: ColorScheme,
+        darkTargetLuminance: Double,
+        lightTargetLuminance: Double
+    ) -> Color {
+        guard let source = sRGBComponents(from: color) else {
+            return color
+        }
+
+        let targetLuminance = colorScheme == .dark
+            ? darkTargetLuminance
+            : lightTargetLuminance
+        let alreadyReadable = colorScheme == .dark
+            ? source.relativeLuminance >= targetLuminance
+            : source.relativeLuminance <= targetLuminance
+        guard !alreadyReadable else {
+            return source.color
+        }
+
+        let endpoint = colorScheme == .dark
+            ? SRGBComponents(red: 1, green: 1, blue: 1)
+            : SRGBComponents(red: 0, green: 0, blue: 0)
+        var lowerBound = 0.0
+        var upperBound = 1.0
+
+        for _ in 0..<18 {
+            let amount = (lowerBound + upperBound) / 2
+            let candidate = source.mixed(toward: endpoint, amount: amount)
+            let meetsTarget = colorScheme == .dark
+                ? candidate.relativeLuminance >= targetLuminance
+                : candidate.relativeLuminance <= targetLuminance
+            if meetsTarget {
+                upperBound = amount
+            } else {
+                lowerBound = amount
+            }
+        }
+
+        return source.mixed(toward: endpoint, amount: upperBound).color
+    }
+
+    static func contrastRatio(
+        between first: Color,
+        and second: Color
+    ) -> Double? {
+        guard let firstComponents = sRGBComponents(from: first),
+              let secondComponents = sRGBComponents(from: second) else {
+            return nil
+        }
+        let lighter = max(
+            firstComponents.relativeLuminance,
+            secondComponents.relativeLuminance
+        )
+        let darker = min(
+            firstComponents.relativeLuminance,
+            secondComponents.relativeLuminance
+        )
+        return (lighter + 0.05) / (darker + 0.05)
+    }
+
+    static func compositedColor(
+        overlay: Color,
+        opacity: Double,
+        over background: Color
+    ) -> Color? {
+        guard let overlayComponents = sRGBComponents(from: overlay),
+              let backgroundComponents = sRGBComponents(from: background)
+        else {
+            return nil
+        }
+
+        return backgroundComponents.mixed(
+            toward: overlayComponents,
+            amount: opacity
+        ).color
+    }
+
+    static func hexString(from color: Color) -> String? {
+        guard let resolvedColor = NSColor(color).usingColorSpace(.sRGB) else {
+            return nil
+        }
+        let red = Int((resolvedColor.redComponent * 255).rounded())
+        let green = Int((resolvedColor.greenComponent * 255).rounded())
+        let blue = Int((resolvedColor.blueComponent * 255).rounded())
+        return String(
+            format: "#%02X%02X%02X",
+            min(max(red, 0), 255),
+            min(max(green, 0), 255),
+            min(max(blue, 0), 255)
+        )
+    }
+
+    static func normalizedHex(_ rawValue: String) -> String? {
+        let trimmed = rawValue.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        let hexadecimal = trimmed.hasPrefix("#")
+            ? String(trimmed.dropFirst())
+            : trimmed
+        guard hexadecimal.count == 6,
+              UInt64(hexadecimal, radix: 16) != nil else {
+            return nil
+        }
+        return "#\(hexadecimal.uppercased())"
+    }
+
+    private static func sRGBComponents(
+        from color: Color
+    ) -> SRGBComponents? {
+        guard let resolvedColor = NSColor(color).usingColorSpace(.sRGB) else {
+            return nil
+        }
+        return SRGBComponents(
+            red: min(max(resolvedColor.redComponent, 0), 1),
+            green: min(max(resolvedColor.greenComponent, 0), 1),
+            blue: min(max(resolvedColor.blueComponent, 0), 1)
+        )
+    }
+
+    private struct SRGBComponents {
+        let red: Double
+        let green: Double
+        let blue: Double
+
+        var color: Color {
+            Color(red: red, green: green, blue: blue)
+        }
+
+        var relativeLuminance: Double {
+            0.2126 * Self.linearized(red)
+                + 0.7152 * Self.linearized(green)
+                + 0.0722 * Self.linearized(blue)
+        }
+
+        func mixed(
+            toward endpoint: SRGBComponents,
+            amount: Double
+        ) -> SRGBComponents {
+            let clampedAmount = min(max(amount, 0), 1)
+            return SRGBComponents(
+                red: red + (endpoint.red - red) * clampedAmount,
+                green: green + (endpoint.green - green) * clampedAmount,
+                blue: blue + (endpoint.blue - blue) * clampedAmount
+            )
+        }
+
+        private static func linearized(_ component: Double) -> Double {
+            component <= 0.04045
+                ? component / 12.92
+                : pow((component + 0.055) / 1.055, 2.4)
+        }
+    }
+}
+
+nonisolated private struct AppAccentForegroundColorKey: EnvironmentKey {
+    static let defaultValue = Color.white
+}
+
+nonisolated private struct AppAccentInkColorKey: EnvironmentKey {
+    static let defaultValue = Color(
+        red: Double(0x0A) / 255,
+        green: Double(0x84) / 255,
+        blue: 1
+    )
+}
+
+nonisolated private struct AppAccentStrokeColorKey: EnvironmentKey {
+    static let defaultValue = Color(
+        red: Double(0x0A) / 255,
+        green: Double(0x84) / 255,
+        blue: 1
+    )
+}
+
+extension EnvironmentValues {
+    nonisolated var appAccentForegroundColor: Color {
+        get { self[AppAccentForegroundColorKey.self] }
+        set { self[AppAccentForegroundColorKey.self] = newValue }
+    }
+
+    nonisolated var appAccentInkColor: Color {
+        get { self[AppAccentInkColorKey.self] }
+        set { self[AppAccentInkColorKey.self] = newValue }
+    }
+
+    nonisolated var appAccentStrokeColor: Color {
+        get { self[AppAccentStrokeColorKey.self] }
+        set { self[AppAccentStrokeColorKey.self] = newValue }
+    }
+}
+
+struct AppAccentInkStyle: ShapeStyle {
+    func resolve(in environment: EnvironmentValues) -> some ShapeStyle {
+        environment.appAccentInkColor
+    }
+}
+
+extension ShapeStyle where Self == AppAccentInkStyle {
+    static var appAccentInk: AppAccentInkStyle {
+        AppAccentInkStyle()
+    }
+}
+
 struct AppearanceSettingsView: View {
     @Bindable var appState: AppState
     @AppStorage(AppAppearance.storageKey) private var appAppearanceRawValue = AppAppearance.system.rawValue
+    @AppStorage(AppAccentColorMode.storageKey) private var accentColorModeRawValue =
+        AppAccentColorMode.custom.rawValue
+    @AppStorage(AppAccentColorPreference.customColorStorageKey) private var customAccentColorHex =
+        AppAccentColorPreference.defaultCustomColorHex
     @State private var isHelpPresented = false
 
     var body: some View {
@@ -106,6 +394,43 @@ struct AppearanceSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 6)
+
+                    Picker("重点色", selection: accentColorModeBinding) {
+                        ForEach(AppAccentColorMode.allCases) { mode in
+                            Text(mode.title)
+                                .tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    if selectedAccentColorMode == .custom {
+                        ColorPicker(
+                            "自定义重点色",
+                            selection: customAccentColorBinding,
+                            supportsOpacity: false
+                        )
+
+                        Button("恢复 Apple 蓝色") {
+                            customAccentColorHex =
+                                AppAccentColorPreference.defaultCustomColorHex
+                        }
+                        .buttonStyle(.link)
+                    }
+
+                    HStack(spacing: 10) {
+                        Circle()
+                            .fill(selectedAccentColor)
+                            .frame(width: 14, height: 14)
+                            .accessibilityHidden(true)
+
+                        Text(
+                            selectedAccentColorMode == .custom
+                                ? "重点色会立即应用到按钮、选择状态和写作台强调元素。"
+                                : "重点色会跟随 macOS“外观”设置。"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
                 }
 
                 Section("模型连接") {
@@ -216,15 +541,79 @@ struct AppearanceSettingsView: View {
             set: { appAppearanceRawValue = $0.rawValue }
         )
     }
+
+    private var selectedAccentColorMode: AppAccentColorMode {
+        AppAccentColorMode(rawValue: accentColorModeRawValue) ?? .custom
+    }
+
+    private var selectedAccentColor: Color {
+        AppAccentColorPreference.resolvedColor(
+            modeRawValue: accentColorModeRawValue,
+            customColorHex: customAccentColorHex
+        )
+    }
+
+    private var accentColorModeBinding: Binding<AppAccentColorMode> {
+        Binding(
+            get: { selectedAccentColorMode },
+            set: { accentColorModeRawValue = $0.rawValue }
+        )
+    }
+
+    private var customAccentColorBinding: Binding<Color> {
+        Binding(
+            get: {
+                AppAccentColorPreference.color(from: customAccentColorHex)
+            },
+            set: { color in
+                guard let hex =
+                        AppAccentColorPreference.hexString(from: color) else {
+                    return
+                }
+                customAccentColorHex = hex
+            }
+        )
+    }
 }
 
 private struct AppAppearanceBridgeModifier: ViewModifier {
+    @Environment(\.colorScheme) private var inheritedColorScheme
     @AppStorage(AppAppearance.storageKey) private var appAppearanceRawValue = AppAppearance.system.rawValue
+    @AppStorage(AppAccentColorMode.storageKey) private var accentColorModeRawValue =
+        AppAccentColorMode.custom.rawValue
+    @AppStorage(AppAccentColorPreference.customColorStorageKey) private var customAccentColorHex =
+        AppAccentColorPreference.defaultCustomColorHex
 
     func body(content: Content) -> some View {
         let appearance = AppAppearance(rawValue: appAppearanceRawValue) ?? .system
+        let accentColor = AppAccentColorPreference.resolvedColor(
+            modeRawValue: accentColorModeRawValue,
+            customColorHex: customAccentColorHex
+        )
+        let effectiveColorScheme =
+            appearance.colorScheme ?? inheritedColorScheme
+        let accentForegroundColor =
+            AppAccentColorPreference.foregroundColor(on: accentColor)
+        let accentInkColor =
+            AppAccentColorPreference.accessibleInkColor(
+                from: accentColor,
+                colorScheme: effectiveColorScheme
+            )
+        let accentStrokeColor =
+            AppAccentColorPreference.accessibleStrokeColor(
+                from: accentColor,
+                colorScheme: effectiveColorScheme
+            )
 
         content
+            .environment(
+                \.appAccentForegroundColor,
+                accentForegroundColor
+            )
+            .environment(\.appAccentInkColor, accentInkColor)
+            .environment(\.appAccentStrokeColor, accentStrokeColor)
+            .tint(accentColor)
+            .accentColor(accentColor)
             .preferredColorScheme(appearance.colorScheme)
             .background(
                 WindowAppearanceSyncView(appearance: appearance)
@@ -325,6 +714,7 @@ extension View {
 }
 
 struct ModelConnectionSettingsForm: View {
+    @Environment(\.appAccentInkColor) private var accentInkColor
     @Bindable var appState: AppState
 
     var body: some View {
@@ -409,7 +799,7 @@ struct ModelConnectionSettingsForm: View {
         case .idle:
             return .secondary
         case .checking:
-            return .blue
+            return accentInkColor
         case .ready:
             return Color(red: 0.18, green: 0.56, blue: 0.42)
         case .needsAttention:

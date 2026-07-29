@@ -10,7 +10,7 @@ struct DimensionScoresPanel: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
                 Image(systemName: "chart.bar.fill")
-                    .foregroundStyle(palette.coolAccent)
+                    .foregroundStyle(.appAccentInk)
 
                 Text("📊 九维评分")
                     .font(.headline.weight(.bold))

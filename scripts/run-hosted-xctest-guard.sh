@@ -1,7 +1,4 @@
-#!/bin/sh
-if [ -z "${ZSH_VERSION:-}" ]; then
-    exec /bin/zsh -f "$0" "$@"
-fi
+#!/bin/zsh -f
 
 set -euo pipefail
 

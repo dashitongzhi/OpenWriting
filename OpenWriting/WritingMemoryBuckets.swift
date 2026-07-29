@@ -4,7 +4,7 @@ import Foundation
 
 /// A single structured memory fact, inspired by webnovel-writer's memory schema.
 /// Each item belongs to a category bucket and carries a lifecycle status.
-struct MemoryItem: Identifiable, Codable, Hashable {
+nonisolated struct MemoryItem: Identifiable, Codable, Hashable {
     let id: String
     var category: MemoryCategory
     var subject: String
@@ -100,7 +100,7 @@ struct MemoryItem: Identifiable, Codable, Hashable {
 
 // MARK: - Memory Category (7 Buckets)
 
-enum MemoryCategory: String, CaseIterable, Codable, Identifiable {
+nonisolated enum MemoryCategory: String, CaseIterable, Codable, Identifiable {
     case characterState = "character_state"
     case relationship = "relationship"
     case worldRule = "world_rule"
@@ -147,7 +147,7 @@ enum MemoryCategory: String, CaseIterable, Codable, Identifiable {
 
 // MARK: - Memory Item Status (4-state lifecycle)
 
-enum MemoryItemStatus: String, Codable, Hashable {
+nonisolated enum MemoryItemStatus: String, Codable, Hashable {
     case active
     case outdated
     case contradicted
@@ -167,7 +167,7 @@ enum MemoryItemStatus: String, Codable, Hashable {
 
 /// The structured memory store replacing the flat `continuityNotes` string.
 /// Persists as JSON alongside the project data.
-struct MemoryBuckets: Codable, Hashable {
+nonisolated struct MemoryBuckets: Codable, Hashable {
     var characterState: [MemoryItem]
     var relationships: [MemoryItem]
     var worldRules: [MemoryItem]

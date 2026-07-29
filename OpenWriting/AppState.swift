@@ -7,10 +7,37 @@ struct CachedStorageHealthReport {
     let checkedAt: Date
 }
 
+struct LongformWritingDeskContextCacheKey: Hashable {
+    let projectID: NovelProject.ID
+    let structuralGeneration: UInt64
+    let currentVolumeNumber: Int
+    let currentChapterNumber: Int
+}
+
+struct CachedLongformWritingDeskContext {
+    let key: LongformWritingDeskContextCacheKey
+    let context: LongformWritingDeskContext
+}
+
+enum LongformWritingDeskContextMutationImpact: Equatable {
+    case structural
+    case none
+}
+
+struct AIMemoryExtractionTaskRegistration {
+    let scope: String?
+    let projectID: NovelProject.ID
+    let task: Task<Void, Never>
+}
+
 @MainActor
 @Observable
 final class AppState {
     static let emptyConfigurationMessage = "自定义模型需填写 Base URL、模型 ID 与 API Key 后再测试连接。"
+    static let apiKeyReadFailureMessage =
+        "API Key 未能从系统 Keychain 读取，请检查钥匙串访问后重试。"
+    static let officialCredentialReadFailureMessage =
+        "登录凭据未能从系统 Keychain 读取，请检查钥匙串访问后重试。"
     private static let maxChapterVersionHistoryCount = 12
 
     let userDefaults: UserDefaults
@@ -21,6 +48,7 @@ final class AppState {
     @ObservationIgnored let appleCredentialStateProvider: any AppleCredentialStateProviding
     @ObservationIgnored let clientInstallationID: String
     @ObservationIgnored var officialChannelCredential: OfficialChannelCredential?
+    @ObservationIgnored var officialChannelCredentialReadFailed = false
     @ObservationIgnored let writingSkillCatalog: any WritingSkillCatalogProviding
     @ObservationIgnored private let commerceProvider: any CommerceEntitlementProviding
     @ObservationIgnored let cloudStore = ICloudProjectStore()
@@ -39,17 +67,45 @@ final class AppState {
     @ObservationIgnored var lastEmergencySnapshotURL: URL?
     @ObservationIgnored var isHydratingAccountScopedData = false
     @ObservationIgnored var isApplyingProviderConfiguration = false
+    @ObservationIgnored var didPersistPendingProviderSwitch = true
+    @ObservationIgnored var apiKeyReadFailureProviders: Set<ModelProvider> = []
     @ObservationIgnored var validationTask: Task<Void, Never>?
     @ObservationIgnored var apiKeyPersistTask: Task<Void, Never>?
+    @ObservationIgnored var aiMemoryExtractionTasks: [
+        UUID: AIMemoryExtractionTaskRegistration
+    ] = [:]
+    @ObservationIgnored var longformWritingDeskContextCache: [
+        NovelProject.ID: CachedLongformWritingDeskContext
+    ] = [:]
+    @ObservationIgnored var longformWritingDeskContextGenerationByProjectID: [
+        NovelProject.ID: UInt64
+    ] = [:]
+    @ObservationIgnored
+    let longformWritingDeskContextBuilder:
+        @MainActor (NovelProject) -> LongformWritingDeskContext
 
     var selectedProvider: ModelProvider {
         willSet {
             guard !isApplyingProviderConfiguration else { return }
-            persistConnectionSettings(for: selectedProvider)
+            didPersistPendingProviderSwitch = persistConnectionSettings(
+                for: selectedProvider
+            )
         }
         didSet {
+            guard !isApplyingProviderConfiguration else { return }
+            guard didPersistPendingProviderSwitch else {
+                isApplyingProviderConfiguration = true
+                selectedProvider = oldValue
+                isApplyingProviderConfiguration = false
+                return
+            }
+            guard loadConnectionSettings(for: selectedProvider) else {
+                isApplyingProviderConfiguration = true
+                selectedProvider = oldValue
+                isApplyingProviderConfiguration = false
+                return
+            }
             persistSelectedProvider()
-            loadConnectionSettings(for: selectedProvider)
         }
     }
     var modelName: String {
@@ -62,6 +118,13 @@ final class AppState {
     var apiKey: String {
         didSet {
             guard !isApplyingProviderConfiguration else { return }
+            if apiKeyReadFailureProviders.contains(selectedProvider),
+               apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                connectionStatus = .needsAttention
+                validationMessage = Self.apiKeyReadFailureMessage
+                return
+            }
+            apiKeyReadFailureProviders.remove(selectedProvider)
             scheduleAPIKeyPersistence()
             markConfigurationAsEdited()
         }
@@ -143,12 +206,12 @@ final class AppState {
 
     var recentProjects: [NovelProject] {
         didSet {
+            guard !isHydratingAccountScopedData else { return }
             scheduleRecentProjectsPersistence(
                 snapshot: recentProjects,
                 deletedProjects: projectDeletionTombstones,
                 for: currentStorageScope
             )
-            guard !isHydratingAccountScopedData else { return }
             noteLocalProjectMutation()
             scheduleCloudSnapshotSave()
         }
@@ -166,10 +229,12 @@ final class AppState {
 
     let writingPillars: [StoryPillar] = [
         StoryPillar(
+            id: .characterArc,
             title: "角色弧线",
             detail: "把主角、反派与配角的欲望变化放在同一张时间轴里。"
         ),
         StoryPillar(
+            id: .chapterTree,
             title: "章节树",
             detail: "让大纲、场景目标和伏笔回收保持可追踪，而不是散落在备忘录里。"
         )
@@ -201,17 +266,27 @@ final class AppState {
         writingSkillCatalog: (any WritingSkillCatalogProviding)? = nil,
         commerceProvider: any CommerceEntitlementProviding = DeferredAppleCommerceProvider(),
         appleCredentialStateProvider: any AppleCredentialStateProviding =
-            SystemAppleCredentialStateProvider()
+            SystemAppleCredentialStateProvider(),
+        longformWritingDeskContextBuilder:
+            @escaping @MainActor (NovelProject) -> LongformWritingDeskContext =
+                LongformStorySystem.buildWritingDeskContext
     ) {
         let projectStore = projectStore ?? ProjectFileStore()
-        Self.migrateLegacyUserDefaultsIfNeeded(userDefaults, projectStore: projectStore)
+        let didMigrateLegacyDefaults = Self.migrateLegacyUserDefaultsIfNeeded(
+            userDefaults,
+            projectStore: projectStore
+        )
         Self.migrateRetiredOpenAICompatibleDefaults(userDefaults)
         ModelConnectionConfigurationStore.clearBundledCustomDefaultsIfNeeded(userDefaults)
         Self.migrateLegacyEmailScopeIfNeeded(userDefaults, projectStore: projectStore)
-        Self.migrateAPIKeysToKeychainIfNeeded(userDefaults, credentialStore: credentialStore)
+        let didMigrateManagedAPIKey = Self.migrateAPIKeysToKeychainIfNeeded(
+            userDefaults,
+            credentialStore: credentialStore
+        )
         let resolvedClientInstallationID =
             ModelConnectionConfigurationStore.loadOrCreateClientInstallationID(userDefaults: userDefaults)
-        let resolvedOfficialChannelCredential = OfficialChannelCredentialStore.load(
+        let resolvedOfficialChannelCredentialReadResult =
+            OfficialChannelCredentialStore.readResult(
             credentialStore: credentialStore
         )
         self.userDefaults = userDefaults
@@ -220,27 +295,39 @@ final class AppState {
         self.aiService = aiService
         self.credentialStore = credentialStore
         self.appleCredentialStateProvider = appleCredentialStateProvider
+        self.longformWritingDeskContextBuilder = longformWritingDeskContextBuilder
         self.clientInstallationID = resolvedClientInstallationID
-        self.officialChannelCredential = resolvedOfficialChannelCredential
+        self.officialChannelCredential =
+            resolvedOfficialChannelCredentialReadResult.value
+        if case .failure = resolvedOfficialChannelCredentialReadResult {
+            self.officialChannelCredentialReadFailed = true
+        }
         self.writingSkillCatalog = writingSkillCatalog ?? BundledWritingSkillCatalog()
         self.commerceProvider = commerceProvider
         let resolvedActiveAccount = Self.loadActiveAppleAccount(from: userDefaults)
         let resolvedStorageScope = resolvedActiveAccount?.userID
         let resolvedProvider = ModelConnectionConfigurationStore.loadSelectedProvider(userDefaults: userDefaults)
-        let resolvedProjectLoad = Self.loadRecentProjectsReport(
+        let resolvedAPIKeyReadResult =
+            ModelConnectionConfigurationStore.readAPIKeyFromKeychain(
+                for: resolvedProvider,
+                credentialStore: credentialStore
+            )
+        var resolvedProjectLoad = Self.loadRecentProjectsReport(
             for: resolvedStorageScope,
             from: userDefaults,
             projectStore: projectStore
         )
+        if !didMigrateLegacyDefaults {
+            resolvedProjectLoad.issues.append(Self.legacyProjectLoadIssue(
+                kind: .legacyDefaultsMigrationIncomplete,
+                scope: nil,
+                storageKey: LegacyStorageKey.recentProjects
+            ))
+        }
         self.activeAccount = resolvedActiveAccount
         self.selectedProvider = resolvedProvider
         self.modelName = Self.loadModelName(for: resolvedProvider, userDefaults: userDefaults)
-        self.apiKey = resolvedProvider.requiresAPIKey
-            ? ModelConnectionConfigurationStore.loadAPIKeyFromKeychain(
-                for: resolvedProvider,
-                credentialStore: credentialStore
-            ) ?? ""
-            : ""
+        self.apiKey = resolvedAPIKeyReadResult.value ?? ""
         self.baseURL = Self.loadBaseURL(for: resolvedProvider, userDefaults: userDefaults)
         self.autoValidateOnLaunch = Self.boolValue(
             forKey: StorageKey.autoValidateOnLaunch,
@@ -297,7 +384,20 @@ final class AppState {
 
         normalizeProjectSelection()
 
-        if autoValidateOnLaunch, hasEnteredConnectionInfo {
+        if case .failure = resolvedAPIKeyReadResult {
+            apiKeyReadFailureProviders.insert(resolvedProvider)
+        }
+
+        if !didMigrateManagedAPIKey {
+            connectionStatus = .needsAttention
+            validationMessage = "OpenWriting 托管凭据未能从钥匙串移除；旧凭据仍被保留，请检查钥匙串权限后重试。"
+        } else if officialChannelCredentialReadFailed {
+            connectionStatus = .needsAttention
+            validationMessage = Self.officialCredentialReadFailureMessage
+        } else if apiKeyReadFailureProviders.contains(resolvedProvider) {
+            connectionStatus = .needsAttention
+            validationMessage = Self.apiKeyReadFailureMessage
+        } else if autoValidateOnLaunch, hasEnteredConnectionInfo {
             validateConfiguration()
         } else {
             refreshIdleValidationMessage()
@@ -390,7 +490,9 @@ final class AppState {
 
     func validateConfiguration() {
         validationTask?.cancel()
-        flushAPIKeyPersistence()
+        guard flushAPIKeyPersistence() else {
+            return
+        }
 
         let resolution = resolveAIConfiguration()
         guard let configuration = resolution.configuration else {
@@ -436,7 +538,7 @@ final class AppState {
             genre: "待设定",
             summary: Self.defaultProjectSummary(for: length),
             storyLength: length,
-            updatedAt: Self.currentTimestampLabel(),
+            updatedAt: Self.currentTimestampValue(),
             currentChapterTitle: "开篇设定",
             currentChapterNumber: 1,
             writtenChapters: 0,
@@ -463,7 +565,7 @@ final class AppState {
 
     @discardableResult
     func importProjectBackup(_ project: NovelProject) -> NovelProject {
-        let timestamp = Self.currentTimestampLabel()
+        let timestamp = Self.currentTimestampValue()
         let importedProject: NovelProject
 
         if recentProjects.contains(where: { $0.id == project.id }) {
@@ -549,6 +651,10 @@ final class AppState {
     func deleteProject(_ projectID: NovelProject.ID) {
         guard let project = recentProjects.first(where: { $0.id == projectID }) else { return }
 
+        cancelAIMemoryExtractionTasks(
+            forProjectID: projectID,
+            scope: currentStorageScope
+        )
         projectDeletionTombstones = ProjectDeletionTombstone.normalized(
             projectDeletionTombstones + [
                 ProjectDeletionTombstone(
@@ -561,6 +667,8 @@ final class AppState {
             ]
         )
         recentProjects.removeAll { $0.id == projectID }
+        longformWritingDeskContextCache.removeValue(forKey: projectID)
+        longformWritingDeskContextGenerationByProjectID.removeValue(forKey: projectID)
 
         if projectSpaceScrollTarget == projectID {
             projectSpaceScrollTarget = nil
@@ -574,79 +682,79 @@ final class AppState {
     }
 
     func updateDraftText(_ text: String, for projectID: NovelProject.ID) {
-        updateProject(projectID) { project in
+        updateProject(projectID, longformContextImpact: .none) { project in
             project.draftText = text
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
     func updateCurrentChapterTitle(_ title: String, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.currentChapterTitle = title
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
     func updateCurrentChapterNumber(_ number: Int, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.currentChapterNumber = max(number, 1)
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
     func updateCurrentVolumeNumber(_ number: Int, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.currentVolumeNumber = max(number, 1)
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
     func updateChapterFocus(_ focus: String, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.chapterFocus = focus
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
     func updateOutlineText(_ text: String, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.outlineText = text
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
     func updateOutlineGenerationProfile(_ profile: OutlineGenerationProfile, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.outlineGenerationProfile = profile
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
     func updateStructureNotes(_ text: String, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.structureNotes = text
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
     func updateSceneProgressNotes(_ text: String, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.sceneProgressNotes = text
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
     func updateCharacterArcNotes(_ text: String, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.characterArcNotes = text
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
     func updateForeshadowNotes(_ text: String, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.foreshadowNotes = text
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
@@ -655,35 +763,35 @@ final class AppState {
     func addForeshadowEntry(_ entry: ForeshadowEntry, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.foreshadowList.add(entry)
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
     func removeForeshadowEntry(id: String, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.foreshadowList.remove(id: id)
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
     func updateForeshadowEntry(_ entry: ForeshadowEntry, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.foreshadowList.update(entry)
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
     func advanceForeshadow(id: String, to chapter: Int, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.foreshadowList.advanceForeshadow(id: id, to: chapter)
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
     func resolveForeshadow(id: String, at chapter: Int, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.foreshadowList.resolveForeshadow(id: id, at: chapter)
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
@@ -763,21 +871,21 @@ final class AppState {
                 }
             }
 
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
     func updateVolumePlanNotes(_ text: String, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.volumePlanNotes = text
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
     func updateActiveThreadsNotes(_ text: String, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.activeThreadsNotes = text
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
@@ -790,30 +898,30 @@ final class AppState {
             } else if let updatedAt {
                 project.outlineSummaryUpdatedAt = updatedAt
             } else if project.outlineSummaryUpdatedAt.isEmpty {
-                project.outlineSummaryUpdatedAt = Self.currentTimestampLabel()
+                project.outlineSummaryUpdatedAt = Self.currentTimestampValue()
             }
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
     func updateReferenceContextText(_ text: String, for projectID: NovelProject.ID) {
-        updateProject(projectID) { project in
+        updateProject(projectID, longformContextImpact: .none) { project in
             project.referenceContextText = text
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
     func updateSpecialRequirements(_ text: String, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.specialRequirements = text
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
     func updateWordTargetText(_ text: String, for projectID: NovelProject.ID) {
-        updateProject(projectID) { project in
+        updateProject(projectID, longformContextImpact: .none) { project in
             project.wordTargetText = text
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
@@ -827,9 +935,9 @@ final class AppState {
             } else if let updatedAt {
                 project.globalMemoryUpdatedAt = updatedAt
             } else if project.globalMemoryUpdatedAt.isEmpty {
-                project.globalMemoryUpdatedAt = Self.currentTimestampLabel()
+                project.globalMemoryUpdatedAt = Self.currentTimestampValue()
             }
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
@@ -847,7 +955,7 @@ final class AppState {
                 strandState.constellationMaxGap = config.constellationMaxGap
                 project.strandWeaveState = strandState
             }
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
@@ -888,7 +996,7 @@ final class AppState {
                 project.qualityReviewReports = Array(project.qualityReviewReports.prefix(80))
             }
 
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
@@ -902,7 +1010,7 @@ final class AppState {
         var outcome = ChapterTreeRefreshApplyOutcome()
 
         updateProject(projectID) { project in
-            let timestamp = updatedAt ?? Self.currentTimestampLabel()
+            let timestamp = updatedAt ?? Self.currentTimestampValue()
             func recordChapterTreeDecision(_ decision: ChapterTreeSectionMergeDecision, label: String) {
                 switch decision {
                 case .accepted:
@@ -955,7 +1063,7 @@ final class AppState {
             recordChapterTreeDecision(foreshadowDecision, label: "伏笔回收")
 
             if outcome.acceptedSections > 0 {
-                project.updatedAt = Self.currentTimestampLabel()
+                project.updatedAt = Self.currentTimestampValue()
             }
         }
 
@@ -971,11 +1079,11 @@ final class AppState {
             project.globalMemorySnapshot = snapshot
             project.continuityNotes = snapshot.formattedText
             if snapshot.hasStructuredContent {
-                project.globalMemoryUpdatedAt = updatedAt ?? Self.currentTimestampLabel()
+                project.globalMemoryUpdatedAt = updatedAt ?? Self.currentTimestampValue()
             } else {
                 project.globalMemoryUpdatedAt = ""
             }
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
@@ -987,7 +1095,7 @@ final class AppState {
             } else {
                 project.draftText += "\n\n" + text.trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
@@ -1199,6 +1307,7 @@ final class AppState {
                     let preservedActiveProjectID = activeProjectID
                     let preservedSelectedProjectID = selectedProjectID
                     isHydratingAccountScopedData = true
+                    invalidateAllLongformWritingDeskContexts()
                     recentProjects = reloadedProjects
                     if let preservedActiveProjectID,
                        recentProjects.contains(where: { $0.id == preservedActiveProjectID }) {
@@ -1274,7 +1383,7 @@ final class AppState {
             let normalizedVolumeNumber = max(project.currentVolumeNumber, 1)
             let normalizedChapterNumber = max(project.currentChapterNumber, 1)
             let normalizedChapterTitle = Self.normalizedChapterTitle(project.currentChapterTitle)
-            let timestamp = Self.currentTimestampLabel()
+            let timestamp = Self.currentTimestampValue()
 
             if let existingIndex = project.chapterDrafts.firstIndex(where: {
                 $0.volumeNumber == normalizedVolumeNumber && $0.chapterNumber == normalizedChapterNumber
@@ -1333,7 +1442,7 @@ final class AppState {
             project.currentChapterTitle = chapterDraft.chapterTitle
             project.draftText = chapterDraft.content
             project.writtenChapters = max(project.writtenChapters, project.savedChapterCount, chapterDraft.chapterNumber)
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
@@ -1363,7 +1472,7 @@ final class AppState {
             }
 
             project.writtenChapters = max(project.writtenChapters, project.savedChapterCount, chapterDraft.chapterNumber)
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
@@ -1384,7 +1493,7 @@ final class AppState {
             guard !trimmedContent.isEmpty else { return }
 
             let normalizedTitle = Self.normalizedChapterTitle(title)
-            let timestamp = Self.currentTimestampLabel()
+            let timestamp = Self.currentTimestampValue()
             let hasMeaningfulChange = project.chapterDrafts[existingIndex].chapterTitle != normalizedTitle
                 || project.chapterDrafts[existingIndex].content != trimmedContent
             let previousSnapshot = hasMeaningfulChange
@@ -1441,7 +1550,7 @@ final class AppState {
                   let version = project.chapterDrafts[existingIndex].versionHistory.first(where: { $0.id == versionID })
             else { return }
 
-            let timestamp = Self.currentTimestampLabel()
+            let timestamp = Self.currentTimestampValue()
             let currentSnapshot = project.chapterDrafts[existingIndex].versionSnapshot(
                 reason: "回滚前自动版本",
                 savedAt: timestamp
@@ -1479,7 +1588,7 @@ final class AppState {
 
     func touchProject(_ projectID: NovelProject.ID) {
         updateProject(projectID) { project in
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
@@ -1487,14 +1596,14 @@ final class AppState {
         guard !documents.isEmpty else { return }
         updateProject(projectID) { project in
             project.referenceDocuments.insert(contentsOf: documents, at: 0)
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
     func removeReferenceDocument(_ documentID: ReferenceDocument.ID, for projectID: NovelProject.ID) {
         updateProject(projectID) { project in
             project.referenceDocuments.removeAll { $0.id == documentID }
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
@@ -1506,7 +1615,7 @@ final class AppState {
         updateProject(projectID) { project in
             guard let index = project.referenceDocuments.firstIndex(where: { $0.id == documentID }) else { return }
             project.referenceDocuments[index].category = category
-            project.updatedAt = Self.currentTimestampLabel()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
@@ -1518,7 +1627,13 @@ final class AppState {
             var snapshot = project.globalMemorySnapshot.hasStructuredContent
                 ? project.globalMemorySnapshot
                 : GlobalMemorySnapshot.parse(from: project.continuityNotes)
-            let stampedSummary = "- 章节树总结（\(project.outlineSummaryUpdatedAt.isEmpty ? Self.currentTimestampLabel() : project.outlineSummaryUpdatedAt)）：\(summary.replacingOccurrences(of: "\n", with: " "))"
+            let displayTimestamp = project.outlineSummaryUpdatedAt.isEmpty
+                ? PersistedTimestampCodec.displayLabel(
+                    for: Date(),
+                    style: .project
+                )
+                : project.outlineSummaryUpdatedAt
+            let stampedSummary = "- 章节树总结（\(displayTimestamp)）：\(summary.replacingOccurrences(of: "\n", with: " "))"
             let existingRecentDevelopments = snapshot.recentDevelopments.trimmingCharacters(in: .whitespacesAndNewlines)
 
             if existingRecentDevelopments.isEmpty {
@@ -1529,8 +1644,8 @@ final class AppState {
 
             project.globalMemorySnapshot = snapshot
             project.continuityNotes = snapshot.formattedText
-            project.globalMemoryUpdatedAt = Self.currentTimestampLabel()
-            project.updatedAt = Self.currentTimestampLabel()
+            project.globalMemoryUpdatedAt = Self.currentTimestampValue()
+            project.updatedAt = Self.currentTimestampValue()
         }
     }
 
@@ -1646,10 +1761,10 @@ final class AppState {
     }
 
     func navigationDestination(for pillar: StoryPillar) -> SidebarItem {
-        switch pillar.title {
-        case "章节树":
+        switch pillar.id {
+        case .chapterTree:
             return .outline
-        default:
+        case .characterArc:
             return .projects
         }
     }
@@ -1682,6 +1797,16 @@ final class AppState {
 
     func refreshIdleValidationMessage() {
         validationTask?.cancel()
+        if officialChannelCredentialReadFailed {
+            connectionStatus = .needsAttention
+            validationMessage = Self.officialCredentialReadFailureMessage
+            return
+        }
+        if apiKeyReadFailureProviders.contains(selectedProvider) {
+            connectionStatus = .needsAttention
+            validationMessage = Self.apiKeyReadFailureMessage
+            return
+        }
         connectionStatus = .idle
         guard hasAcceptedAIDataTransfer else {
             validationMessage = "启用 AI 功能前需要先同意数据使用告知。"
@@ -1703,6 +1828,11 @@ final class AppState {
     }
 
     private func markConfigurationAsEdited() {
+        guard !apiKeyReadFailureProviders.contains(selectedProvider) else {
+            connectionStatus = .needsAttention
+            validationMessage = Self.apiKeyReadFailureMessage
+            return
+        }
         refreshIdleValidationMessage()
     }
 
@@ -1734,11 +1864,20 @@ final class AppState {
             : ""
         let trimmedModelName = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
 
+        if selectedProvider == .openAICompatible,
+           officialChannelCredentialReadFailed {
+            return AIConfigurationResolution(
+                configuration: nil,
+                normalizedBaseURLString: normalizedBaseURLString,
+                failureMessage: Self.officialCredentialReadFailureMessage
+            )
+        }
+
         guard hasValidBaseURL else {
             return AIConfigurationResolution(
                 configuration: nil,
                 normalizedBaseURLString: nil,
-                failureMessage: "Base URL 需要是完整的 http 或 https 地址。"
+                failureMessage: "Base URL 需要是完整的 https 地址；仅 localhost、127.0.0.1 或 ::1 可使用 http。"
             )
         }
 
@@ -1774,7 +1913,7 @@ final class AppState {
             return AIConfigurationResolution(
                 configuration: nil,
                 normalizedBaseURLString: nil,
-                failureMessage: "Base URL 需要是完整的 http 或 https 地址。"
+                failureMessage: "Base URL 需要是完整的 https 地址；仅 localhost、127.0.0.1 或 ::1 可使用 http。"
             )
         }
 
@@ -1813,15 +1952,57 @@ final class AppState {
         persistBaseURL()
     }
 
-    func updateProject(_ projectID: NovelProject.ID, mutate: (inout NovelProject) -> Void) {
+    func longformWritingDeskContext(
+        for project: NovelProject
+    ) -> LongformWritingDeskContext {
+        let generation =
+            longformWritingDeskContextGenerationByProjectID[project.id, default: 0]
+        let key = LongformWritingDeskContextCacheKey(
+            projectID: project.id,
+            structuralGeneration: generation,
+            currentVolumeNumber: project.currentVolumeNumber,
+            currentChapterNumber: project.currentChapterNumber
+        )
+        if let cached = longformWritingDeskContextCache[project.id],
+           cached.key == key {
+            return cached.context
+        }
+
+        let context = longformWritingDeskContextBuilder(project)
+        longformWritingDeskContextCache[project.id] =
+            CachedLongformWritingDeskContext(
+                key: key,
+                context: context
+            )
+        return context
+    }
+
+    func invalidateLongformWritingDeskContext(for projectID: NovelProject.ID) {
+        longformWritingDeskContextCache.removeValue(forKey: projectID)
+        longformWritingDeskContextGenerationByProjectID[projectID, default: 0] &+= 1
+    }
+
+    func invalidateAllLongformWritingDeskContexts() {
+        longformWritingDeskContextCache.removeAll()
+        longformWritingDeskContextGenerationByProjectID.removeAll()
+    }
+
+    func updateProject(
+        _ projectID: NovelProject.ID,
+        longformContextImpact: LongformWritingDeskContextMutationImpact = .structural,
+        mutate: (inout NovelProject) -> Void
+    ) {
         guard let index = recentProjects.firstIndex(where: { $0.id == projectID }) else { return }
         var updatedProject = recentProjects[index]
         mutate(&updatedProject)
         recentProjects[index] = updatedProject
+        if longformContextImpact == .structural {
+            invalidateLongformWritingDeskContext(for: projectID)
+        }
     }
 
-    static func currentTimestampLabel() -> String {
-        PersistedTimestampCodec.displayLabel(for: Date(), style: .project)
+    static func currentTimestampValue() -> String {
+        PersistedTimestampCodec.storageValue(for: Date())
     }
 
     static func boundedPromptContext(_ text: String, limit: Int) -> String {
@@ -2052,7 +2233,7 @@ final class AppState {
 
         let health = project.longformRuntimeHealth
         let healthHints = health.issues
-            .filter { $0.status != .passed && $0.title != "长篇合同尚未落盘" }
+            .filter { $0.status != .passed && $0.shouldIncludeInWritingContext }
             .prefix(3)
             .map { "\($0.title)：\($0.repairHint)" }
             .joined(separator: "\n")

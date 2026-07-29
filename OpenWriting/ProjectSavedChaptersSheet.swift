@@ -3,6 +3,8 @@ import SwiftUI
 struct ProjectSavedChaptersSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appAccentInkColor) private var accentInkColor
+    @Environment(\.appAccentStrokeColor) private var accentStrokeColor
     @Bindable var appState: AppState
     let projectID: NovelProject.ID
 
@@ -35,13 +37,13 @@ struct ProjectSavedChaptersSheet: View {
             accentColor: palette.coolAccent,
             textPrimary: palette.textPrimary,
             textSecondary: palette.textSecondary,
-            selectedNumberColor: palette.coolAccent,
+            selectedNumberColor: accentInkColor,
             numberColor: palette.textSecondary,
             selectedNumberBackground: palette.coolAccent.opacity(palette.isDark ? 0.18 : 0.12),
             numberBackground: palette.panelBase.opacity(palette.isDark ? 0.70 : 0.52),
             selectedRowBackground: palette.selectedPanel,
             rowBackground: palette.panelBase.opacity(palette.isDark ? 0.82 : 0.68),
-            selectedRowBorder: palette.coolAccent.opacity(0.36),
+            selectedRowBorder: accentStrokeColor,
             rowBorder: palette.stroke,
             rowCornerRadius: 20,
             showsPreviewText: true,

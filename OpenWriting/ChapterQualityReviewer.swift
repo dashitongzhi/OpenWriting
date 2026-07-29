@@ -13,7 +13,7 @@ import OSLog
 
 // MARK: - Review Dimensions (9 unified dimensions)
 
-enum ReviewDimension: String, CaseIterable, Codable, Identifiable {
+nonisolated enum ReviewDimension: String, CaseIterable, Codable, Identifiable {
     // From ChapterQualityReviewer (original 6)
     case settingConsistency = "setting"      // 设定一致性
     case timelineConsistency = "timeline"    // 时间线
@@ -80,7 +80,7 @@ enum ReviewDimension: String, CaseIterable, Codable, Identifiable {
 
 // MARK: - Review Issue
 
-struct ReviewIssue: Identifiable, Codable, Hashable {
+nonisolated struct ReviewIssue: Identifiable, Codable, Hashable {
     let id: String
     let dimension: ReviewDimension
     let severity: ReviewSeverity
@@ -113,7 +113,7 @@ struct ReviewIssue: Identifiable, Codable, Hashable {
 
 // MARK: - Review Severity (webnovel-writer penalty model)
 
-enum ReviewSeverity: String, Codable, CaseIterable {
+nonisolated enum ReviewSeverity: String, Codable, CaseIterable {
     case critical    // blocking — auto-rejects chapter
     case high        // non-blocking, must address
     case medium      // non-blocking, should address
@@ -143,7 +143,7 @@ enum ReviewSeverity: String, Codable, CaseIterable {
 
 /// Primary output of the unified quality review system.
 /// Uses 100-base scoring with severity penalties (webnovel-writer methodology).
-struct ChapterReviewResult: Codable, Hashable {
+nonisolated struct ChapterReviewResult: Codable, Hashable {
     /// Computed score: 100 minus sum of issue penalties, clamped to 0...100.
     let overallScore: Int
     /// Per-dimension scores (1-10 scale from AI, or computed).
@@ -278,7 +278,7 @@ struct ChapterReviewResult: Codable, Hashable {
 
 // MARK: - Review Grade (from QualityReviewService, kept for UI)
 
-enum ReviewGrade: String, Codable {
+nonisolated enum ReviewGrade: String, Codable {
     case excellent = "优秀"
     case good = "良好"
     case fair = "一般"

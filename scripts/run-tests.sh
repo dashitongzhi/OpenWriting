@@ -1,7 +1,4 @@
-#!/bin/sh
-if [ -z "${ZSH_VERSION:-}" ]; then
-  exec /bin/zsh -f "$0" "$@"
-fi
+#!/bin/zsh -f
 
 set -euo pipefail
 
@@ -14,7 +11,6 @@ HOST_ARCH="$(uname -m)"
 DESTINATION="platform=macOS,arch=$HOST_ARCH"
 EXPECTED_MACOSX_DEPLOYMENT_TARGET="14.0"
 MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-$EXPECTED_MACOSX_DEPLOYMENT_TARGET}"
-XCTEST_CLASS_PATTERN='^[[:space:]]*(final[[:space:]]+)?class[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:[^{]*XCTestCase'
 
 export DEVELOPER_DIR
 
@@ -24,15 +20,6 @@ if [[ "$MACOSX_DEPLOYMENT_TARGET" != "$EXPECTED_MACOSX_DEPLOYMENT_TARGET" ]]; th
 fi
 
 zsh -f "$SCRIPT_DIR/verify-xctest-membership.sh"
-
-test_classes=("${(@f)$(rg --no-filename "$XCTEST_CLASS_PATTERN" "$REPO_ROOT/Tests/OpenWritingTests" -g '*Tests.swift' \
-    | sed -E 's/^[[:space:]]*(final[[:space:]]+)?class[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\2/' \
-    | sort -u)}")
-
-if (( ${#test_classes[@]} == 0 )); then
-    echo "error: no OpenWriting XCTest classes discovered" >&2
-    exit 1
-fi
 
 "$XCODEBUILD" \
     build-for-testing \
@@ -44,19 +31,15 @@ fi
     MACOSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
     CODE_SIGNING_ALLOWED=NO
 
-for test_class in "${test_classes[@]}"; do
-    echo "Running OpenWritingTests/$test_class"
-    "$XCODEBUILD" \
-        test-without-building \
-        -project "$REPO_ROOT/OpenWriting.xcodeproj" \
-        -scheme OpenWriting \
-        -configuration Debug \
-        -destination "$DESTINATION" \
-        -derivedDataPath "$DERIVED_DATA_PATH" \
-        -parallel-testing-enabled NO \
-        "-only-testing:OpenWritingTests/$test_class" \
-        MACOSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
-        CODE_SIGNING_ALLOWED=NO
-done
+"$XCODEBUILD" \
+    test-without-building \
+    -project "$REPO_ROOT/OpenWriting.xcodeproj" \
+    -scheme OpenWriting \
+    -configuration Debug \
+    -destination "$DESTINATION" \
+    -derivedDataPath "$DERIVED_DATA_PATH" \
+    -parallel-testing-enabled NO \
+    MACOSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
+    CODE_SIGNING_ALLOWED=NO
 
 echo "All OpenWriting tests passed"

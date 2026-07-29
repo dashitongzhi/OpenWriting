@@ -1,7 +1,4 @@
-#!/bin/sh
-if [ -z "${ZSH_VERSION:-}" ]; then
-  exec /bin/zsh -f "$0" "$@"
-fi
+#!/bin/zsh -f
 
 set -euo pipefail
 
@@ -69,6 +66,7 @@ swift_files=(
   "$REPO_ROOT/OpenWriting/ModelConnectionConfigurationStore.swift"
   "$REPO_ROOT/OpenWriting/AccountProjectSnapshot.swift"
   "$REPO_ROOT/OpenWriting/CloudProjectPayloadCodec.swift"
+  "$REPO_ROOT/OpenWriting/CloudProjectMergePolicy.swift"
   "$REPO_ROOT/OpenWriting/AccountSync.swift"
   "$REPO_ROOT/OpenWriting/AppLogger.swift"
   "$REPO_ROOT/OpenWriting/UserFacingError.swift"

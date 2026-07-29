@@ -121,7 +121,10 @@ extension AIWritingService {
                 )
                 reviewResult = initialReview
 
-                if shouldRepairCandidate(review: initialReview, project: project) {
+                if shouldRepairCandidate(
+                    review: initialReview,
+                    minimumAcceptedScore: support.minimumAcceptedScore
+                ) {
                     do {
                         let repairedDraft = try await completeEnhancedText(
                             configuration: configuration,
@@ -195,7 +198,7 @@ extension AIWritingService {
             text: finalText,
             validation: validation,
             review: reviewResult,
-            minimumAcceptedScore: LongformStorySystem.minimumAcceptedScore(for: project.storyLength),
+            minimumAcceptedScore: support.minimumAcceptedScore,
             strandWarning: warnings.first,
             memoryUpdate: MemoryUpdateContext(
                 strandState: strandState,
@@ -204,7 +207,7 @@ extension AIWritingService {
         )
     }
 
-    private static func enhancedWritingRevisionUserPrompt(
+    static func enhancedWritingRevisionUserPrompt(
         project: NovelProject,
         mode: AIWritingMode,
         additionalInstruction: String,
@@ -213,50 +216,29 @@ extension AIWritingService {
         writingPlan: String,
         draft: String
     ) -> String {
-        """
-        当前章节：\(project.currentChapterSummary)
-        本章目标：\(project.chapterFocus)
+        let prefix = """
+        当前章节：\(EnhancedPromptBudget.boundedContent(
+            project.currentChapterSummary,
+            fallback: project.currentChapterLabel,
+            limit: 300
+        ))
+        本章目标：\(EnhancedPromptBudget.boundedContent(
+            project.chapterFocus,
+            fallback: "承接当前草稿并推进一个明确的新情节拍点。",
+            limit: 700
+        ))
         写作模式：\(mode.title)
         字数目标：\(length.instruction)
 
-        草稿箱当前正文（候选正文应接在它后面）：
-        \(support.currentDraftExcerpt)
-
-        上一章节末尾 400 字（只能用于承接，不要复述）：
-        \(normalized(project.draftContinuationCache, fallback: "暂无上一章节结尾缓存。"))
-
-        本次续写拍点：
-        \(normalized(writingPlan, fallback: "暂无拍点，请至少推进一个新的情节增量。"))
-
-        增强记忆：
-        \(support.enhancedMemoryContext)
-
-        后台长篇合同：
-        \(support.longformStorySystemContext)
-
-        章节树关键约束：
-        \(support.chapterTreeFocus)
-
         本章执行验收：
-        \(writingExecutionContractPrompt(project: project))
+        \(EnhancedPromptBudget.boundedContent(
+            support.writingExecutionContractContext,
+            fallback: "依据本章目标、草稿箱最后状态和章节树约束推进。",
+            limit: 4_200
+        ))
+        """
 
-        风格指纹：
-        \(support.styleFingerprint)
-
-        节奏状态：
-        \(support.strandContext)
-
-        题材配置：
-        \(support.genreTemplateContext)
-
-        特殊要求与启用写作 Skill：
-        \(normalized(project.specialRequirements, fallback: "暂无特殊要求或启用 Skill。"))
-
-        额外指令：
-        \(normalized(additionalInstruction, fallback: "暂无额外指令。"))
-
-        待检查候选正文：
-        \(draft)
+        let suffix = """
 
         修订要求：
         1. 如果开头在复述上一章或解释既有设定，请改成直接承接草稿最后状态的新动作、新对白或新观察。
@@ -265,9 +247,31 @@ extension AIWritingService {
         4. 必须按增强记忆、后台长篇合同、节奏状态和本章执行验收修订，不能只做表层润色。
         5. 只输出修订后的完整候选正文。
         """
+
+        let sections = [
+            ContextSection(
+                label: "待检查候选正文",
+                content: normalized(draft, fallback: "暂无候选正文，请按本章目标生成可修订正文。"),
+                category: .currentDraft
+            )
+        ] + enhancedSharedContextSections(
+            project: project,
+            support: support,
+            currentDraftLabel: "草稿箱当前正文（候选正文应接在它后面）",
+            writingPlan: writingPlan,
+            writingPlanFallback: "暂无拍点，请至少推进一个新的情节增量。",
+            additionalInstruction: additionalInstruction,
+            includePreviousEnding: true
+        )
+
+        return EnhancedPromptBudget.render(
+            prefix: prefix,
+            rankedSections: ContextRanker.rank(sections, project: project),
+            suffix: suffix
+        )
     }
 
-    private static func enhancedWritingReviewRepairUserPrompt(
+    static func enhancedWritingReviewRepairUserPrompt(
         project: NovelProject,
         mode: AIWritingMode,
         additionalInstruction: String,
@@ -277,47 +281,36 @@ extension AIWritingService {
         draft: String,
         review: ChapterReviewResult
     ) -> String {
-        """
-        当前章节：\(project.currentChapterSummary)
-        本章目标：\(project.chapterFocus)
+        let prefix = """
+        当前章节：\(EnhancedPromptBudget.boundedContent(
+            project.currentChapterSummary,
+            fallback: project.currentChapterLabel,
+            limit: 300
+        ))
+        本章目标：\(EnhancedPromptBudget.boundedContent(
+            project.chapterFocus,
+            fallback: "承接当前草稿并修复审查发现的问题。",
+            limit: 700
+        ))
         写作模式：\(mode.title)
         字数目标：\(length.instruction)
 
-        草稿箱当前正文（返修后的候选正文仍应接在它后面）：
-        \(support.currentDraftExcerpt)
-
-        本次续写拍点：
-        \(normalized(writingPlan, fallback: "请至少推进一个新的情节增量。"))
-
-        增强记忆：
-        \(support.enhancedMemoryContext)
-
-        后台长篇合同：
-        \(support.longformStorySystemContext)
-
         本章执行验收：
-        \(writingExecutionContractPrompt(project: project))
-
-        风格指纹：
-        \(support.styleFingerprint)
-
-        节奏状态：
-        \(support.strandContext)
-
-        题材配置：
-        \(support.genreTemplateContext)
-
-        特殊要求与启用写作 Skill：
-        \(normalized(project.specialRequirements, fallback: "暂无特殊要求或启用 Skill。"))
-
-        额外指令：
-        \(normalized(additionalInstruction, fallback: "暂无额外指令。"))
+        \(EnhancedPromptBudget.boundedContent(
+            support.writingExecutionContractContext,
+            fallback: "依据本章目标、草稿箱最后状态和章节树约束返修。",
+            limit: 4_000
+        ))
 
         质量审查反馈（必须逐条修复 critical/high 问题）：
-        \(review.summary)
+        \(EnhancedPromptBudget.boundedContent(
+            review.summary,
+            fallback: "暂无结构化审查摘要，请至少修复连续性与推进不足。",
+            limit: 2_600
+        ))
+        """
 
-        待返修候选正文：
-        \(draft)
+        let suffix = """
 
         返修要求：
         1. 修掉审查反馈里的阻断和高优先级问题，不要只改几个词。
@@ -326,51 +319,81 @@ extension AIWritingService {
         4. 必须维护增强记忆、后台长篇合同和节奏状态中的连续性约束。
         5. 只输出返修后的完整候选正文。
         """
+
+        let sections = [
+            ContextSection(
+                label: "待返修候选正文",
+                content: normalized(draft, fallback: "暂无候选正文，请依据审查反馈生成返修正文。"),
+                category: .currentDraft
+            )
+        ] + enhancedSharedContextSections(
+            project: project,
+            support: support,
+            currentDraftLabel: "草稿箱当前正文（返修后的候选正文仍应接在它后面）",
+            writingPlan: writingPlan,
+            additionalInstruction: additionalInstruction
+        )
+
+        return EnhancedPromptBudget.render(
+            prefix: prefix,
+            rankedSections: ContextRanker.rank(sections, project: project),
+            suffix: suffix
+        )
     }
 
-    private static func enhancedWritingSupplementUserPrompt(
+    static func enhancedWritingSupplementUserPrompt(
         project: NovelProject,
         length: AIWritingLength,
         support: EnhancedWritingSupport,
         writingPlan: String,
         draft: String
     ) -> String {
-        """
-        当前章节：\(project.currentChapterSummary)
-        本章目标：\(project.chapterFocus)
+        let prefix = """
+        当前章节：\(EnhancedPromptBudget.boundedContent(
+            project.currentChapterSummary,
+            fallback: project.currentChapterLabel,
+            limit: 300
+        ))
+        本章目标：\(EnhancedPromptBudget.boundedContent(
+            project.chapterFocus,
+            fallback: "继续推进当前场景。",
+            limit: 700
+        ))
         目标长度：\(length.instruction)
         当前候选正文约 \(draft.count) 字，低于目标下限，请补足同一场景。
 
-        草稿箱当前正文：
-        \(support.currentDraftExcerpt)
-
-        本次续写拍点：
-        \(normalized(writingPlan, fallback: "请继续推进当前场景。"))
-
-        增强记忆：
-        \(support.enhancedMemoryContext)
-
-        后台长篇合同：
-        \(support.longformStorySystemContext)
-
         本章执行验收：
-        \(writingExecutionContractPrompt(project: project))
+        \(EnhancedPromptBudget.boundedContent(
+            support.writingExecutionContractContext,
+            fallback: "依据本章目标、草稿箱最后状态和章节树约束补写。",
+            limit: 4_200
+        ))
+        """
 
-        节奏状态：
-        \(support.strandContext)
-
-        已有候选正文（不要重复）：
-        \(draft)
-
-        题材配置：
-        \(support.genreTemplateContext)
-
-        特殊要求与启用写作 Skill：
-        \(normalized(project.specialRequirements, fallback: "暂无特殊要求或启用 Skill。"))
+        let suffix = """
 
         输出要求：
         只输出补写部分，接在已有候选正文之后即可。
         """
+
+        let sections = [
+            ContextSection(
+                label: "已有候选正文（不要重复）",
+                content: normalized(draft, fallback: "暂无候选正文，请从草稿箱最后状态继续补写。"),
+                category: .currentDraft
+            )
+        ] + enhancedSharedContextSections(
+            project: project,
+            support: support,
+            writingPlan: writingPlan,
+            writingPlanFallback: "请继续推进当前场景。"
+        )
+
+        return EnhancedPromptBudget.render(
+            prefix: prefix,
+            rankedSections: ContextRanker.rank(sections, project: project),
+            suffix: suffix
+        )
     }
 
     // MARK: - Enhanced System Prompt
@@ -416,7 +439,7 @@ extension AIWritingService {
 
     // MARK: - Enhanced User Prompt
 
-    private static func enhancedUserPrompt(
+    static func enhancedUserPrompt(
         project: NovelProject,
         mode: AIWritingMode,
         additionalInstruction: String,
@@ -424,18 +447,83 @@ extension AIWritingService {
         support: EnhancedWritingSupport,
         writingPlan: String
     ) -> String {
-        let previousChapterSummary = normalized(
+        let previousChapterSummary = EnhancedPromptBudget.boundedContent(
             project.previousChapterDraftForContinuation?.chapterSummary ?? "",
-            fallback: "暂无上一已保存章节，请直接依据当前章节目标起笔。"
+            fallback: "暂无上一已保存章节，请直接依据当前章节目标起笔。",
+            limit: 500
         )
-        let previousChapterEnding = normalized(
+        let previousChapterEnding = EnhancedPromptBudget.boundedContent(
             project.draftContinuationCache,
-            fallback: "暂无上一章节结尾缓存，请依据当前章节目标稳妥起笔。"
+            fallback: "暂无上一章节结尾缓存，请依据当前章节目标稳妥起笔。",
+            limit: 500
         )
         let recentChapterSummaries = project.previousChapterDraftsForContinuation
             .prefix(3)
             .map(\.chapterSummary)
             .joined(separator: "、")
+        let boundedRecentChapterSummaries = EnhancedPromptBudget.boundedContent(
+            recentChapterSummaries,
+            fallback: "暂无可参考的已保存章节标题。",
+            limit: 400
+        )
+        let boundedProjectTitle = EnhancedPromptBudget.boundedContent(
+            project.title,
+            fallback: "未命名项目",
+            limit: 160
+        )
+        let boundedGenre = EnhancedPromptBudget.boundedContent(
+            project.genre,
+            fallback: "未指定题材",
+            limit: 120
+        )
+        let boundedSummary = EnhancedPromptBudget.boundedContent(
+            project.summary,
+            fallback: "暂无项目摘要。",
+            limit: 700
+        )
+        let boundedStoryDirective = EnhancedPromptBudget.boundedContent(
+            project.storyLength.promptDirective,
+            fallback: "按当前项目规模稳步推进。",
+            limit: 800
+        )
+        let boundedChapterSummary = EnhancedPromptBudget.boundedContent(
+            project.currentChapterSummary,
+            fallback: project.currentChapterLabel,
+            limit: 300
+        )
+        let boundedChapterFocus = EnhancedPromptBudget.boundedContent(
+            project.chapterFocus,
+            fallback: "承接当前草稿并推进一个明确的新情节拍点。",
+            limit: 700
+        )
+        let boundedWritingPlan = EnhancedPromptBudget.boundedContent(
+            writingPlan,
+            fallback: "请先承接当前草稿，再推进一个明确的新情节拍点。",
+            limit: 1_200
+        )
+        let boundedExecutionContract = EnhancedPromptBudget.boundedContent(
+            support.writingExecutionContractContext,
+            fallback: "暂无后台长篇合同，请至少依据本章目标、草稿箱最后状态和章节树约束推进。",
+            limit: 4_200
+        )
+        let boundedNarrativeStage = EnhancedPromptBudget.boundedContent(
+            [
+                project.narrativeStage.pacingDirective,
+                project.narrativeStage.contextWeightHint
+            ].joined(separator: "\n"),
+            fallback: "按当前章节位置保持自然节奏。",
+            limit: 800
+        )
+        let boundedWordTarget = EnhancedPromptBudget.boundedContent(
+            project.wordTargetText,
+            fallback: "暂无专门字数设定，请按正常章节节奏展开。",
+            limit: 300
+        )
+        let boundedAdditionalInstruction = EnhancedPromptBudget.boundedContent(
+            additionalInstruction,
+            fallback: "延续当前场景，不要跳章节。",
+            limit: 900
+        )
 
         // Build rankable context sections
         var sections: [ContextSection] = []
@@ -509,43 +597,39 @@ extension AIWritingService {
         // Rank sections by relevance
         let rankedSections = ContextRanker.rank(sections, project: project)
 
-        // Assemble fixed prefix
-        var prompt = """
-        项目名称：\(project.title)
-        类型：\(project.genre)
+        // Prefix and suffix are bounded before rankable context is added so
+        // the 16,000-character limit applies to the complete user prompt.
+        let prefix = """
+        项目名称：\(boundedProjectTitle)
+        类型：\(boundedGenre)
         创作规模：\(project.storyLength.title)
-        项目摘要：\(project.summary)
+        项目摘要：\(boundedSummary)
         当前进度：已创作 \(project.writtenChapters) 章
 
         规模要求：
-        \(project.storyLength.promptDirective)
+        \(boundedStoryDirective)
 
-        当前章节：\(project.currentChapterSummary)
-        本章目标：\(project.chapterFocus)
+        当前章节：\(boundedChapterSummary)
+        本章目标：\(boundedChapterFocus)
         当前正文概况：\(project.draftWordCount) 字，约 \(project.draftParagraphCount) 段
 
         本次写作模式：
         \(mode.title)；\(mode.instruction)
 
         本次续写拍点：
-        \(normalized(writingPlan, fallback: "请先承接当前草稿，再推进一个明确的新情节拍点。"))
+        \(boundedWritingPlan)
 
         长篇后台执行合同（固定高优先级，必须先于普通参考文本执行）：
-        \(writingExecutionContractPrompt(project: project))
+        \(boundedExecutionContract)
         """
 
-        // Append ranked context sections under one deterministic total budget.
-        prompt += RankedContextBudget.render(rankedSections)
-
-        // Append fixed suffix (always at end)
-        prompt += """
+        let suffix = """
 
         叙事阶段：
-        \(project.narrativeStage.pacingDirective)
-        \(project.narrativeStage.contextWeightHint)
+        \(boundedNarrativeStage)
 
         字数设定：
-        \(normalized(project.wordTargetText, fallback: "暂无专门字数设定，请按正常章节节奏展开。"))
+        \(boundedWordTarget)
 
         上一已保存章节：
         \(previousChapterSummary)
@@ -554,10 +638,10 @@ extension AIWritingService {
         \(previousChapterEnding)
 
         近三章标题：
-        \(normalized(recentChapterSummaries, fallback: "暂无可参考的已保存章节标题。"))
+        \(boundedRecentChapterSummaries)
 
         额外指令：
-        \(normalized(additionalInstruction, fallback: "延续当前场景，不要跳章节。"))
+        \(boundedAdditionalInstruction)
 
         输出要求：
         \(length.instruction)
@@ -571,63 +655,160 @@ extension AIWritingService {
         请直接输出续写后的正文。
         """
 
-        return prompt
+        return EnhancedPromptBudget.render(
+            prefix: prefix,
+            rankedSections: rankedSections,
+            suffix: suffix
+        )
     }
 
     // MARK: - Enhanced Writing Plan Prompt
 
-    private static func enhancedWritingPlanPrompt(
+    static func enhancedWritingPlanPrompt(
         project: NovelProject,
         mode: AIWritingMode,
         additionalInstruction: String,
         length: AIWritingLength,
         support: EnhancedWritingSupport
     ) -> String {
-        """
-        项目名称：\(project.title)
-        类型：\(project.genre)
-        当前章节：\(project.currentChapterSummary)
-        本章目标：\(project.chapterFocus)
+        let prefix = """
+        项目名称：\(EnhancedPromptBudget.boundedContent(
+            project.title,
+            fallback: "未命名项目",
+            limit: 160
+        ))
+        类型：\(EnhancedPromptBudget.boundedContent(
+            project.genre,
+            fallback: "未指定题材",
+            limit: 120
+        ))
+        当前章节：\(EnhancedPromptBudget.boundedContent(
+            project.currentChapterSummary,
+            fallback: project.currentChapterLabel,
+            limit: 300
+        ))
+        本章目标：\(EnhancedPromptBudget.boundedContent(
+            project.chapterFocus,
+            fallback: "承接当前草稿并推进一个明确的新情节拍点。",
+            limit: 700
+        ))
         本次写作模式：\(mode.title)；\(mode.instruction)
         字数目标：\(length.instruction)
 
-        当前草稿箱正文（必须承接用户已修改/新增的内容）：
-        \(support.currentDraftExcerpt)
-
-        上一章节末尾 400 字：
-        \(normalized(project.draftContinuationCache, fallback: "暂无上一章节结尾缓存。"))
-
-        增强记忆：
-        \(support.enhancedMemoryContext)
-
-        后台长篇合同：
-        \(support.longformStorySystemContext)
-
         本章执行验收：
-        \(writingExecutionContractPrompt(project: project))
+        \(EnhancedPromptBudget.boundedContent(
+            support.writingExecutionContractContext,
+            fallback: "依据本章目标、草稿箱最后状态和章节树约束规划。",
+            limit: 4_200
+        ))
+        """
 
-        章节树关键约束：
-        \(support.chapterTreeFocus)
-
-        作品大纲：
-        \(normalized(project.outlineText, fallback: "暂无完整大纲。"))
-
-        风格指纹：
-        \(support.styleFingerprint)
-
-        节奏状态：
-        \(support.strandContext)
-
-        题材配置：
-        \(support.genreTemplateContext)
-
-        特殊要求与额外指令：
-        \(normalized(project.specialRequirements, fallback: "暂无特殊要求。"))
-        \(normalized(additionalInstruction, fallback: "延续当前场景，不要跳章节。"))
+        let suffix = """
 
         输出要求：
         请给出本次续写的 3 到 5 个执行拍点。
         """
+
+        let sections = enhancedSharedContextSections(
+            project: project,
+            support: support,
+            currentDraftLabel: "当前草稿箱正文（必须承接用户已修改/新增的内容）",
+            additionalInstruction: additionalInstruction,
+            additionalInstructionFallback: "延续当前场景，不要跳章节。",
+            includePreviousEnding: true,
+            includeOutline: true
+        )
+
+        return EnhancedPromptBudget.render(
+            prefix: prefix,
+            rankedSections: ContextRanker.rank(sections, project: project),
+            suffix: suffix
+        )
+    }
+
+    private static func enhancedSharedContextSections(
+        project: NovelProject,
+        support: EnhancedWritingSupport,
+        currentDraftLabel: String = "草稿箱当前正文",
+        writingPlan: String? = nil,
+        writingPlanFallback: String = "请至少推进一个新的情节增量。",
+        additionalInstruction: String? = nil,
+        additionalInstructionFallback: String = "暂无额外指令。",
+        includePreviousEnding: Bool = false,
+        includeOutline: Bool = false
+    ) -> [ContextSection] {
+        var sections = [
+            ContextSection(
+                label: currentDraftLabel,
+                content: support.currentDraftExcerpt,
+                category: .currentDraft
+            ),
+            ContextSection(
+                label: "增强记忆",
+                content: support.enhancedMemoryContext,
+                category: .enhancedMemory
+            ),
+            ContextSection(
+                label: "后台长篇合同",
+                content: support.longformStorySystemContext,
+                category: .chapterTree
+            ),
+            ContextSection(
+                label: "章节树关键约束",
+                content: support.chapterTreeFocus,
+                category: .chapterTree
+            ),
+            ContextSection(
+                label: "风格指纹",
+                content: support.styleFingerprint,
+                category: .styleFingerprint
+            ),
+            ContextSection(
+                label: "节奏状态",
+                content: support.strandContext,
+                category: .strandContext
+            ),
+            ContextSection(
+                label: "题材配置",
+                content: support.genreTemplateContext,
+                category: .genreTemplate
+            ),
+            ContextSection(
+                label: "特殊要求与启用写作 Skill",
+                content: normalized(project.specialRequirements, fallback: "暂无特殊要求或启用 Skill。"),
+                category: .specialRequirements
+            )
+        ]
+
+        if let writingPlan {
+            sections.append(ContextSection(
+                label: "本次续写拍点",
+                content: normalized(writingPlan, fallback: writingPlanFallback),
+                category: .activeThreads
+            ))
+        }
+        if let additionalInstruction {
+            sections.append(ContextSection(
+                label: "额外指令",
+                content: normalized(additionalInstruction, fallback: additionalInstructionFallback),
+                category: .specialRequirements
+            ))
+        }
+        if includePreviousEnding {
+            sections.append(ContextSection(
+                label: "上一章节末尾 400 字（只能用于承接，不要复述）",
+                content: normalized(project.draftContinuationCache, fallback: "暂无上一章节结尾缓存。"),
+                category: .activeThreads
+            ))
+        }
+        if includeOutline {
+            sections.append(ContextSection(
+                label: "作品大纲",
+                content: normalized(project.outlineText, fallback: "暂无完整大纲。"),
+                category: .outline
+            ))
+        }
+        return sections
     }
 
     // MARK: - Strand Type Analysis
@@ -645,7 +826,7 @@ extension AIWritingService {
     ) async throws -> ChapterReviewResult {
         let localPatterns = ChapterQualityReviewer.quickAIFlavorCheck(text: text)
         let localIssues = ChapterQualityReviewer.localHeuristicIssues(text: text, project: project)
-        let reviewPrompt = ChapterQualityReviewer.reviewUserPrompt(
+        let reviewPrompt = enhancedReviewUserPrompt(
             project: project,
             chapterDraft: text,
             memoryContext: support.enhancedMemoryContext
@@ -667,16 +848,26 @@ extension AIWritingService {
         )
     }
 
+    static func enhancedReviewUserPrompt(
+        project: NovelProject,
+        chapterDraft: String,
+        memoryContext: String
+    ) -> String {
+        EnhancedPromptBudget.boundedPrompt(
+            ChapterQualityReviewer.reviewUserPrompt(
+                project: project,
+                chapterDraft: chapterDraft,
+                memoryContext: memoryContext
+            )
+        )
+    }
+
     private static func shouldRepairCandidate(
         review: ChapterReviewResult,
-        project: NovelProject
+        minimumAcceptedScore: Int
     ) -> Bool {
-        let minimumScore = LongformStorySystem
-            .buildRuntimeContract(for: project)
-            .review
-            .minimumAcceptedScore
         return review.hasBlockingIssues
-            || review.overallScore < minimumScore
+            || review.overallScore < minimumAcceptedScore
             || review.nonBlockingIssues.contains { $0.severity == .high }
     }
 
@@ -687,15 +878,157 @@ extension AIWritingService {
         temperature: Double,
         maxTokens: Int
     ) async throws -> String {
-        try await AIWritingService.generateText(
-            configuration: configuration,
+        let prompts = EnhancedPromptBudget.boundedRequestPrompts(
             systemPrompt: systemPrompt,
-            userPrompt: userPrompt,
+            userPrompt: userPrompt
+        )
+        return try await AIWritingService.generateText(
+            configuration: configuration,
+            systemPrompt: prompts.systemPrompt,
+            userPrompt: prompts.userPrompt,
             temperature: temperature,
             maxTokens: maxTokens
         )
     }
 
+}
+
+// MARK: - Enhanced Prompt Total Budget
+
+nonisolated enum EnhancedPromptBudget {
+    static let maximumCharacters = RankedContextBudget.maximumCharacters
+    static let truncationMarker = "\n[提示词内容因总预算已截断]\n"
+    static let minimumReservedUserCharacters = maximumCharacters / 2
+    static let preferredUserTaskTailCharacters = 4_000
+
+    static func boundedContent(
+        _ text: String,
+        fallback: String,
+        limit: Int
+    ) -> String {
+        guard limit > 0 else { return "" }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolved = trimmed.isEmpty ? fallback : trimmed
+        guard resolved.count > limit else { return resolved }
+
+        guard limit > truncationMarker.count else {
+            return String(truncationMarker.prefix(limit))
+        }
+
+        let contentBudget = limit - truncationMarker.count
+        let prefixBudget = (contentBudget * 2) / 3
+        let suffixBudget = contentBudget - prefixBudget
+        return String(resolved.prefix(prefixBudget))
+            + truncationMarker
+            + String(resolved.suffix(suffixBudget))
+    }
+
+    static func boundedPrompt(
+        _ prompt: String,
+        maximumCharacters: Int = maximumCharacters,
+        preferredSuffixCharacters: Int? = nil
+    ) -> String {
+        guard maximumCharacters > 0 else { return "" }
+        guard prompt.count > maximumCharacters else { return prompt }
+        guard maximumCharacters > truncationMarker.count else {
+            return String(truncationMarker.prefix(maximumCharacters))
+        }
+
+        let contentBudget = maximumCharacters - truncationMarker.count
+        let suffixBudget: Int
+        if let preferredSuffixCharacters {
+            suffixBudget = min(
+                contentBudget,
+                max(0, preferredSuffixCharacters)
+            )
+        } else {
+            suffixBudget = contentBudget / 3
+        }
+        let prefixBudget = contentBudget - suffixBudget
+        return String(prompt.prefix(prefixBudget))
+            + truncationMarker
+            + String(prompt.suffix(suffixBudget))
+    }
+
+    static func boundedRequestPrompts(
+        systemPrompt: String,
+        userPrompt: String,
+        maximumCharacters: Int = maximumCharacters
+    ) -> (systemPrompt: String, userPrompt: String) {
+        guard maximumCharacters > 0 else { return ("", "") }
+        guard systemPrompt.count + userPrompt.count > maximumCharacters else {
+            return (systemPrompt, userPrompt)
+        }
+
+        // When both prompts are oversized, reserve half of the current total
+        // budget for the user prompt so its task/output tail cannot be crowded
+        // out by a growing system guide. A shorter system prompt automatically
+        // releases its unused capacity back to the user prompt.
+        let userReservation = min(
+            userPrompt.count,
+            min(minimumReservedUserCharacters, maximumCharacters / 2)
+        )
+        let boundedSystemPrompt = boundedPrompt(
+            systemPrompt,
+            maximumCharacters: maximumCharacters - userReservation
+        )
+        let userBudget = max(
+            0,
+            maximumCharacters - boundedSystemPrompt.count
+        )
+        let boundedUserPrompt = boundedPrompt(
+            userPrompt,
+            maximumCharacters: userBudget,
+            preferredSuffixCharacters: min(
+                preferredUserTaskTailCharacters,
+                userBudget / 2
+            )
+        )
+        return (boundedSystemPrompt, boundedUserPrompt)
+    }
+
+    static func render(
+        prefix: String,
+        rankedSections: [ContextSection],
+        suffix: String,
+        maximumCharacters: Int = maximumCharacters
+    ) -> String {
+        guard maximumCharacters > 0 else { return "" }
+
+        let fixedCharacterCount = prefix.count + suffix.count
+        if fixedCharacterCount <= maximumCharacters {
+            let rankedBudget = maximumCharacters - fixedCharacterCount
+            return prefix
+                + RankedContextBudget.render(
+                    rankedSections,
+                    maximumCharacters: rankedBudget
+                )
+                + suffix
+        }
+
+        // Future fixed-copy growth must still fail bounded while preserving
+        // both the high-priority contract prefix and final output rules.
+        guard maximumCharacters > truncationMarker.count else {
+            return String(truncationMarker.prefix(maximumCharacters))
+        }
+        let contentBudget = maximumCharacters - truncationMarker.count
+        let desiredSuffixBudget = min(suffix.count, contentBudget / 3)
+        var prefixBudget = min(prefix.count, contentBudget - desiredSuffixBudget)
+        var suffixBudget = min(suffix.count, contentBudget - prefixBudget)
+        let unusedBudget = contentBudget - prefixBudget - suffixBudget
+        if unusedBudget > 0 {
+            let extraPrefix = min(unusedBudget, prefix.count - prefixBudget)
+            prefixBudget += extraPrefix
+            suffixBudget += min(
+                unusedBudget - extraPrefix,
+                suffix.count - suffixBudget
+            )
+        }
+
+        return String(prefix.prefix(prefixBudget))
+            + truncationMarker
+            + String(suffix.suffix(suffixBudget))
+    }
 }
 
 // MARK: - Enhanced Writing Support Context
@@ -707,17 +1040,25 @@ struct EnhancedWritingSupport {
     let styleFingerprint: String
     let enhancedMemoryContext: String
     let longformStorySystemContext: String
+    let writingExecutionContractContext: String
+    let minimumAcceptedScore: Int
     let strandContext: String
     let genreTemplateContext: String
 
     init(project: NovelProject) {
         let baseSupport = AIWritingService.WritingSupportContext(project: project)
+        let longformPromptContext = LongformStorySystem.buildPromptContext(for: project)
         currentDraftExcerpt = baseSupport.currentDraftExcerpt
         relevantReferences = baseSupport.relevantReferences
         chapterTreeFocus = baseSupport.chapterTreeFocus
         styleFingerprint = baseSupport.styleFingerprint
         enhancedMemoryContext = project.enhancedMemoryContext
-        longformStorySystemContext = project.longformStorySystemContext
+        longformStorySystemContext = longformPromptContext.contract.writingBrief
+        writingExecutionContractContext = AIWritingService.writingExecutionContractPrompt(
+            project: project,
+            context: longformPromptContext
+        )
+        minimumAcceptedScore = longformPromptContext.contract.review.minimumAcceptedScore
         strandContext = project.strandContext
         genreTemplateContext = project.genreTemplateContext
     }

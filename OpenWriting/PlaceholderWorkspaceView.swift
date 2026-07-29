@@ -103,8 +103,8 @@ struct PlaceholderWorkspaceView: View {
                                     palette: palette,
                                     tint: LinearGradient(
                                         colors: [
-                                            palette.warmAccent.opacity(palette.isDark ? 0.18 : 0.12),
                                             palette.coolAccent.opacity(palette.isDark ? 0.18 : 0.12),
+                                            palette.coolAccent.opacity(palette.isDark ? 0.07 : 0.04),
                                             .clear
                                         ],
                                         startPoint: .topLeading,
@@ -229,7 +229,7 @@ struct PlaceholderWorkspaceView: View {
 
                 Text(project.genre)
                     .font(.caption.weight(.medium))
-                    .foregroundStyle(palette.coolAccent)
+                    .foregroundStyle(.appAccentInk)
             }
 
             Spacer()
@@ -301,6 +301,7 @@ struct PlaceholderWorkspaceView: View {
 
 private struct WorkspaceUtilityCard: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appAccentForegroundColor) private var accentForegroundColor
     @Bindable var appState: AppState
     let item: SidebarItem
     let fixedHeight: CGFloat?
@@ -344,7 +345,7 @@ private struct WorkspaceUtilityCard: View {
                 tint: LinearGradient(
                     colors: [
                         palette.coolAccent.opacity(palette.isDark ? 0.16 : 0.12),
-                        palette.warmAccent.opacity(palette.isDark ? 0.16 : 0.12),
+                        palette.coolAccent.opacity(palette.isDark ? 0.06 : 0.04),
                         .clear
                     ],
                     startPoint: .topLeading,
@@ -364,20 +365,14 @@ private struct WorkspaceUtilityCard: View {
         HStack(alignment: .center, spacing: 14) {
             ZStack {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [palette.coolAccent, palette.successAccent],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
+                    .fill(palette.coolAccent)
                     .frame(width: 52, height: 52)
                     .rotation3DEffect(.degrees(18), axis: (x: 1, y: -1, z: 0))
                     .shadow(color: palette.coolAccent.opacity(0.28), radius: 14, y: 10)
 
                 Image(systemName: item.symbolName)
                     .font(.title3.weight(.bold))
-                    .foregroundStyle(.white.opacity(0.95))
+                    .foregroundStyle(accentForegroundColor)
             }
 
             VStack(alignment: .leading, spacing: 4) {
@@ -583,7 +578,7 @@ private struct WorkspaceUtilityCard: View {
 
                 Text(trailing)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(palette.coolAccent)
+                    .foregroundStyle(.appAccentInk)
                     .lineLimit(1)
             }
 
@@ -605,8 +600,8 @@ private struct WorkspaceUtilityCard: View {
                 palette: palette,
                 tint: LinearGradient(
                     colors: [
-                        palette.warmAccent.opacity(palette.isDark ? 0.10 : 0.08),
                         palette.coolAccent.opacity(palette.isDark ? 0.10 : 0.06),
+                        palette.coolAccent.opacity(palette.isDark ? 0.04 : 0.025),
                         .clear
                     ],
                     startPoint: .topLeading,
@@ -787,6 +782,8 @@ private struct LibraryWorkspacePanel: View {
 }
 private struct ProjectSpaceProjectRow: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appAccentInkColor) private var accentInkColor
+    @Environment(\.appAccentStrokeColor) private var accentStrokeColor
     let project: NovelProject
     let isSelected: Bool
     let onSelect: () -> Void
@@ -810,7 +807,7 @@ private struct ProjectSpaceProjectRow: View {
 
                             Text(project.genre)
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(isSelected ? palette.coolAccent : palette.textSecondary)
+                                .foregroundStyle(isSelected ? accentInkColor : palette.textSecondary)
                         }
 
                         Spacer()
@@ -818,7 +815,7 @@ private struct ProjectSpaceProjectRow: View {
                         if isSelected {
                             Text("当前工作区")
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(palette.coolAccent)
+                                .foregroundStyle(.appAccentInk)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
                                 .background(
@@ -887,7 +884,9 @@ private struct ProjectSpaceProjectRow: View {
             palette: palette,
             tint: LinearGradient(
                 colors: [
-                    (isSelected ? palette.coolAccent : palette.warmAccent).opacity(palette.isDark ? 0.14 : 0.08),
+                    isSelected
+                        ? palette.coolAccent.opacity(palette.isDark ? 0.14 : 0.08)
+                        : palette.textSecondary.opacity(palette.isDark ? 0.04 : 0.025),
                     .clear
                 ],
                 startPoint: .topLeading,
@@ -900,7 +899,7 @@ private struct ProjectSpaceProjectRow: View {
         RoundedRectangle(cornerRadius: 24, style: .continuous)
             .strokeBorder(
                 isSelected
-                    ? palette.coolAccent.opacity(palette.isDark ? 0.48 : 0.36)
+                    ? accentStrokeColor
                     : palette.stroke,
                 lineWidth: isSelected ? 1.4 : 1
             )

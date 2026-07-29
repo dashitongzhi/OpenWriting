@@ -17,9 +17,11 @@ nonisolated final class InMemoryCredentialStore: CredentialStoring {
         return true
     }
 
-    func remove(service: String, account: String) {
+    @discardableResult
+    func remove(service: String, account: String) -> Bool {
         removeCallCount += 1
         values.removeValue(forKey: key(service: service, account: account))
+        return true
     }
 
     private func key(service: String, account: String) -> String {
@@ -27,6 +29,7 @@ nonisolated final class InMemoryCredentialStore: CredentialStoring {
     }
 }
 
+@MainActor
 extension NovelProject {
     init(
         id: String = UUID().uuidString,
@@ -57,6 +60,7 @@ extension NovelProject {
     }
 }
 
+@MainActor
 extension ReferenceDocument {
     init(title: String, content: String) {
         self.init(
@@ -67,6 +71,7 @@ extension ReferenceDocument {
     }
 }
 
+@MainActor
 extension ChapterDraft {
     init(
         id: String = UUID().uuidString,
@@ -86,6 +91,7 @@ extension ChapterDraft {
     }
 }
 
+@MainActor
 extension ChapterDraftVersion {
     init(
         id: String = UUID().uuidString,
@@ -103,6 +109,7 @@ extension ChapterDraftVersion {
     }
 }
 
+@MainActor
 extension OutlineGenerationProfile {
     init(
         storyFlow: String,

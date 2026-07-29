@@ -71,8 +71,9 @@ final class OpenWritingAppDelegate: NSObject, NSApplicationDelegate {
         guard !Self.isRunningUnitTests else { return .terminateNow }
         _ = terminationFlushCoordinator.begin(
             flush: {
-                AppRuntime.shared.appState.flushAPIKeyPersistence()
-                return await AppRuntime.shared.appState.flushProjectPersistence()
+                let didFlushAPIKey = AppRuntime.shared.appState.flushAPIKeyPersistence()
+                let didFlushProjects = await AppRuntime.shared.appState.flushProjectPersistence()
+                return didFlushAPIKey && didFlushProjects
             },
             reply: { [weak sender] didFlush in
                 sender?.reply(toApplicationShouldTerminate: didFlush)

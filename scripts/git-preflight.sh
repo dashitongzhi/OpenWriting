@@ -53,6 +53,19 @@ if ! git_repo rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     exit 1
 fi
 
+forbidden_tracked=()
+while IFS= read -r -d '' tracked_path; do
+    case "$tracked_path" in
+        .git.corrupt-*/*|*.bundle|*.profraw)
+            forbidden_tracked+=("$tracked_path")
+            ;;
+    esac
+done < <(git_repo ls-files -z)
+
+if (( ${#forbidden_tracked[@]} > 0 )); then
+    fail "repository tracks recovery or generated artifacts that must remain local:\n$(first_lines "$(printf "%s\n" "${forbidden_tracked[@]}")")"
+fi
+
 git_dir="$(absolute_git_path "$(git_repo rev-parse --git-dir)")"
 git_common_dir="$(absolute_git_path "$(git_repo rev-parse --git-common-dir)")"
 
@@ -104,7 +117,7 @@ if [[ -d "$remote_refs_dir" ]]; then
     remote_ref_list_file="$(mktemp "${TMPDIR:-/tmp}/openwriting-git-preflight.XXXXXX")"
     find "$remote_refs_dir" -type f ! -name '*.lock' -print >"$remote_ref_list_file"
     while IFS= read -r ref_file || [[ -n "$ref_file" ]]; do
-        ref_rel="${ref_file#$remote_refs_dir/}"
+        ref_rel="${ref_file#"$remote_refs_dir"/}"
         ref_name="refs/remotes/$REMOTE/$ref_rel"
         ref_value="$(sed -n '1p' "$ref_file")"
 

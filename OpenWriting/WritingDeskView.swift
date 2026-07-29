@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 
 struct WritingDeskView: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appAccentInkColor) private var accentInkColor
     @Bindable var appState: AppState
     let openSettings: () -> Void
 
@@ -208,30 +209,44 @@ struct WritingDeskView: View {
         if let activeProject {
             if appState.isWritingFocusModeEnabled {
                 focusedWritingWorkspace(for: activeProject, containerSize: size)
-            } else if areConfigurationCardsCollapsed {
-                collapsedWritingDeskWorkspace(for: activeProject, containerSize: size)
             } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: workspaceSpacing) {
-                            writingDeskConfigurationRow(for: activeProject)
-                            writingDeskStatusStrip(for: activeProject)
-                            writingDeskCreationRow(for: activeProject)
+                let longformContext =
+                    appState.longformWritingDeskContext(for: activeProject)
+                if areConfigurationCardsCollapsed {
+                    collapsedWritingDeskWorkspace(
+                        for: activeProject,
+                        longformContext: longformContext,
+                        containerSize: size
+                    )
+                } else {
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: workspaceSpacing) {
+                                writingDeskConfigurationRow(for: activeProject)
+                                writingDeskStatusStrip(
+                                    for: activeProject,
+                                    longformContext: longformContext
+                                )
+                                writingDeskCreationRow(
+                                    for: activeProject,
+                                    longformContext: longformContext
+                                )
+                            }
+                            .padding(.top, contentTopPadding)
+                            .padding(.horizontal, contentHorizontalPadding)
+                            .padding(.bottom, contentBottomPadding)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
                         }
-                        .padding(.top, contentTopPadding)
-                        .padding(.horizontal, contentHorizontalPadding)
-                        .padding(.bottom, contentBottomPadding)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                    }
-                    .background(ScrollTopBounceLockView())
-                    .onChange(of: pendingScrollAnchor) { _, target in
-                        guard let target else { return }
+                        .background(ScrollTopBounceLockView())
+                        .onChange(of: pendingScrollAnchor) { _, target in
+                            guard let target else { return }
 
-                        withAnimation(.easeOut(duration: 0.22)) {
-                            proxy.scrollTo(target.rawValue, anchor: target == .cache ? .bottom : .top)
+                            withAnimation(.easeOut(duration: 0.22)) {
+                                proxy.scrollTo(target.rawValue, anchor: target == .cache ? .bottom : .top)
+                            }
+
+                            pendingScrollAnchor = nil
                         }
-
-                        pendingScrollAnchor = nil
                     }
                 }
             }
@@ -287,7 +302,11 @@ struct WritingDeskView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private func collapsedWritingDeskWorkspace(for project: NovelProject, containerSize: CGSize) -> some View {
+    private func collapsedWritingDeskWorkspace(
+        for project: NovelProject,
+        longformContext: LongformWritingDeskContext,
+        containerSize: CGSize
+    ) -> some View {
         let layout = WritingDeskCollapsedLayout(
             containerSize: containerSize,
             topPadding: contentTopPadding,
@@ -299,8 +318,12 @@ struct WritingDeskView: View {
 
         return VStack(alignment: .leading, spacing: workspaceSpacing) {
             writingDeskConfigurationRow(for: project, isCollapsed: true)
-            writingDeskStatusStrip(for: project)
-            writingDeskCreationRow(for: project, layout: layout)
+            writingDeskStatusStrip(for: project, longformContext: longformContext)
+            writingDeskCreationRow(
+                for: project,
+                longformContext: longformContext,
+                layout: layout
+            )
         }
         .padding(.top, contentTopPadding)
         .padding(.horizontal, contentHorizontalPadding)
@@ -338,81 +361,69 @@ struct WritingDeskView: View {
         }
     }
 
-    private func writingDeskStatusStrip(for project: NovelProject) -> some View {
+    private func writingDeskStatusStrip(
+        for project: NovelProject,
+        longformContext: LongformWritingDeskContext
+    ) -> some View {
         let review = displayedChapterReview(for: project)
         let minimumScore = LongformStorySystem.minimumAcceptedScore(for: project.storyLength)
-        let qualityTrend = project.longformQualityTrend
+        let qualityTrend = longformContext.qualityTrend
         let storageHealth = appState.storageHealthReport(for: project.id)
+        let columns = [
+            GridItem(
+                .adaptive(minimum: 142, maximum: 220),
+                spacing: 10,
+                alignment: .leading
+            )
+        ]
 
-        return ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) {
-                WritingDeskStatusPill(
-                    title: "保存",
-                    value: saveMessage,
-                    symbolName: "tray.and.arrow.down",
-                    tint: .secondary
-                )
+        return LazyVGrid(
+            columns: columns,
+            alignment: .leading,
+            spacing: 8
+        ) {
+            WritingDeskStatusPill(
+                title: "保存",
+                value: saveMessage,
+                symbolName: "tray.and.arrow.down",
+                tint: .secondary
+            )
 
-                WritingDeskStatusPill(
-                    title: "同步",
-                    value: appState.cloudSyncTitle,
-                    symbolName: appState.cloudSyncSymbolName,
-                    tint: appState.cloudSyncTitle.contains("失败") ? .red : palette.activeAccent
-                )
+            WritingDeskStatusPill(
+                title: "同步",
+                value: appState.cloudSyncTitle,
+                symbolName: appState.cloudSyncSymbolName,
+                tint: appState.cloudSyncTitle.contains("失败") ? .red : accentInkColor
+            )
 
-                WritingDeskStatusPill(
-                    title: "质量",
-                    value: review.map { "\($0.overallScore)/100 · 最低 \(minimumScore)" } ?? "待审查",
-                    symbolName: review?.passes(minimumScore: minimumScore) == true ? "checkmark.seal.fill" : "exclamationmark.circle",
-                    tint: review?.passes(minimumScore: minimumScore) == true ? palette.readyAccent : palette.warningAccent
-                )
+            WritingDeskStatusPill(
+                title: "质量",
+                value: review.map { "\($0.overallScore)/100 · 最低 \(minimumScore)" } ?? "待审查",
+                symbolName: review?.passes(minimumScore: minimumScore) == true
+                    ? "checkmark.seal.fill"
+                    : "exclamationmark.circle",
+                tint: review?.passes(minimumScore: minimumScore) == true
+                    ? palette.readyAccent
+                    : palette.warningAccent
+            )
 
-                WritingDeskStatusPill(
-                    title: "质量债",
-                    value: "\(qualityTrend.qualityDebtTargets.count + qualityTrend.revisionHints.count) 项",
-                    symbolName: "list.bullet.clipboard",
-                    tint: qualityTrend.qualityDebtTargets.isEmpty && qualityTrend.revisionHints.isEmpty ? .secondary : palette.warningAccent
-                )
+            WritingDeskStatusPill(
+                title: "质量债",
+                value: "\(qualityTrend.qualityDebtTargets.count + qualityTrend.revisionHints.count) 项",
+                symbolName: "list.bullet.clipboard",
+                tint: qualityTrend.qualityDebtTargets.isEmpty && qualityTrend.revisionHints.isEmpty
+                    ? .secondary
+                    : palette.warningAccent
+            )
 
-                WritingDeskStatusPill(
-                    title: "存储",
-                    value: storageHealth.status.displayName,
-                    symbolName: storageHealth.status == .blocked ? "externaldrive.badge.exclamationmark" : "externaldrive",
-                    tint: storageHealthColor(storageHealth.status)
-                )
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    WritingDeskStatusPill(
-                        title: "保存",
-                        value: saveMessage,
-                        symbolName: "tray.and.arrow.down",
-                        tint: .secondary
-                    )
-                    WritingDeskStatusPill(
-                        title: "同步",
-                        value: appState.cloudSyncTitle,
-                        symbolName: appState.cloudSyncSymbolName,
-                        tint: palette.activeAccent
-                    )
-                }
-
-                HStack(spacing: 8) {
-                    WritingDeskStatusPill(
-                        title: "质量",
-                        value: review.map { "\($0.overallScore)/100" } ?? "待审查",
-                        symbolName: "checklist",
-                        tint: review?.passes(minimumScore: minimumScore) == true ? palette.readyAccent : palette.warningAccent
-                    )
-                    WritingDeskStatusPill(
-                        title: "存储",
-                        value: storageHealth.status.displayName,
-                        symbolName: "externaldrive",
-                        tint: storageHealthColor(storageHealth.status)
-                    )
-                }
-            }
+            WritingDeskStatusPill(
+                title: "存储",
+                value: storageHealth.status.displayName,
+                symbolName: storageHealth.status == .blocked
+                    ? "externaldrive.badge.exclamationmark"
+                    : "externaldrive",
+                tint: storageHealthColor(storageHealth.status)
+            )
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -427,13 +438,21 @@ struct WritingDeskView: View {
         )
     }
 
-    private func writingDeskCreationRow(for project: NovelProject, layout: WritingDeskCollapsedLayout? = nil) -> some View {
+    private func writingDeskCreationRow(
+        for project: NovelProject,
+        longformContext: LongformWritingDeskContext,
+        layout: WritingDeskCollapsedLayout? = nil
+    ) -> some View {
         let horizontalLayout = HStack(alignment: .top, spacing: workspaceSpacing) {
             writingDeskDraftColumn(for: project, layout: layout)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .layoutPriority(1)
 
-            writingDeskAIColumn(for: project, layout: layout)
+            writingDeskAIColumn(
+                for: project,
+                longformContext: longformContext,
+                layout: layout
+            )
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .layoutPriority(1)
         }
@@ -833,7 +852,11 @@ struct WritingDeskView: View {
         }
     }
 
-    private func writingDeskAIColumn(for project: NovelProject, layout: WritingDeskCollapsedLayout? = nil) -> some View {
+    private func writingDeskAIColumn(
+        for project: NovelProject,
+        longformContext: LongformWritingDeskContext,
+        layout: WritingDeskCollapsedLayout? = nil
+    ) -> some View {
         WritingDeskSectionCard(
             title: "AI 作家",
             statusLabel: aiStatusLabel,
@@ -851,9 +874,9 @@ struct WritingDeskView: View {
 
                 genreTemplateSelector(for: project)
                 strandWeaveIndicator(for: project)
-                nextChapterBriefPanel(for: project)
-            qualityDebtPanel(for: project)
-            longformRuntimePanel(for: project)
+                nextChapterBriefPanel(longformContext.nextChapterBrief)
+            qualityDebtPanel(longformContext.qualityTrend)
+            longformRuntimePanel(for: project, longformContext: longformContext)
             storageHealthPanel(for: project)
 
             Text(aiStatusMessage)
@@ -1144,8 +1167,7 @@ struct WritingDeskView: View {
         "\(Int(((value ?? 0) * 100).rounded()))%"
     }
 
-    private func nextChapterBriefPanel(for project: NovelProject) -> some View {
-        let brief = project.longformNextChapterBrief
+    private func nextChapterBriefPanel(_ brief: LongformNextChapterBrief) -> some View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label("下一章 brief", systemImage: "arrow.forward.doc.on.clipboard")
@@ -1156,7 +1178,7 @@ struct WritingDeskView: View {
 
                 Text(brief.hasActionableSignals ? "已约束" : "基础")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(brief.hasActionableSignals ? palette.activeAccent : .secondary)
+                    .foregroundStyle(brief.hasActionableSignals ? accentInkColor : .secondary)
             }
 
             Text(brief.chapterGoal)
@@ -1181,8 +1203,7 @@ struct WritingDeskView: View {
         )
     }
 
-    private func qualityDebtPanel(for project: NovelProject) -> some View {
-        let trend = project.longformQualityTrend
+    private func qualityDebtPanel(_ trend: LongformQualityTrend) -> some View {
         let debts = Array((trend.qualityDebtTargets + trend.revisionHints + trend.priorityIssues).prefix(6))
 
         return VStack(alignment: .leading, spacing: 10) {
@@ -1308,13 +1329,16 @@ struct WritingDeskView: View {
         )
     }
 
-    private func longformRuntimePanel(for project: NovelProject) -> some View {
+    private func longformRuntimePanel(
+        for project: NovelProject,
+        longformContext: LongformWritingDeskContext
+    ) -> some View {
         let runtime = project.longformRuntimeState
         let commit = runtime.latestCommit
         let contract = runtime.latestContract
         let writeGate = runtime.latestWriteGate
-        let health = project.longformRuntimeHealth
-        let qualityTrend = project.longformQualityTrend
+        let health = longformContext.health
+        let qualityTrend = longformContext.qualityTrend
         let statusText: String
         let statusColor: Color
         let statusIcon: String
@@ -1352,7 +1376,7 @@ struct WritingDeskView: View {
             gateStatusColor = commit.isAccepted ? .green : .orange
         } else {
             gateStatusText = contract == nil ? "待生成" : "合同就绪"
-            gateStatusColor = contract == nil ? .secondary : .blue
+            gateStatusColor = contract == nil ? .secondary : accentInkColor
         }
 
         return VStack(alignment: .leading, spacing: 10) {
@@ -1584,7 +1608,7 @@ struct WritingDeskView: View {
         }
 
         if writingRunState == .requesting {
-            return palette.activeAccent
+            return accentInkColor
         }
 
         if isGenerating || isSavingChapter {
@@ -2201,7 +2225,11 @@ struct WritingDeskView: View {
         return project.longformRuntimeHealth.blockingIssues
             .filter { $0.kind != .prewriteGate }
             .filter { issue in
-                !canRepairCurrentChapter(issue, project: project, allowsCurrentChapterRepair: allowsCurrentChapterRepair)
+                !ChapterRepairEligibility.canRepair(
+                    issue,
+                    in: project,
+                    allowsCurrentChapterRepair: allowsCurrentChapterRepair
+                )
             }
             .map { issue in
                 [issue.title, issue.detail]
@@ -2209,86 +2237,6 @@ struct WritingDeskView: View {
                     .filter { !$0.isEmpty }
                     .joined(separator: "：")
             }
-    }
-
-    private func canRepairCurrentChapter(
-        _ issue: LongformRuntimeHealthIssue,
-        project: NovelProject,
-        allowsCurrentChapterRepair: Bool
-    ) -> Bool {
-        guard allowsCurrentChapterRepair else { return false }
-
-        switch issue.kind {
-        case .uncommittedSavedChapter, .staleSavedChapterCommit:
-            let affectedChapters = issue.detail
-                .components(separatedBy: "；")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-            return !affectedChapters.isEmpty && affectedChapters.allSatisfy {
-                textReferencesCurrentChapterPosition($0, project: project)
-            }
-        case .missingChapterSequence:
-            let missingChapters = issue.detail
-                .components(separatedBy: "；")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-            return missingChapters.contains {
-                textReferencesCurrentChapterPosition($0, project: project)
-            }
-        case .missingVolumeSequence:
-            let missingVolumes = issue.detail
-                .components(separatedBy: "；")
-                .compactMap { parsedVolumeNumber(in: $0) }
-            return missingVolumes.contains(max(project.currentVolumeNumber, 1))
-                && max(project.currentChapterNumber, 1) == 1
-        case .latestCommitRejected:
-            guard let latestCommit = project.longformRuntimeState.latestCommit else { return false }
-            return latestCommit.status == .rejected
-                && latestCommit.volumeNumber == max(project.currentVolumeNumber, 1)
-                && latestCommit.chapterNumber == project.currentChapterNumber
-        case .prewriteGate, .other:
-            return false
-        }
-    }
-
-    private func textReferencesCurrentChapterPosition(_ text: String, project: NovelProject) -> Bool {
-        guard let position = parsedChapterPosition(in: text) else { return false }
-        return position.volumeNumber == max(project.currentVolumeNumber, 1)
-            && position.chapterNumber == max(project.currentChapterNumber, 1)
-    }
-
-    private func parsedChapterPosition(in text: String) -> (volumeNumber: Int, chapterNumber: Int)? {
-        let nsText = text as NSString
-        let fullRange = NSRange(location: 0, length: nsText.length)
-
-        if let expression = try? NSRegularExpression(pattern: #"第\s*(\d+)\s*卷.*?第\s*(\d+)\s*章"#),
-           let match = expression.firstMatch(in: text, range: fullRange),
-           match.numberOfRanges >= 3,
-           let volumeNumber = Int(nsText.substring(with: match.range(at: 1))),
-           let chapterNumber = Int(nsText.substring(with: match.range(at: 2))) {
-            return (max(volumeNumber, 1), max(chapterNumber, 1))
-        }
-
-        if let expression = try? NSRegularExpression(pattern: #"第\s*(\d+)\s*章"#),
-           let match = expression.firstMatch(in: text, range: fullRange),
-           match.numberOfRanges >= 2,
-           let chapterNumber = Int(nsText.substring(with: match.range(at: 1))) {
-            return (1, max(chapterNumber, 1))
-        }
-
-        return nil
-    }
-
-    private func parsedVolumeNumber(in text: String) -> Int? {
-        let nsText = text as NSString
-        let fullRange = NSRange(location: 0, length: nsText.length)
-        guard let expression = try? NSRegularExpression(pattern: #"第\s*(\d+)\s*卷"#),
-              let match = expression.firstMatch(in: text, range: fullRange),
-              match.numberOfRanges >= 2,
-              let volumeNumber = Int(nsText.substring(with: match.range(at: 1))) else {
-            return nil
-        }
-        return max(volumeNumber, 1)
     }
 
     private func stopWriting() {

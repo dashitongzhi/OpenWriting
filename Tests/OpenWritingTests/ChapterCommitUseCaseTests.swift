@@ -1,6 +1,7 @@
 import XCTest
 @testable import OpenWriting
 
+@MainActor
 final class KeywordMemoryExtractorTests: XCTestCase {
     func testExtractionIsDeterministicAndPreservesVolumeChapterSource() {
         let text = """
@@ -56,6 +57,7 @@ final class KeywordMemoryExtractorTests: XCTestCase {
     }
 }
 
+@MainActor
 final class ChapterCommitUseCaseTests: XCTestCase {
     func testAcceptedCommitProjectsMemoryAndAntiPatternsWithoutMutatingInput() {
         let project = makeProject(id: "accepted-\(UUID().uuidString)")

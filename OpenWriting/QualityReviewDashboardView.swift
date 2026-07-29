@@ -11,6 +11,7 @@ import SwiftUI
 
 struct QualityReviewDashboardView: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appAccentInkColor) private var accentInkColor
 
     let result: ChapterReviewResult
     let chapterTitle: String
@@ -79,7 +80,7 @@ struct QualityReviewDashboardView: View {
                 if !chapterTitle.isEmpty {
                     Label(chapterTitle, systemImage: "doc.text")
                         .font(.subheadline.weight(.medium))
-                        .foregroundStyle(palette.coolAccent)
+                        .foregroundStyle(.appAccentInk)
                 }
 
                 Label(
@@ -124,7 +125,7 @@ struct QualityReviewDashboardView: View {
 
                     Text(result.grade.rawValue)
                         .font(.title2.weight(.bold))
-                        .foregroundStyle(gradeColor)
+                        .foregroundStyle(gradeForegroundColor)
                 }
 
                 // Quick stats
@@ -151,7 +152,7 @@ struct QualityReviewDashboardView: View {
 
                     statRow(
                         icon: "info.circle.fill",
-                        color: palette.coolAccent,
+                        color: accentInkColor,
                         text: "\(result.nonBlockingIssues.filter { $0.severity == .medium }.count) 个中优先级"
                     )
 
@@ -204,6 +205,10 @@ struct QualityReviewDashboardView: View {
         case .fair:      return palette.warmAccent
         case .poor:      return Color.red
         }
+    }
+
+    private var gradeForegroundColor: Color {
+        result.grade == .good ? accentInkColor : gradeColor
     }
 
     @ViewBuilder

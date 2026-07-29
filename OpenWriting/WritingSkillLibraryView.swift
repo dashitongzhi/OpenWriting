@@ -3,6 +3,7 @@ import UniformTypeIdentifiers
 
 struct WritingSkillLibraryView: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appAccentForegroundColor) private var accentForegroundColor
     @Bindable var appState: AppState
 
     @State private var selectedMode: WritingSkillLibraryMode = .marketplace
@@ -294,18 +295,12 @@ struct WritingSkillLibraryView: View {
             HStack(alignment: .top, spacing: 14) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [palette.coolAccent, palette.successAccent],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
+                        .fill(palette.coolAccent)
                         .frame(width: 56, height: 56)
 
                     Image(systemName: skill.category.symbolName)
                         .font(.title3.weight(.bold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(accentForegroundColor)
                 }
 
                 VStack(alignment: .leading, spacing: 6) {

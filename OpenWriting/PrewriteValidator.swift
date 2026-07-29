@@ -85,8 +85,7 @@ enum PrewriteValidator {
         }
 
         // Check if current chapter has a focus/goal
-        let hasFocus = !project.chapterFocus.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && project.chapterFocus != "继续补齐当前章节的目标、冲突和场景节奏。"
+        let hasFocus = hasSpecificChapterGoal(project)
         checklist.append(PrewriteChecklistItem(
             id: "chapter_focus",
             label: "本章目标已设定",
@@ -225,8 +224,12 @@ enum PrewriteValidator {
     ) {
         guard project.storyLength.supportsVolumePlanning else { return }
 
-        let hasSpecificVolumePlan = isSpecificLongformText(project.volumePlanNotes)
-            && !looksLikeDefaultLongformVolumePlan(project.volumePlanNotes)
+        let hasSpecificVolumePlan = hasStructuredVolumePlan(project)
+            || hasProjectSpecificSemanticContent(
+                project.volumePlanNotes,
+                project: project,
+                minimumMeaningfulCharacters: 20
+            )
         checklist.append(PrewriteChecklistItem(
             id: "longform_volume_plan",
             label: "长篇分卷计划已具体化",
@@ -253,7 +256,11 @@ enum PrewriteValidator {
         }
 
         let hasThreadMap = !project.plotThreadList.activeThreads.isEmpty
-            || (isSpecificLongformText(project.activeThreadsNotes) && !looksLikeDefaultLongformThreadMap(project.activeThreadsNotes))
+            || hasProjectSpecificSemanticContent(
+                project.activeThreadsNotes,
+                project: project,
+                minimumMeaningfulCharacters: 12
+            )
         checklist.append(PrewriteChecklistItem(
             id: "longform_thread_map",
             label: "在途线索已维护",
@@ -328,14 +335,12 @@ enum PrewriteValidator {
 
     private static func hasSpecificChapterGoal(_ project: NovelProject) -> Bool {
         let focus = project.chapterFocus.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isSpecificLongformText(focus) else { return false }
-        if focus == "先写出开篇场景的情绪、主角目标和第一个冲突钩子，并给长期主线留出延展空间。" {
-            return false
-        }
-        if focus == "继续补齐当前章节的目标、冲突和场景节奏。" {
-            return false
-        }
-        return true
+        return hasStructuredChapterDirective(project)
+            || hasProjectSpecificSemanticContent(
+                focus,
+                project: project,
+                minimumMeaningfulCharacters: 8
+            )
     }
 
     private static func containsCurrentChapterMarker(_ text: String, project: NovelProject) -> Bool {
@@ -465,34 +470,166 @@ enum PrewriteValidator {
         return "\(prefix)\(chineseNumeral(for: remainder) ?? "")"
     }
 
-    private static func isSpecificLongformText(_ text: String) -> Bool {
+    private static func hasStructuredVolumePlan(_ project: NovelProject) -> Bool {
+        let runtime = project.longformRuntimeState
+        let currentVolume = max(project.currentVolumeNumber, 1)
+        guard let contract = runtime.latestContract,
+              contract.volume.volumeNumber == currentVolume,
+              !contract.prewrite.isBlocked,
+              hasSubstantiveSemanticContent(
+                  project.volumePlanNotes,
+                  minimumMeaningfulCharacters: 20
+              ) else {
+            return false
+        }
+        return semanticFingerprint(contract.volume.volumeGoal)
+            == semanticFingerprint(project.volumePlanNotes)
+    }
+
+    private static func hasStructuredChapterDirective(_ project: NovelProject) -> Bool {
+        let runtime = project.longformRuntimeState
+        let currentVolume = max(project.currentVolumeNumber, 1)
+        let currentChapter = max(project.currentChapterNumber, 1)
+        guard let contract = runtime.latestContract,
+              contract.volume.volumeNumber == currentVolume,
+              contract.chapter.chapterNumber == currentChapter,
+              !contract.prewrite.isBlocked,
+              hasSubstantiveSemanticContent(
+                  project.chapterFocus,
+                  minimumMeaningfulCharacters: 8
+              ) else {
+            return false
+        }
+        return semanticFingerprint(contract.chapter.chapterGoal)
+            == semanticFingerprint(project.chapterFocus)
+    }
+
+    private static func hasProjectSpecificSemanticContent(
+        _ text: String,
+        project: NovelProject,
+        minimumMeaningfulCharacters: Int
+    ) -> Bool {
+        guard hasSubstantiveSemanticContent(
+            text,
+            minimumMeaningfulCharacters: minimumMeaningfulCharacters
+        ) else {
+            return false
+        }
+
+        let textEntities = semanticEntitySet(in: text)
+        guard !textEntities.isEmpty else { return false }
+        return !textEntities.isDisjoint(with: projectSpecificEntities(for: project))
+    }
+
+    private static func hasSubstantiveSemanticContent(
+        _ text: String,
+        minimumMeaningfulCharacters: Int
+    ) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count >= 12 else { return false }
         guard placeholderHit(in: trimmed) == nil else { return false }
-        let genericFragments = [
-            "暂无",
-            "待补充",
-            "待拆分",
-            "按分卷/阶段推进",
-            "当前卷最重要的推进目标",
-            "当前阶段最重要的目标",
-            "逐步补齐"
+        let meaningfulScalars = trimmed.unicodeScalars.filter {
+            CharacterSet.alphanumerics.contains($0) || isCJK($0)
+        }
+        guard meaningfulScalars.count >= minimumMeaningfulCharacters else { return false }
+
+        let distinctScalars = Set(meaningfulScalars.map {
+            String($0).folding(
+                options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+                locale: Locale(identifier: "en_US_POSIX")
+            )
+        })
+        return distinctScalars.count >= 4
+    }
+
+    private static func semanticFingerprint(_ text: String) -> String {
+        text.unicodeScalars
+            .filter { CharacterSet.alphanumerics.contains($0) || isCJK($0) }
+            .map {
+                String($0).folding(
+                    options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+                    locale: Locale(identifier: "en_US_POSIX")
+                )
+            }
+            .joined()
+    }
+
+    private static func projectSpecificEntities(for project: NovelProject) -> Set<String> {
+        let profile = project.outlineGenerationProfile
+        var sourceTexts = [
+            project.title,
+            project.outlineText,
+            project.outlineSummary,
+            project.currentChapterTitle,
+            profile.keyEvents,
+            profile.motivations,
+            profile.relationshipMap,
+            profile.antagonistPortrait,
+            profile.foreshadowingNotes
         ]
-        return !genericFragments.contains { trimmed.contains($0) }
+        sourceTexts.append(contentsOf: project.chapterCatalog.map(\.chapterTitle))
+        sourceTexts.append(contentsOf: project.foreshadowList.entries.flatMap {
+            [$0.title, $0.description] + $0.threads
+        })
+        sourceTexts.append(contentsOf: project.plotThreadList.threads.flatMap { thread in
+            [thread.title, thread.description]
+                + thread.keyEvents.flatMap { [$0.title, $0.description] }
+        })
+        sourceTexts.append(contentsOf: GlobalMemorySnapshot.Section.allCases.map {
+            project.globalMemorySnapshot.value(for: $0)
+        })
+        if let buckets = project.persistedMemoryBuckets {
+            sourceTexts.append(contentsOf: buckets.allActiveItems.flatMap {
+                [$0.subject, $0.field, $0.value]
+            })
+        }
+
+        return semanticEntitySet(in: sourceTexts.joined(separator: "\n"))
     }
 
-    private static func looksLikeDefaultLongformVolumePlan(_ text: String) -> Bool {
-        let normalized = text.replacingOccurrences(of: " ", with: "")
-        return normalized.contains("第一卷：开篇钩子、主角目标、世界规则、卷末第一次反转")
-            && normalized.contains("第二卷：扩大冲突范围")
-            && normalized.contains("第三卷及以后")
+    private static func semanticEntitySet(in text: String) -> Set<String> {
+        Set(ContextRanker.extractEntities(from: text).compactMap { entity in
+            let normalized = normalizedSemanticEntity(entity)
+            guard normalized.count >= 2,
+                  normalized.rangeOfCharacter(from: .letters) != nil,
+                  !genericPlanningEntities.contains(normalized) else {
+                return nil
+            }
+            return normalized
+        })
     }
 
-    private static func looksLikeDefaultLongformThreadMap(_ text: String) -> Bool {
-        let normalized = text.replacingOccurrences(of: " ", with: "")
-        return normalized.contains("主线：当前卷最重要的推进目标与阻力")
-            && normalized.contains("支线：此刻仍在进行")
-            && normalized.contains("伏笔线：下一次必须露面的长期埋点")
+    nonisolated private static func normalizedSemanticEntity(_ entity: String) -> String {
+        entity.folding(
+            options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+            locale: Locale(identifier: "en_US_POSIX")
+        ).lowercased()
+    }
+
+    private static let genericPlanningEntities: Set<String> = {
+        let genericPlanningCorpus = """
+        主角 女主 男主 角色 人物 目标 当前 本章 章节 分卷 本卷 第一卷 第二卷 第三卷
+        阶段 开篇 开场 钩子 冲突 阻力 危机 转折 反转 推进 继续 补齐 场景 节奏 情绪
+        关系 支线 主线 伏笔 线索 长期 世界 规则 设定 真相 代价 升级 回收 方向 变化
+        计划 规划 结构 内容 逐步 以后 明确 重要 需要 必须 保持
+        主角目标 世界规则 开篇钩子 卷末反转 冲突升级 关系变化 伏笔回收 长期线索
+        chapter volume scene character goal outline plot story default template placeholder
+        """
+        return Set(ContextRanker.extractEntities(from: genericPlanningCorpus).map {
+            normalizedSemanticEntity($0)
+        })
+    }()
+
+    private static func isCJK(_ scalar: Unicode.Scalar) -> Bool {
+        let value = scalar.value
+        return (value >= 0x4E00 && value <= 0x9FFF)
+            || (value >= 0x3400 && value <= 0x4DBF)
+            || (value >= 0xF900 && value <= 0xFAFF)
+            || (value >= 0x20000 && value <= 0x2A6DF)
+            || (value >= 0x2A700 && value <= 0x2B73F)
+            || (value >= 0x2B740 && value <= 0x2B81F)
+            || (value >= 0x2B820 && value <= 0x2CEAF)
+            || (value >= 0x2CEB0 && value <= 0x2EBEF)
+            || (value >= 0x30000 && value <= 0x3134F)
     }
 
     private static func placeholderHit(in text: String) -> String? {

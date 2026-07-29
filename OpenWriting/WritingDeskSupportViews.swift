@@ -188,7 +188,15 @@ struct WritingDeskDraftEditor: NSViewRepresentable {
 
         let resolvedActionPoint = context.coordinator.selectionActionPoint(for: safeRange)
         if context.coordinator.parent.selectionActionPoint != resolvedActionPoint {
-            context.coordinator.parent.selectionActionPoint = resolvedActionPoint
+            let coordinator = context.coordinator
+            DispatchQueue.main.async { [weak coordinator] in
+                guard let coordinator,
+                      coordinator.parent.selectionActionPoint != resolvedActionPoint
+                else {
+                    return
+                }
+                coordinator.parent.selectionActionPoint = resolvedActionPoint
+            }
         }
 
         if context.coordinator.lastFocusToken != focusToken {
@@ -428,6 +436,8 @@ enum AIWriterTimelineStage: Int, CaseIterable {
 
 struct WritingDeskTimelineNode: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appAccentInkColor) private var accentInkColor
+    @Environment(\.appAccentStrokeColor) private var accentStrokeColor
     let stage: AIWriterTimelineStage
     let snapshot: AIWriterTimingSnapshot
 
@@ -507,7 +517,7 @@ struct WritingDeskTimelineNode: View {
         }
 
         if isActive {
-            return palette.activeAccent
+            return accentInkColor
         }
 
         if isCompleted {
@@ -551,7 +561,7 @@ struct WritingDeskTimelineNode: View {
         }
 
         if isActive {
-            return palette.activeAccent.opacity(0.5)
+            return accentStrokeColor
         }
 
         if isCompleted {
@@ -584,7 +594,7 @@ struct AIWriterThinkingSurface: View {
                     } else {
                         ProgressView()
                             .controlSize(.large)
-                            .tint(.blue)
+                            .tint(.accentColor)
                     }
 
                     VStack(alignment: .leading, spacing: 4) {
@@ -625,7 +635,7 @@ struct AIWriterThinkingSurface: View {
         }
 
         if index == state.activeIndex {
-            return state.isStopping ? Color.red : Color.blue
+            return state.isStopping ? Color.red : Color.accentColor
         }
 
         return .secondary.opacity(0.35)

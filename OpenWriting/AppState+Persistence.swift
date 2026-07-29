@@ -182,6 +182,16 @@ extension AppState {
 // MARK: - Keychain
 
 extension AppState {
+    static func readAPIKeyFromKeychain(
+        for provider: ModelProvider,
+        credentialStore: any CredentialStoring = SecurityKeychainCredentialStore()
+    ) -> CredentialReadResult {
+        ModelConnectionConfigurationStore.readAPIKeyFromKeychain(
+            for: provider,
+            credentialStore: credentialStore
+        )
+    }
+
     static func loadAPIKeyFromKeychain(
         for provider: ModelProvider,
         credentialStore: any CredentialStoring = SecurityKeychainCredentialStore()
@@ -205,10 +215,11 @@ extension AppState {
         )
     }
 
+    @discardableResult
     static func deleteAPIKeyFromKeychain(
         for provider: ModelProvider,
         credentialStore: any CredentialStoring = SecurityKeychainCredentialStore()
-    ) {
+    ) -> Bool {
         ModelConnectionConfigurationStore.deleteAPIKeyFromKeychain(
             for: provider,
             credentialStore: credentialStore
@@ -231,36 +242,64 @@ extension AppState {
         userDefaults.set(baseURL, forKey: Self.baseURLStorageKey(for: selectedProvider))
     }
 
-    func persistConnectionSettings(for provider: ModelProvider) {
+    @discardableResult
+    func persistConnectionSettings(for provider: ModelProvider) -> Bool {
         apiKeyPersistTask?.cancel()
         apiKeyPersistTask = nil
+        guard !apiKeyReadFailureProviders.contains(provider) else {
+            noteAPIKeyReadFailure()
+            return false
+        }
         userDefaults.set(modelName, forKey: Self.modelNameStorageKey(for: provider))
         userDefaults.set(baseURL, forKey: Self.baseURLStorageKey(for: provider))
 
         guard provider.requiresAPIKey else {
-            Self.deleteAPIKeyFromKeychain(for: provider, credentialStore: credentialStore)
-            return
+            return removeAPIKeyFromKeychain(for: provider)
         }
 
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedKey.isEmpty {
-            Self.deleteAPIKeyFromKeychain(for: provider, credentialStore: credentialStore)
-        } else {
-            Self.saveAPIKeyToKeychain(trimmedKey, for: provider, credentialStore: credentialStore)
+            return removeAPIKeyFromKeychain(for: provider)
         }
+        guard Self.saveAPIKeyToKeychain(
+            trimmedKey,
+            for: provider,
+            credentialStore: credentialStore
+        ) else {
+            noteAPIKeyPersistenceFailure()
+            return false
+        }
+        clearAPIKeychainFailureIfNeeded()
+        return true
     }
 
-    func loadConnectionSettings(for provider: ModelProvider) {
+    @discardableResult
+    func loadConnectionSettings(for provider: ModelProvider) -> Bool {
+        let keychainFailureMessage = currentAPIKeychainFailureMessage
+        let apiKeyReadResult = Self.readAPIKeyFromKeychain(
+            for: provider,
+            credentialStore: credentialStore
+        )
+        if case .failure = apiKeyReadResult {
+            apiKeyReadFailureProviders.insert(provider)
+            noteAPIKeyReadFailure()
+            return false
+        }
+        apiKeyReadFailureProviders.remove(provider)
         apiKeyPersistTask?.cancel()
         apiKeyPersistTask = nil
         isApplyingProviderConfiguration = true
         modelName = Self.loadModelName(for: provider, userDefaults: userDefaults)
         baseURL = Self.loadBaseURL(for: provider, userDefaults: userDefaults)
-        apiKey = provider.requiresAPIKey
-            ? Self.loadAPIKeyFromKeychain(for: provider, credentialStore: credentialStore) ?? ""
-            : ""
+        apiKey = apiKeyReadResult.value ?? ""
         isApplyingProviderConfiguration = false
-        refreshIdleValidationMessage()
+        if let keychainFailureMessage {
+            connectionStatus = .needsAttention
+            validationMessage = keychainFailureMessage
+        } else {
+            refreshIdleValidationMessage()
+        }
+        return true
     }
 
     func persistAutoValidatePreference() {
@@ -407,18 +446,31 @@ extension AppState {
         }
     }
 
-    func persistAPIKey() {
+    @discardableResult
+    func persistAPIKey() -> Bool {
+        guard !apiKeyReadFailureProviders.contains(selectedProvider) else {
+            noteAPIKeyReadFailure()
+            return false
+        }
         guard selectedProvider.requiresAPIKey else {
-            Self.deleteAPIKeyFromKeychain(for: selectedProvider, credentialStore: credentialStore)
-            return
+            return removeAPIKeyFromKeychain(for: selectedProvider)
         }
 
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedKey.isEmpty else {
-            Self.deleteAPIKeyFromKeychain(for: selectedProvider, credentialStore: credentialStore)
-            return
+            return removeAPIKeyFromKeychain(for: selectedProvider)
         }
-        Self.saveAPIKeyToKeychain(trimmedKey, for: selectedProvider, credentialStore: credentialStore)
+        let didPersist = Self.saveAPIKeyToKeychain(
+            trimmedKey,
+            for: selectedProvider,
+            credentialStore: credentialStore
+        )
+        if !didPersist {
+            noteAPIKeyPersistenceFailure()
+        } else {
+            clearAPIKeychainFailureIfNeeded()
+        }
+        return didPersist
     }
 
     func scheduleAPIKeyPersistence(delay: Duration = .milliseconds(700)) {
@@ -435,20 +487,95 @@ extension AppState {
         }
     }
 
-    func flushAPIKeyPersistence() {
+    @discardableResult
+    func flushAPIKeyPersistence() -> Bool {
         apiKeyPersistTask?.cancel()
         apiKeyPersistTask = nil
-        persistAPIKey()
+        return persistAPIKey()
+    }
+
+    private func noteAPIKeyPersistenceFailure() {
+        AppLogger.persistence.error("API key could not be persisted to Keychain.")
+        connectionStatus = .needsAttention
+        validationMessage = "API Key 未能写入系统 Keychain，请检查钥匙串访问后重试。"
+    }
+
+    private func noteAPIKeyReadFailure() {
+        AppLogger.persistence.error("API key could not be read from Keychain.")
+        connectionStatus = .needsAttention
+        validationMessage = Self.apiKeyReadFailureMessage
+    }
+
+    private func removeAPIKeyFromKeychain(for provider: ModelProvider) -> Bool {
+        let didRemove = Self.deleteAPIKeyFromKeychain(
+            for: provider,
+            credentialStore: credentialStore
+        )
+        if !didRemove {
+            noteAPIKeyRemovalFailure()
+        } else {
+            clearAPIKeychainFailureIfNeeded()
+        }
+        return didRemove
+    }
+
+    private func noteAPIKeyRemovalFailure() {
+        AppLogger.persistence.error("API key could not be removed from Keychain.")
+        connectionStatus = .needsAttention
+        validationMessage = "API Key 未能从系统 Keychain 删除，请检查钥匙串访问后重试。"
+    }
+
+    private func clearAPIKeychainFailureIfNeeded() {
+        guard !apiKeyReadFailureProviders.contains(selectedProvider) else {
+            return
+        }
+        guard currentAPIKeychainFailureMessage != nil else { return }
+        refreshIdleValidationMessage()
+    }
+
+    private var currentAPIKeychainFailureMessage: String? {
+        let keychainFailureMessages = [
+            "API Key 未能写入系统 Keychain，请检查钥匙串访问后重试。",
+            "API Key 未能从系统 Keychain 删除，请检查钥匙串访问后重试。",
+            Self.apiKeyReadFailureMessage
+        ]
+        guard connectionStatus == .needsAttention,
+              keychainFailureMessages.contains(validationMessage) else {
+            return nil
+        }
+        return validationMessage
     }
 
     @discardableResult
     func updateOfficialChannelCredential(_ credential: OfficialChannelCredential?) -> Bool {
+        guard credential != nil || !officialChannelCredentialReadFailed else {
+            AppLogger.persistence.error(
+                "Official channel credential state is locked after a Keychain read failure."
+            )
+            connectionStatus = .needsAttention
+            validationMessage = Self.officialCredentialReadFailureMessage
+            return false
+        }
         guard OfficialChannelCredentialStore.save(
             credential,
             credentialStore: credentialStore
         ) else {
+            if credential == nil {
+                AppLogger.persistence.error(
+                    "Official channel credential could not be removed from Keychain."
+                )
+                connectionStatus = .needsAttention
+                validationMessage = "登录凭据未能从系统 Keychain 删除，请检查钥匙串访问后重试。"
+            } else {
+                AppLogger.persistence.error(
+                    "Official channel credential could not be persisted to Keychain."
+                )
+                connectionStatus = .needsAttention
+                validationMessage = "登录凭据未能写入系统 Keychain，请检查钥匙串访问后重试。"
+            }
             return false
         }
+        officialChannelCredentialReadFailed = false
         officialChannelCredential = credential
         refreshIdleValidationMessage()
         return true
@@ -487,11 +614,14 @@ extension AppState {
 // MARK: - Migration
 
 extension AppState {
+    @discardableResult
     static func migrateLegacyUserDefaultsIfNeeded(
         _ userDefaults: UserDefaults,
         projectStore: ProjectFileStore
-    ) {
-        guard !userDefaults.bool(forKey: StorageKey.didMigrateLegacyDefaults) else { return }
+    ) -> Bool {
+        guard !userDefaults.bool(forKey: StorageKey.didMigrateLegacyDefaults) else {
+            return true
+        }
 
         copyStringValue(from: LegacyStorageKey.selectedProvider, to: StorageKey.selectedProvider, userDefaults: userDefaults)
         copyStringValue(from: LegacyStorageKey.modelName, to: StorageKey.modelName, userDefaults: userDefaults)
@@ -504,16 +634,41 @@ extension AppState {
         copyDoubleValue(from: LegacyStorageKey.draftEditorLineSpacing, to: StorageKey.draftEditorLineSpacing, userDefaults: userDefaults)
         copyStringValue(from: LegacyStorageKey.activeProjectID, to: StorageKey.activeProjectID, userDefaults: userDefaults)
 
-        if !projectStore.hasProjects(for: nil),
-           let legacyProjectsData = userDefaults.data(forKey: LegacyStorageKey.recentProjects),
-           let legacyProjects = Self.decodeProjects(from: legacyProjectsData),
-           (try? projectStore.saveProjects(legacyProjects, for: nil)) != nil {
-            userDefaults.removeObject(forKey: LegacyStorageKey.recentProjects)
+        guard let legacyProjectsData = userDefaults.data(
+            forKey: LegacyStorageKey.recentProjects
+        ) else {
+            userDefaults.set(true, forKey: StorageKey.didMigrateLegacyDefaults)
+            return true
         }
+        guard let decodeResult = Self.decodeLegacyProjectArray(
+            from: legacyProjectsData
+        ) else {
+            return false
+        }
+
+        let existingReport = projectStore.loadProjectsReport(for: nil)
+        guard existingReport?.issues.isEmpty != false else {
+            return false
+        }
+        let projectsToPersist = mergedLegacyProjects(
+            existing: existingReport?.projects ?? [],
+            legacy: decodeResult.projects
+        )
+        do {
+            try projectStore.saveProjects(projectsToPersist, for: nil)
+        } catch {
+            return false
+        }
+
+        guard decodeResult.isComplete else {
+            return false
+        }
+        userDefaults.removeObject(forKey: LegacyStorageKey.recentProjects)
 
         // API Key intentionally stays out of automatic legacy migration so app launch never
         // touches old keychain entries or triggers repeated password prompts.
         userDefaults.set(true, forKey: StorageKey.didMigrateLegacyDefaults)
+        return true
     }
 
     static func migrateRetiredOpenAICompatibleDefaults(_ userDefaults: UserDefaults) {
@@ -532,71 +687,146 @@ extension AppState {
         userDefaults.set(defaultOpenWBaseURL, forKey: key)
     }
 
+    @discardableResult
     static func migrateAPIKeysToKeychainIfNeeded(
         _ userDefaults: UserDefaults,
         credentialStore: any CredentialStoring = SecurityKeychainCredentialStore()
-    ) {
-        deleteAPIKeyFromKeychain(for: .openAICompatible, credentialStore: credentialStore)
+    ) -> Bool {
+        let didRemoveManagedKey = deleteAPIKeyFromKeychain(
+            for: .openAICompatible,
+            credentialStore: credentialStore
+        )
         userDefaults.removeObject(forKey: StorageKey.apiKey)
         userDefaults.removeObject(forKey: LegacyStorageKey.apiKey)
+        return didRemoveManagedKey
     }
 
+    @discardableResult
     static func migrateLegacyEmailScopeIfNeeded(
         _ userDefaults: UserDefaults,
         projectStore: ProjectFileStore
-    ) {
-        guard !userDefaults.bool(forKey: StorageKey.didMigrateLegacyEmailScope) else { return }
-        defer { userDefaults.set(true, forKey: StorageKey.didMigrateLegacyEmailScope) }
+    ) -> Bool {
+        guard !userDefaults.bool(forKey: StorageKey.didMigrateLegacyEmailScope) else {
+            return true
+        }
 
         guard let legacyEmail = stringValue(forKey: StorageKey.legacyActiveAccountEmail, userDefaults: userDefaults)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased(),
             !legacyEmail.isEmpty
-        else { return }
+        else {
+            userDefaults.set(true, forKey: StorageKey.didMigrateLegacyEmailScope)
+            return true
+        }
 
-        copyAccountScopedProjectData(
+        guard copyAccountScopedProjectData(
             from: legacyEmail,
             to: nil,
             userDefaults: userDefaults,
             projectStore: projectStore
-        )
+        ) else {
+            return false
+        }
         userDefaults.removeObject(forKey: StorageKey.legacyActiveAccountEmail)
+        userDefaults.set(true, forKey: StorageKey.didMigrateLegacyEmailScope)
+        return true
     }
 
+    @discardableResult
     static func copyAccountScopedProjectData(
         from sourceScope: String?,
         to targetScope: String?,
         userDefaults: UserDefaults,
         projectStore: ProjectFileStore
-    ) {
-        if !projectStore.hasProjects(for: targetScope),
-           let recentProjects = Self.loadRecentProjects(
-                for: sourceScope,
-                from: userDefaults,
-                projectStore: projectStore
-           ) {
-            try? projectStore.saveProjects(
-                recentProjects,
-                deletedProjects: projectStore.loadProjectDeletionTombstones(
-                    for: sourceScope
-                ),
+    ) -> Bool {
+        let sourceResult = Self.loadRecentProjectsReport(
+            for: sourceScope,
+            from: userDefaults,
+            projectStore: projectStore
+        )
+        let targetResult = Self.loadRecentProjectsReport(
+            for: targetScope,
+            from: userDefaults,
+            projectStore: projectStore
+        )
+        guard sourceResult.issues.isEmpty,
+              targetResult.issues.isEmpty,
+              sourceResult.legacyPayloadState.isComplete,
+              targetResult.legacyPayloadState.isComplete else {
+            return false
+        }
+
+        let mergedState =
+            CloudProjectMergePolicy.mergeCloudProjectStateForFreshWrite(
+                local: targetResult.projects ?? [],
+                localDeletedProjects:
+                    projectStore.loadProjectDeletionTombstones(
+                        for: targetScope
+                    ),
+                remote: sourceResult.projects ?? [],
+                remoteDeletedProjects:
+                    projectStore.loadProjectDeletionTombstones(
+                        for: sourceScope
+                    )
+            )
+        do {
+            try projectStore.saveProjects(
+                mergedState.projects,
+                deletedProjects: mergedState.deletedProjects,
                 for: targetScope
             )
+        } catch {
+            AppLogger.persistence.error(
+                "Account scope copy failed: \(error.localizedDescription, privacy: .public)"
+            )
+            return false
         }
 
         let sourceActiveProjectKey = activeProjectIDStorageKey(for: sourceScope)
         let targetActiveProjectKey = activeProjectIDStorageKey(for: targetScope)
-        if userDefaults.string(forKey: targetActiveProjectKey) == nil,
-           let activeProjectID = userDefaults.string(forKey: sourceActiveProjectKey) {
+        let survivingProjectIDs = Set(mergedState.projects.map(\.id))
+        let activeProjectID = [
+            userDefaults.string(forKey: targetActiveProjectKey),
+            userDefaults.string(forKey: sourceActiveProjectKey)
+        ]
+            .compactMap { $0 }
+            .first { survivingProjectIDs.contains($0) }
+        if let activeProjectID {
             userDefaults.set(activeProjectID, forKey: targetActiveProjectKey)
+        } else {
+            userDefaults.removeObject(forKey: targetActiveProjectKey)
         }
 
         let sourceTimestampKey = projectSnapshotTimestampStorageKey(for: sourceScope)
         let targetTimestampKey = projectSnapshotTimestampStorageKey(for: targetScope)
-        if userDefaults.object(forKey: targetTimestampKey) == nil,
-           let timestamp = userDefaults.object(forKey: sourceTimestampKey) {
+        var timestampCandidates = [
+            doubleValue(forKey: sourceTimestampKey, userDefaults: userDefaults),
+            doubleValue(forKey: targetTimestampKey, userDefaults: userDefaults)
+        ].compactMap { $0 }
+        timestampCandidates.append(
+            contentsOf: mergedState.projects.map {
+                $0.updatedAtDate.timeIntervalSince1970
+            }
+        )
+        timestampCandidates.append(
+            contentsOf: mergedState.deletedProjects.map {
+                $0.deletedAt.timeIntervalSince1970
+            }
+        )
+        if let timestamp = timestampCandidates.max() {
             userDefaults.set(timestamp, forKey: targetTimestampKey)
         }
+        return true
+    }
+
+    static func mergedLegacyProjects(
+        existing: [NovelProject],
+        legacy: [NovelProject]
+    ) -> [NovelProject] {
+        CloudProjectMergePolicy.mergeCloudProjects(
+            local: existing,
+            remote: legacy
+        )
     }
 
     static func copyStringValue(from legacyKey: String, to currentKey: String, userDefaults: UserDefaults) {

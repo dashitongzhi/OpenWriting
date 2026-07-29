@@ -33,7 +33,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -54,9 +54,20 @@ jobs:
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
-          if ! command -v rg >/dev/null 2>&1; then
-            brew install ripgrep
+          missing_formulae=()
+          command -v rg >/dev/null 2>&1 || missing_formulae+=(ripgrep)
+          command -v actionlint >/dev/null 2>&1 || missing_formulae+=(actionlint)
+          if (( ${#missing_formulae[@]} > 0 )); then
+            brew install "${missing_formulae[@]}"
           fi
+
+      - name: Validate workflow and script syntax
+        run: |
+          actionlint .github/workflows/*.yml
+          for script in scripts/*.sh; do
+            /bin/zsh -n "$script"
+          done
+          plutil -lint OpenWriting.xcodeproj/project.pbxproj
 
       - name: Run Codex PR review checks
         if: ${{ github.event_name == 'pull_request' }}
@@ -71,6 +82,12 @@ jobs:
         env:
           DERIVED_DATA_PATH: ${{ runner.temp }}/OpenWritingDerivedData-${{ github.run_id }}-${{ github.run_attempt }}
         run: zsh -f ./scripts/run-smoke-checks.sh
+
+      - name: Run unsigned Release build
+        env:
+          CONFIGURATION: Release
+          DERIVED_DATA_PATH: ${{ runner.temp }}/OpenWritingReleaseDerivedData-${{ github.run_id }}-${{ github.run_attempt }}
+        run: zsh -f ./scripts/build-debug.sh
 
       - name: Run hosted XCTest launch guard
         env:

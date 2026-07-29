@@ -34,7 +34,7 @@ struct DashboardPalette {
             textPrimary = Color.white.opacity(0.96)
             textSecondary = Color.white.opacity(0.70)
             warmAccent = Color(red: 1.00, green: 0.53, blue: 0.33)
-            coolAccent = Color(red: 0.26, green: 0.72, blue: 0.98)
+            coolAccent = .accentColor
             successAccent = Color(red: 0.43, green: 0.84, blue: 0.66)
             badgeFill = Color.white.opacity(0.10)
             badgeFillSelected = Color.white.opacity(0.16)
@@ -53,7 +53,7 @@ struct DashboardPalette {
             textPrimary = Color(red: 0.12, green: 0.13, blue: 0.20)
             textSecondary = Color(red: 0.30, green: 0.34, blue: 0.43)
             warmAccent = Color(red: 0.92, green: 0.55, blue: 0.30)
-            coolAccent = Color(red: 0.27, green: 0.56, blue: 0.92)
+            coolAccent = .accentColor
             successAccent = Color(red: 0.26, green: 0.68, blue: 0.52)
             badgeFill = Color.white.opacity(0.18)
             badgeFillSelected = Color.white.opacity(0.32)
@@ -126,7 +126,7 @@ struct PageBackground: View {
             )
 
             Circle()
-                .fill(palette.warmAccent.opacity(palette.isDark ? 0.24 : 0.22))
+                .fill(palette.coolAccent.opacity(palette.isDark ? 0.16 : 0.12))
                 .frame(width: 420, height: 420)
                 .blur(radius: 130)
                 .offset(x: -260, y: -240)

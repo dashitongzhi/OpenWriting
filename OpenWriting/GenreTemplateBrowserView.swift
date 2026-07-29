@@ -7,6 +7,9 @@ import SwiftUI
 /// via `selectedTemplateID` binding.
 struct GenreTemplateBrowserView: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appAccentForegroundColor) private var accentForegroundColor
+    @Environment(\.appAccentInkColor) private var accentInkColor
+    @Environment(\.appAccentStrokeColor) private var accentStrokeColor
     @Environment(\.dismiss) private var dismiss
 
     /// When set, the "使用此模板" button appears; selecting a template writes its id here.
@@ -146,7 +149,7 @@ struct GenreTemplateBrowserView: View {
                 // Category icon
                 Image(systemName: categoryIcon(category))
                     .font(.system(size: 15))
-                    .foregroundStyle(isSelected ? palette.coolAccent : palette.textSecondary)
+                    .foregroundStyle(isSelected ? accentInkColor : palette.textSecondary)
                     .frame(width: 22)
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -278,7 +281,11 @@ struct GenreTemplateBrowserView: View {
                 // Tags row: hook types
                 FlowLayout(spacing: 5) {
                     ForEach(template.preferredHookTypes, id: \.self) { hook in
-                        tagChip(hook.displayName, color: palette.coolAccent)
+                        tagChip(
+                            hook.displayName,
+                            color: accentInkColor,
+                            backgroundColor: palette.coolAccent
+                        )
                     }
                     ForEach(template.preferredCoolPointPatterns, id: \.self) { pattern in
                         tagChip(pattern.displayName, color: palette.warmAccent)
@@ -304,7 +311,7 @@ struct GenreTemplateBrowserView: View {
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .strokeBorder(
-                        isSelected ? palette.coolAccent.opacity(0.4) : palette.stroke,
+                        isSelected ? accentStrokeColor : palette.stroke,
                         lineWidth: isSelected ? 1.5 : 0.5
                     )
             )
@@ -353,7 +360,7 @@ struct GenreTemplateBrowserView: View {
 
                         Text(t.category.rawValue)
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(palette.coolAccent)
+                            .foregroundStyle(.appAccentInk)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
                             .background(
@@ -369,7 +376,7 @@ struct GenreTemplateBrowserView: View {
 
                     Text("核心卖点：\(t.coreSellingPoint)")
                         .font(.subheadline.weight(.medium))
-                        .foregroundStyle(palette.warmAccent)
+                        .foregroundStyle(.appAccentInk)
                 }
 
                 // ── Use template button ──
@@ -383,7 +390,11 @@ struct GenreTemplateBrowserView: View {
                             Text(selectedTemplateID == t.id ? "已选用此模板" : "使用此模板")
                         }
                         .font(.subheadline.weight(.medium))
-                        .foregroundStyle(selectedTemplateID == t.id ? palette.successAccent : .white)
+                        .foregroundStyle(
+                            selectedTemplateID == t.id
+                                ? palette.successAccent
+                                : accentForegroundColor
+                        )
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 9)
                         .background(
@@ -456,7 +467,7 @@ struct GenreTemplateBrowserView: View {
             statCard("爽点密度", value: t.coolPointDensity.displayName,
                      icon: "flame.fill", color: .orange)
             statCard("停顿阈值", value: "\(t.stagnationThreshold) 章",
-                     icon: "clock.badge.exclamationmark", color: palette.coolAccent)
+                     icon: "clock.badge.exclamationmark", color: accentInkColor)
             statCard("铺垫容忍", value: "\(t.setupTolerance.displayName)（最多 \(t.setupTolerance.maxSetupChapters) 章）",
                      icon: "hourglass", color: palette.successAccent)
         }
@@ -496,7 +507,7 @@ struct GenreTemplateBrowserView: View {
         return VStack(alignment: .leading, spacing: 10) {
             LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
                 strandStat("任务线", target: config.questTarget, max: config.questMaxConsecutive, unit: "连章",
-                           color: palette.coolAccent)
+                           color: accentInkColor)
                 strandStat("高潮线", target: config.fireTarget, max: config.fireMaxGap, unit: "间隔",
                            color: palette.warmAccent)
                 strandStat("伏笔线", target: config.constellationTarget, max: config.constellationMaxGap, unit: "间隔",
@@ -586,7 +597,7 @@ struct GenreTemplateBrowserView: View {
         HStack(alignment: .top, spacing: 10) {
             Text(hook.displayName)
                 .font(.caption.weight(.bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(accentForegroundColor)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(
@@ -638,7 +649,11 @@ struct GenreTemplateBrowserView: View {
 
     // MARK: - Helpers
 
-    private func tagChip(_ text: String, color: Color) -> some View {
+    private func tagChip(
+        _ text: String,
+        color: Color,
+        backgroundColor: Color? = nil
+    ) -> some View {
         Text(text)
             .font(.caption2.weight(.medium))
             .foregroundStyle(color)
@@ -646,7 +661,10 @@ struct GenreTemplateBrowserView: View {
             .padding(.vertical, 3)
             .background(
                 Capsule()
-                    .fill(color.opacity(palette.isDark ? 0.12 : 0.10))
+                    .fill(
+                        (backgroundColor ?? color)
+                            .opacity(palette.isDark ? 0.12 : 0.10)
+                    )
             )
     }
 

@@ -1,12 +1,14 @@
-#!/bin/sh
-if [ -z "${ZSH_VERSION:-}" ]; then
-  exec /bin/zsh -f "$0" "$@"
-fi
+#!/bin/zsh -f
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if ! command -v rg >/dev/null 2>&1; then
+    echo "error: required command 'rg' was not found" >&2
+    exit 1
+fi
 
 if [[ "${OPENWRITING_GIT_PREFLIGHT_ALREADY_RAN:-0}" != "1" ]]; then
     bash "$SCRIPT_DIR/git-preflight.sh"

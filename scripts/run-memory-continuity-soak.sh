@@ -37,6 +37,7 @@ source_files=(
     "$REPO_ROOT/OpenWriting/AppLogger.swift"
     "$REPO_ROOT/OpenWriting/ChapterQualityReviewer.swift"
     "$REPO_ROOT/OpenWriting/ChapterTreeRefresh.swift"
+    "$REPO_ROOT/OpenWriting/ContextRanker.swift"
     "$REPO_ROOT/OpenWriting/DomainModels.swift"
     "$REPO_ROOT/OpenWriting/GenreTemplateData.swift"
     "$REPO_ROOT/OpenWriting/GenreTemplateEngine.swift"

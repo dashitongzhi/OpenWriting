@@ -3,6 +3,7 @@ import SwiftUI
 // MARK: - Score Gauge Ring
 
 struct ScoreGaugeRing: View {
+    @Environment(\.appAccentStrokeColor) private var accentStrokeColor
     let score: Int // 0–100
     let grade: ReviewGrade
     let palette: DashboardPalette
@@ -15,6 +16,22 @@ struct ScoreGaugeRing: View {
         case .fair:      return palette.warmAccent
         case .poor:      return Color.red
         }
+    }
+
+    private var progressColors: [Color] {
+        if grade == .good {
+            return [
+                accentStrokeColor,
+                accentStrokeColor,
+                accentStrokeColor
+            ]
+        }
+
+        return [
+            gradeColor.opacity(0.6),
+            gradeColor,
+            gradeColor.opacity(0.85)
+        ]
     }
 
     var body: some View {
@@ -31,11 +48,7 @@ struct ScoreGaugeRing: View {
                 .trim(from: 0, to: fraction)
                 .stroke(
                     AngularGradient(
-                        gradient: Gradient(colors: [
-                            gradeColor.opacity(0.6),
-                            gradeColor,
-                            gradeColor.opacity(0.85)
-                        ]),
+                        gradient: Gradient(colors: progressColors),
                         center: .center,
                         startAngle: .degrees(0),
                         endAngle: .degrees(360 * fraction)

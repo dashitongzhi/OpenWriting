@@ -34,8 +34,10 @@ nonisolated enum CloudProjectJSONCoding {
             if let seconds = Double(rawValue) {
                 return Date(timeIntervalSince1970: seconds)
             }
-            if let date = formatter(withFractionalSeconds: true).date(from: rawValue)
-                ?? formatter(withFractionalSeconds: false).date(from: rawValue) {
+            if let date = try? fractionalDateFormat.parse(rawValue) {
+                return date
+            }
+            if let date = try? wholeSecondDateFormat.parse(rawValue) {
                 return date
             }
             throw DecodingError.dataCorruptedError(
@@ -47,23 +49,21 @@ nonisolated enum CloudProjectJSONCoding {
     }
 
     static func string(from date: Date) -> String {
-        formatter(withFractionalSeconds: true).string(from: date)
+        fractionalDateFormat.format(date)
     }
 
     static func representsSamePersistedInstant(_ lhs: Date, _ rhs: Date) -> Bool {
         string(from: lhs) == string(from: rhs)
     }
 
-    private static func formatter(
-        withFractionalSeconds: Bool
-    ) -> ISO8601DateFormatter {
-        let formatter = ISO8601DateFormatter()
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.formatOptions = withFractionalSeconds
-            ? [.withInternetDateTime, .withFractionalSeconds]
-            : [.withInternetDateTime]
-        return formatter
-    }
+    private static let fractionalDateFormat = Date.ISO8601FormatStyle(
+        includingFractionalSeconds: true,
+        timeZone: .gmt
+    )
+    private static let wholeSecondDateFormat = Date.ISO8601FormatStyle(
+        includingFractionalSeconds: false,
+        timeZone: .gmt
+    )
 }
 
 nonisolated enum CloudProjectPayloadCodec {
@@ -118,18 +118,61 @@ nonisolated enum CloudProjectPayloadCodec {
         "strandWeaveTracker"
     ]
     private static let macOSLegacyMarkers: Set<String> = [
-        "schemaVersion",
         "globalMemorySnapshot",
         "strandWeaveTracker",
         "foreshadowList",
         "plotThreadList",
         "genreTemplateId"
     ]
-    private static let iOSLegacyMarkers: Set<String> = [
-        "referenceContextItems",
+    private static let iOSExclusiveLegacyMarkers: Set<String> = [
+        "referenceContextItems"
+    ]
+    private static let iOSLegacyFallbackMarkers: Set<String> = [
         "persistedLongformRuntimeState",
         "persistedLastReviewResult",
         "persistedAntiPatterns"
+    ]
+    private static let iOSOwnedFieldNames: Set<String> = [
+        "id",
+        "title",
+        "genre",
+        "summary",
+        "storyLength",
+        "updatedAt",
+        "currentChapterTitle",
+        "currentVolumeNumber",
+        "currentChapterNumber",
+        "writtenChapters",
+        "chapterFocus",
+        "draftText",
+        "draftWordCount",
+        "outlineText",
+        "structureNotes",
+        "sceneProgressNotes",
+        "characterArcNotes",
+        "foreshadowNotes",
+        "continuityNotes",
+        "specialRequirements",
+        "wordTargetText",
+        "volumePlanNotes",
+        "activeThreadsNotes",
+        "outlineSummary",
+        "referenceContextText",
+        "referenceContextItems",
+        "aiWritingMode",
+        "aiWritingLength",
+        "aiAdditionalInstruction",
+        "chapterCatalog",
+        "qualityReviewReports",
+        "persistedMemoryBuckets",
+        "persistedStrandWeaveState",
+        "persistedAntiPatterns",
+        "persistedLastReviewResult",
+        "persistedLongformRuntimeState",
+        "pendingAIWritingCandidate",
+        "chapterDrafts",
+        "referenceDocuments",
+        "coverImageData"
     ]
 
     static func encodeMacProject(_ project: NovelProject, preserving previousData: Data?) throws -> Data {
@@ -149,18 +192,50 @@ nonisolated enum CloudProjectPayloadCodec {
         var platformObject = try jsonObject(from: platformPayload)
         var preservedPlatforms: [String: Any] = [:]
         var preservedCommon: [String: Any] = [:]
+        var preservedRootFields: [String: Any] = [:]
+        let expectedProjectID = try requiredProjectID(
+            in: platformObject,
+            context: platform.rawValue
+        )
 
         if let previousData {
             let previousObject = try jsonObject(from: previousData)
             if let envelope = try validatedEnvelope(previousObject) {
-                let platforms = envelope[platformsKey] as? [String: Any] ?? [:]
+                let platforms = try platformObjects(in: envelope)
+                let common = try requiredObject(envelope[commonKey], named: commonKey)
+                try validateEnvelopeIdentity(
+                    common: common,
+                    platforms: platforms,
+                    expectedProjectID: expectedProjectID
+                )
+                preservedRootFields = envelope.filter {
+                    ![versionKey, commonKey, platformsKey].contains($0.key)
+                }
                 preservedPlatforms = platforms
-                preservedCommon = envelope[commonKey] as? [String: Any] ?? [:]
+                preservedCommon = common
+                if let previousPlatformObject = platforms[platform.rawValue] as? [String: Any] {
+                    platformObject = mergedPlatformObject(
+                        previous: previousPlatformObject,
+                        replacement: platformObject,
+                        platform: platform
+                    )
+                }
             } else {
+                let legacyProjectID = try requiredProjectID(
+                    in: previousObject,
+                    context: "legacy project payload"
+                )
+                guard legacyProjectID == expectedProjectID else {
+                    throw CodecError.malformedEnvelope
+                }
                 preservedCommon = commonObject(from: previousObject)
-                switch legacyPlatform(for: previousObject) {
+                switch try legacyPlatform(for: previousObject) {
                 case platform:
-                    platformObject = previousObject.merging(platformObject) { _, newValue in newValue }
+                    platformObject = mergedPlatformObject(
+                        previous: previousObject,
+                        replacement: platformObject,
+                        platform: platform
+                    )
                 case let preservedPlatform?:
                     preservedPlatforms[preservedPlatform.rawValue] = previousObject
                 case nil:
@@ -171,11 +246,11 @@ nonisolated enum CloudProjectPayloadCodec {
 
         preservedPlatforms[platform.rawValue] = platformObject
         preservedCommon.merge(commonObject(from: platformObject)) { _, newValue in newValue }
-        let envelope: [String: Any] = [
-            versionKey: currentVersion,
-            commonKey: preservedCommon,
-            platformsKey: preservedPlatforms
-        ]
+        var envelope = preservedRootFields
+        envelope[versionKey] = currentVersion
+        envelope[commonKey] = preservedCommon
+        envelope[platformsKey] = preservedPlatforms
+        _ = try validatedEnvelope(envelope)
         return try JSONSerialization.data(
             withJSONObject: envelope,
             options: [.sortedKeys]
@@ -185,8 +260,8 @@ nonisolated enum CloudProjectPayloadCodec {
     static func decodeMacProject(from data: Data) throws -> NovelProject {
         let root = try jsonObject(from: data)
         if let envelope = try validatedEnvelope(root) {
-            let common = envelope[commonKey] as? [String: Any] ?? [:]
-            let platforms = envelope[platformsKey] as? [String: Any] ?? [:]
+            let common = try requiredObject(envelope[commonKey], named: commonKey)
+            let platforms = try platformObjects(in: envelope)
             var resolved = platforms[CloudProjectPayloadPlatform.macOS.rawValue] as? [String: Any]
                 ?? common
             resolved.merge(common) { _, commonValue in commonValue }
@@ -201,10 +276,9 @@ nonisolated enum CloudProjectPayloadCodec {
         in data: Data
     ) throws -> Data? {
         let root = try jsonObject(from: data)
-        guard let envelope = try validatedEnvelope(root),
-              let platforms = envelope[platformsKey] as? [String: Any],
-              let payload = platforms[platform.rawValue] as? [String: Any]
-        else {
+        guard let envelope = try validatedEnvelope(root) else { return nil }
+        let platforms = try platformObjects(in: envelope)
+        guard let payload = platforms[platform.rawValue] as? [String: Any] else {
             return nil
         }
         return try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
@@ -212,12 +286,19 @@ nonisolated enum CloudProjectPayloadCodec {
 
     static func commonPayload(in data: Data) throws -> Data? {
         let root = try jsonObject(from: data)
-        guard let envelope = try validatedEnvelope(root),
-              let common = envelope[commonKey] as? [String: Any]
-        else {
-            return nil
-        }
+        guard let envelope = try validatedEnvelope(root) else { return nil }
+        let common = try requiredObject(envelope[commonKey], named: commonKey)
         return try JSONSerialization.data(withJSONObject: common, options: [.sortedKeys])
+    }
+
+    static func projectID(in data: Data) throws -> String {
+        let root = try jsonObject(from: data)
+        if let envelope = try validatedEnvelope(root) {
+            let common = try requiredObject(envelope[commonKey], named: commonKey)
+            return try requiredProjectID(in: common, context: commonKey)
+        }
+
+        return try requiredProjectID(in: root, context: "legacy project payload")
     }
 
     static func payloadHash(for data: Data) -> String {
@@ -333,6 +414,24 @@ nonisolated enum CloudProjectPayloadCodec {
         platformObject.filter { commonFieldNames.contains($0.key) }
     }
 
+    private static func mergedPlatformObject(
+        previous: [String: Any],
+        replacement: [String: Any],
+        platform: CloudProjectPayloadPlatform
+    ) -> [String: Any] {
+        let ownedFieldNames: Set<String>
+        switch platform {
+        case .macOS:
+            ownedFieldNames = Set(NovelProject.CodingKeys.allCases.map(\.rawValue))
+        case .iOS:
+            ownedFieldNames = iOSOwnedFieldNames
+        }
+
+        var merged = previous.filter { !ownedFieldNames.contains($0.key) }
+        merged.merge(replacement) { _, newValue in newValue }
+        return merged
+    }
+
     private static func jsonObject(from data: Data) throws -> [String: Any] {
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw CocoaError(.propertyListReadCorrupt)
@@ -341,37 +440,121 @@ nonisolated enum CloudProjectPayloadCodec {
     }
 
     private static func validatedEnvelope(_ object: [String: Any]) throws -> [String: Any]? {
-        guard let version = object[versionKey] as? NSNumber else { return nil }
-        guard version.intValue == currentVersion else {
-            throw CodecError.unsupportedEnvelopeVersion(version.intValue)
+        guard object[versionKey] != nil else { return nil }
+        let version = try envelopeVersion(in: object)
+        guard version == currentVersion else {
+            throw CodecError.unsupportedEnvelopeVersion(version)
         }
-        guard let common = object[commonKey] as? [String: Any],
-              let platforms = object[platformsKey] as? [String: Any],
-              let commonID = common["id"] as? String,
-              !commonID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
+        let common = try requiredObject(object[commonKey], named: commonKey)
+        let platforms = try platformObjects(in: object)
+        let commonID = try requiredProjectID(in: common, context: commonKey)
+        try validateEnvelopeIdentity(
+            common: common,
+            platforms: platforms,
+            expectedProjectID: commonID
+        )
+        return object
+    }
+
+    private static func envelopeVersion(in object: [String: Any]) throws -> Int {
+        guard let rawValue = object[versionKey] as? NSNumber else {
             throw CodecError.malformedEnvelope
         }
-        for payload in platforms.values {
-            guard let platformPayload = payload as? [String: Any] else {
-                throw CodecError.malformedEnvelope
-            }
-            if let platformID = platformPayload["id"] as? String,
-               platformID != commonID {
-                throw CodecError.malformedEnvelope
-            }
+        let integerObjectiveCTypes: Set<String> = [
+            "q", "Q", "i", "I", "s", "S", "l", "L"
+        ]
+        let objectiveCType = String(cString: rawValue.objCType)
+        guard integerObjectiveCTypes.contains(objectiveCType),
+              let version = Int(rawValue.stringValue) else {
+            throw CodecError.malformedEnvelope
+        }
+        return version
+    }
+
+    private static func platformObjects(
+        in object: [String: Any]
+    ) throws -> [String: Any] {
+        let rawPlatforms = try requiredObject(object[platformsKey], named: platformsKey)
+        var platforms: [String: Any] = [:]
+        for (platform, value) in rawPlatforms {
+            platforms[platform] = try requiredObject(
+                value,
+                named: "\(platformsKey).\(platform)"
+            )
+        }
+        return platforms
+    }
+
+    private static func requiredObject(
+        _ value: Any?,
+        named name: String
+    ) throws -> [String: Any] {
+        guard let object = value as? [String: Any] else {
+            throw CodecError.malformedEnvelope
         }
         return object
     }
 
+    private static func validateEnvelopeIdentity(
+        common: [String: Any],
+        platforms: [String: Any],
+        expectedProjectID: String
+    ) throws {
+        let commonProjectID = try requiredProjectID(in: common, context: commonKey)
+        guard commonProjectID == expectedProjectID else {
+            throw CodecError.malformedEnvelope
+        }
+
+        for (platform, value) in platforms {
+            guard let payload = value as? [String: Any] else {
+                throw CodecError.malformedEnvelope
+            }
+            let requiresProjectID =
+                platform == CloudProjectPayloadPlatform.macOS.rawValue
+                    || platform == CloudProjectPayloadPlatform.iOS.rawValue
+            guard requiresProjectID || payload["id"] != nil else {
+                continue
+            }
+            let platformProjectID = try requiredProjectID(
+                in: payload,
+                context: "\(platformsKey).\(platform)"
+            )
+            guard platformProjectID == expectedProjectID else {
+                throw CodecError.malformedEnvelope
+            }
+        }
+    }
+
+    private static func requiredProjectID(
+        in payload: [String: Any],
+        context _: String
+    ) throws -> String {
+        guard let projectID = payload["id"] as? String,
+              !projectID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw CodecError.malformedEnvelope
+        }
+        return projectID
+    }
+
     private static func legacyPlatform(
         for object: [String: Any]
-    ) -> CloudProjectPayloadPlatform? {
+    ) throws -> CloudProjectPayloadPlatform? {
         let keys = Set(object.keys)
-        if !keys.isDisjoint(with: macOSLegacyMarkers) {
+        let hasMacOSMarker = !keys.isDisjoint(with: macOSLegacyMarkers)
+        let hasIOSExclusiveMarker = !keys.isDisjoint(
+            with: iOSExclusiveLegacyMarkers
+        )
+        let hasIOSFallbackMarker = !keys.isDisjoint(
+            with: iOSLegacyFallbackMarkers
+        )
+
+        guard !(hasMacOSMarker && hasIOSExclusiveMarker) else {
+            throw CodecError.malformedEnvelope
+        }
+        if hasMacOSMarker {
             return .macOS
         }
-        if !keys.isDisjoint(with: iOSLegacyMarkers) {
+        if hasIOSExclusiveMarker || hasIOSFallbackMarker {
             return .iOS
         }
         return nil

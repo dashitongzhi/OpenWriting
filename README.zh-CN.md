@@ -15,9 +15,9 @@
 
 <p>
   <a href="https://www.apple.com/macos/"><img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-111827?style=for-the-badge&logo=apple&logoColor=white&labelColor=000000"></a>
-  <a href="https://swift.org/"><img alt="Swift" src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white&labelColor=1f2937"></a>
+  <a href="https://swift.org/"><img alt="Swift 6" src="https://img.shields.io/badge/Swift-6.0-F05138?style=for-the-badge&logo=swift&logoColor=white&labelColor=1f2937"></a>
   <a href="https://developer.apple.com/xcode/swiftui/"><img alt="SwiftUI" src="https://img.shields.io/badge/SwiftUI-%E5%8E%9F%E7%94%9F%E4%BD%93%E9%AA%8C-0A84FF?style=for-the-badge&logo=swift&logoColor=white&labelColor=1f2937"></a>
-  <img alt="License GPL v3" src="https://img.shields.io/badge/License-GPL%20v3-10B981?style=for-the-badge&labelColor=1f2937">
+  <a href="LICENSE"><img alt="License GPL v3" src="https://img.shields.io/badge/License-GPL%20v3-10B981?style=for-the-badge&labelColor=1f2937"></a>
 </p>
 
 <p>
@@ -268,9 +268,15 @@ open OpenWriting.xcodeproj
 | `./scripts/build-debug.sh` | Debug 构建 |
 | `./scripts/run-debug.sh` | 运行 Debug 版本 |
 | `./scripts/git-preflight.sh` | 本地 Git ref / 默认分支前置检查 |
+| `./scripts/check-index-coverage.sh` | 校验 `INDEX.md` 源码覆盖 |
+| `./scripts/verify-xctest-membership.sh` | 校验 XCTest target membership |
+| `./scripts/run-hosted-xctest-guard.sh` | 校验宿主 XCTest 启动行为 |
+| `./scripts/run-tests.sh` | 构建并一次运行完整 XCTest 套件 |
 | `./scripts/run-smoke-checks.sh` | 冒烟检查 |
 | `./scripts/run-longform-quality-checks.sh` | 长篇质量检查 |
 | `./scripts/run-longform-evals.sh` | 长篇管线评测 |
+| `./scripts/run-memory-continuity-soak.sh` | 长篇记忆连续性 soak 测试 |
+| `./scripts/run-codex-pr-review-checks.sh` | 本地 Codex 审查工作流检查 |
 | `./scripts/run-all-checks.sh` | 聚合检查 |
 
 ---
@@ -303,6 +309,7 @@ OpenWriting/
 │  ├─ ProjectExportService.swift
 │  └─ AccountSync.swift
 ├─ LongformEvals/
+├─ promo-video/
 ├─ Tests/
 ├─ scripts/
 ├─ INDEX.md
@@ -346,7 +353,7 @@ OpenWriting/
 
 ## 开源协议
 
-OpenWriting 使用 GPL v3 开源协议。
+OpenWriting 使用 [GNU 通用公共许可证 v3.0（仅此版本）](LICENSE)。
 
 ---
 

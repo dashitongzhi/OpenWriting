@@ -595,7 +595,7 @@ extension AIWritingService {
         let reviewContext = chapterTreeReviewContext(project.lastReviewResult)
         let health = project.longformRuntimeHealth
         let healthContext = health.issues
-            .filter { $0.title != "长篇合同尚未落盘" }
+            .filter(\.shouldIncludeInWritingContext)
             .prefix(4)
             .map { "- [\($0.status.displayName)] \($0.title)：\($0.detail)\n  修复方向：\($0.repairHint)" }
             .joined(separator: "\n")
@@ -804,27 +804,54 @@ extension AIWritingService {
     // MARK: - Prompt Helpers
 
     static func writingExecutionContractPrompt(project: NovelProject) -> String {
-        let contractContext = bounded(
-            project.longformStorySystemContext,
-            fallback: "暂无后台长篇合同，请至少依据本章目标、草稿箱最后状态和章节树约束推进。",
-            limit: project.storyLength.supportsVolumePlanning ? 5_600 : 2_800
+        writingExecutionContractPrompt(
+            project: project,
+            context: LongformStorySystem.buildPromptContext(for: project)
         )
-        let health = project.longformRuntimeHealth
+    }
+
+    static func writingExecutionContractPrompt(
+        project: NovelProject,
+        context: LongformPromptContext
+    ) -> String {
+        let chapterContract = context.contract.chapter
+        let criticalChapterContract = boundedContractContent(
+            [
+                "结构记录：\(project.structureNotes)",
+                "本章目标：\(chapterContract.chapterGoal)",
+                "必须节点：\(chapterContract.mandatoryNodes.joined(separator: "；"))",
+                "场景指令：\(chapterContract.sceneDirectives.joined(separator: "；"))",
+                "角色指令：\(chapterContract.characterDirectives.joined(separator: "；"))",
+                "活跃伏笔：\(chapterContract.activeForeshadowing.joined(separator: "；"))",
+                "禁止事项：\(chapterContract.forbiddenZones.joined(separator: "；"))"
+            ].joined(separator: "\n"),
+            fallback: "暂无结构化本章合同，请依据本章目标和草稿箱最后状态推进。",
+            limit: project.storyLength.supportsVolumePlanning ? 1_800 : 1_200
+        )
+        let contractContext = boundedContractContent(
+            context.contract.writingBrief,
+            fallback: "暂无后台长篇合同，请至少依据本章目标、草稿箱最后状态和章节树约束推进。",
+            limit: project.storyLength.supportsVolumePlanning ? 4_800 : 2_400
+        )
+        let health = context.health
         let issueLines = health.issues
-            .filter { $0.title != "长篇合同尚未落盘" }
+            .filter(\.shouldIncludeInWritingContext)
             .prefix(4)
             .map { "- [\($0.status.displayName)] \($0.title)：\($0.detail)\n  修复方向：\($0.repairHint)" }
             .joined(separator: "\n")
         let healthText = issueLines.isEmpty
             ? "- 后台健康诊断暂无额外阻断项。"
             : issueLines
-        let qualityTrend = project.longformQualityTrend
+        let qualityTrend = context.qualityTrend
         let qualityTrendText = qualityTrend.hasSignals
             ? qualityTrend.formattedForPrompt
             : "- 暂无跨章节质量趋势。"
-        let nextChapterBrief = project.longformNextChapterBrief
+        let nextChapterBrief = context.nextChapterBrief
 
         return """
+        当前章硬约束（固定保留）：
+        \(criticalChapterContract)
+
         执行优先级：
         - 先承接草稿箱最后一句和当前场景状态。
         - 再逐条落实后台合同里的“本章必须执行”。
@@ -918,6 +945,28 @@ extension AIWritingService {
         let resolvedText = normalized(text, fallback: fallback)
         guard resolvedText != fallback else { return resolvedText }
         return excerpt(from: resolvedText, limit: limit)
+    }
+
+    private static func boundedContractContent(
+        _ text: String,
+        fallback: String,
+        limit: Int
+    ) -> String {
+        guard limit > 0 else { return "" }
+        let resolvedText = normalized(text, fallback: fallback)
+        guard resolvedText.count > limit else { return resolvedText }
+
+        let truncationMarker = "\n[合同内容因预算已截断]\n"
+        guard limit > truncationMarker.count else {
+            return String(truncationMarker.prefix(limit))
+        }
+
+        let contentBudget = limit - truncationMarker.count
+        let prefixBudget = (contentBudget * 2) / 3
+        let suffixBudget = contentBudget - prefixBudget
+        return String(resolvedText.prefix(prefixBudget))
+            + truncationMarker
+            + String(resolvedText.suffix(suffixBudget))
     }
 
     static func normalizeChapterTitle(_ text: String) -> String {

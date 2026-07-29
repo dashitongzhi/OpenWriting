@@ -1,7 +1,4 @@
-#!/bin/sh
-if [ -z "${ZSH_VERSION:-}" ]; then
-  exec /bin/zsh -f "$0" "$@"
-fi
+#!/bin/zsh -f
 
 set -euo pipefail
 
@@ -9,6 +6,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 INDEX_FILE="$REPO_ROOT/INDEX.md"
 missing=()
+
+if ! command -v rg >/dev/null 2>&1; then
+    echo "error: required command 'rg' was not found" >&2
+    exit 1
+fi
 
 while IFS= read -r source_file; do
     relative_path="${source_file#$REPO_ROOT/}"

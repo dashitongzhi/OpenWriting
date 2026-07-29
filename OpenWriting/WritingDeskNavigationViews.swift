@@ -3,6 +3,7 @@ import SwiftUI
 
 struct WritingDeskChapterNavigator: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appAccentInkColor) private var accentInkColor
     let project: NovelProject
     @Binding var searchText: String
     let onSelectChapter: (ChapterDraftMetadata) -> Void
@@ -105,7 +106,7 @@ struct WritingDeskChapterNavigator: View {
             HStack(alignment: .center, spacing: 10) {
                 Text(String(format: "%02d", chapter.chapterNumber))
                     .font(.caption.weight(.bold))
-                    .foregroundStyle(isCurrent ? palette.coolAccent : palette.textSecondary)
+                    .foregroundStyle(isCurrent ? accentInkColor : palette.textSecondary)
                     .frame(width: 34, height: 30)
                     .background(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -128,7 +129,7 @@ struct WritingDeskChapterNavigator: View {
 
                 if isCurrent {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(palette.coolAccent)
+                        .foregroundStyle(.appAccentInk)
                         .font(.caption)
                 }
             }

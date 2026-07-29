@@ -6,8 +6,14 @@ nonisolated enum PersistedTimestampDisplayStyle {
 }
 
 nonisolated enum PersistedTimestampCodec {
+    private static let formatterPool = TimestampFormatterPool()
+
     static func now() -> Date {
         Date()
+    }
+
+    static func storageValue(for date: Date) -> String {
+        String(date.timeIntervalSince1970)
     }
 
     static func parse(_ rawValue: String) -> Date? {
@@ -18,8 +24,13 @@ nonisolated enum PersistedTimestampCodec {
             return dateFromEpochSeconds(seconds)
         }
 
-        if let date = iso8601Formatter(withFractionalSeconds: true).date(from: trimmedValue)
-            ?? iso8601Formatter(withFractionalSeconds: false).date(from: trimmedValue) {
+        if let date = formatterPool.iso8601Date(
+            from: trimmedValue,
+            withFractionalSeconds: true
+        ) ?? formatterPool.iso8601Date(
+            from: trimmedValue,
+            withFractionalSeconds: false
+        ) {
             return date
         }
 
@@ -111,14 +122,14 @@ nonisolated enum PersistedTimestampCodec {
         if calendar.isDateInToday(date) {
             switch style {
             case .project:
-                return formatter("今天 HH:mm").string(from: date)
+                return formatterPool.string(from: date, format: "今天 HH:mm")
             case .compact:
-                return formatter("HH:mm").string(from: date)
+                return formatterPool.string(from: date, format: "HH:mm")
             }
         }
 
         if calendar.isDateInYesterday(date) {
-            return formatter("昨天 HH:mm").string(from: date)
+            return formatterPool.string(from: date, format: "昨天 HH:mm")
         }
 
         let currentYear = calendar.component(.year, from: Date())
@@ -126,33 +137,27 @@ nonisolated enum PersistedTimestampCodec {
 
         switch style {
         case .project:
-            return formatter(targetYear == currentYear ? "M月d日 HH:mm" : "yyyy年M月d日 HH:mm").string(from: date)
+            return formatterPool.string(
+                from: date,
+                format: targetYear == currentYear
+                    ? "M月d日 HH:mm"
+                    : "yyyy年M月d日 HH:mm"
+            )
         case .compact:
-            return formatter(targetYear == currentYear ? "M/d HH:mm" : "yy/M/d HH:mm").string(from: date)
+            return formatterPool.string(
+                from: date,
+                format: targetYear == currentYear
+                    ? "M/d HH:mm"
+                    : "yy/M/d HH:mm"
+            )
         }
     }
 
-    private static var calendar: Calendar {
+    private static let calendar: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
         calendar.locale = Locale(identifier: "zh_Hans_CN")
         return calendar
-    }
-
-    private static func iso8601Formatter(withFractionalSeconds: Bool) -> ISO8601DateFormatter {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = withFractionalSeconds
-            ? [.withInternetDateTime, .withFractionalSeconds]
-            : [.withInternetDateTime]
-        return formatter
-    }
-
-    private static func formatter(_ format: String) -> DateFormatter {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_Hans_CN")
-        formatter.isLenient = false
-        formatter.dateFormat = format
-        return formatter
-    }
+    }()
 
     private static func parseLegacyDateLabel(_ value: String) -> Date? {
         let fullYearFormats = [
@@ -167,7 +172,7 @@ nonisolated enum PersistedTimestampCodec {
         ]
 
         for format in fullYearFormats {
-            if let date = formatter(format).date(from: value) {
+            if let date = formatterPool.date(from: value, format: format) {
                 return date
             }
         }
@@ -180,12 +185,15 @@ nonisolated enum PersistedTimestampCodec {
         ]
 
         for format in currentYearFormats {
-            if let parsedDate = formatter(format).date(from: value) {
+            if let parsedDate = formatterPool.date(from: value, format: format) {
                 return date(byApplyingCurrentYearTo: parsedDate)
             }
         }
 
-        if let compactYearDate = formatter("yy/M/d HH:mm").date(from: value) {
+        if let compactYearDate = formatterPool.date(
+            from: value,
+            format: "yy/M/d HH:mm"
+        ) {
             return compactYearDate
         }
 
@@ -233,7 +241,64 @@ nonisolated enum PersistedTimestampCodec {
     }
 }
 
-enum NovelLength: String, CaseIterable, Codable, Identifiable {
+nonisolated private final class TimestampFormatterPool: @unchecked Sendable {
+    private let lock = NSLock()
+    private var dateFormatters: [String: DateFormatter] = [:]
+    private let fractionalISO8601Formatter: ISO8601DateFormatter
+    private let wholeSecondISO8601Formatter: ISO8601DateFormatter
+
+    init() {
+        let fractionalFormatter = ISO8601DateFormatter()
+        fractionalFormatter.formatOptions = [
+            .withInternetDateTime,
+            .withFractionalSeconds
+        ]
+        fractionalISO8601Formatter = fractionalFormatter
+
+        let wholeSecondFormatter = ISO8601DateFormatter()
+        wholeSecondFormatter.formatOptions = [.withInternetDateTime]
+        wholeSecondISO8601Formatter = wholeSecondFormatter
+    }
+
+    func iso8601Date(
+        from value: String,
+        withFractionalSeconds: Bool
+    ) -> Date? {
+        lock.lock()
+        defer { lock.unlock() }
+        let formatter = withFractionalSeconds
+            ? fractionalISO8601Formatter
+            : wholeSecondISO8601Formatter
+        return formatter.date(from: value)
+    }
+
+    func string(from date: Date, format: String) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return formatter(for: format).string(from: date)
+    }
+
+    func date(from value: String, format: String) -> Date? {
+        lock.lock()
+        defer { lock.unlock() }
+        return formatter(for: format).date(from: value)
+    }
+
+    private func formatter(for format: String) -> DateFormatter {
+        if let formatter = dateFormatters[format] {
+            return formatter
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_Hans_CN")
+        formatter.isLenient = false
+        formatter.dateFormat = format
+        dateFormatters[format] = formatter
+        return formatter
+    }
+}
+
+nonisolated enum NovelLength: String, CaseIterable, Codable, Identifiable {
     case short
     case medium
     case long
@@ -487,6 +552,7 @@ nonisolated struct ChapterDraftVersion: Identifiable, Codable, Hashable {
         case content
         case reason
         case savedAt
+        case wordCount
     }
 
     var savedAt: String {
@@ -533,6 +599,7 @@ nonisolated struct ChapterDraftVersion: Identifiable, Codable, Hashable {
         try container.encode(content, forKey: .content)
         try container.encode(reason, forKey: .reason)
         try PersistedTimestampCodec.encode(savedAtTimestamp, to: &container, forKey: .savedAt)
+        try container.encode(wordCount, forKey: .wordCount)
     }
 
     static func wordCount(in text: String) -> Int {
@@ -1414,7 +1481,7 @@ nonisolated struct PlotThread: Codable, Identifiable, Hashable {
 }
 
 /// 叙事线类型
-enum ThreadType: String, Codable, CaseIterable {
+nonisolated enum ThreadType: String, Codable, CaseIterable {
     case quest = "quest"          // 主线剧情
     case fire = "fire"            // 感情线
     case constellation = "constellation"  // 世界观线
@@ -1676,7 +1743,7 @@ struct NovelProject: Identifiable, Codable, @unchecked Sendable {
     /// 后台长篇合同与章节提交运行时，随项目文件持久化。
     var persistedLongformRuntimeState: LongformStoryRuntimeState?
 
-    enum CodingKeys: String, CodingKey {
+    enum CodingKeys: String, CodingKey, CaseIterable {
         case id
         case schemaVersion
         case title
@@ -2395,7 +2462,7 @@ extension NovelProject {
     }
 }
 
-struct ReferenceDocument: Identifiable, Codable, Hashable {
+nonisolated struct ReferenceDocument: Identifiable, Codable, Hashable {
     let id: String
     let title: String
     let content: String
@@ -2467,7 +2534,7 @@ struct ReferenceDocument: Identifiable, Codable, Hashable {
     }
 }
 
-enum ReferenceMaterialCategory: String, CaseIterable, Codable, Identifiable {
+nonisolated enum ReferenceMaterialCategory: String, CaseIterable, Codable, Identifiable {
     case character
     case location
     case organization
@@ -2567,10 +2634,14 @@ enum ReferenceMaterialCategory: String, CaseIterable, Codable, Identifiable {
 }
 
 struct StoryPillar: Identifiable {
+    enum ID: String, Hashable {
+        case characterArc
+        case chapterTree
+    }
+
+    let id: ID
     let title: String
     let detail: String
-
-    var id: String { title }
 }
 
 struct InspirationSignal: Identifiable {
@@ -2597,7 +2668,7 @@ enum ChapterTreeSectionMergeDecision {
 }
 
 private extension String {
-    func contains(anyOf keywords: [String]) -> Bool {
+    nonisolated func contains(anyOf keywords: [String]) -> Bool {
         keywords.contains(where: { contains($0.lowercased()) })
     }
 }

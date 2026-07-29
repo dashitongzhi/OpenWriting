@@ -27,6 +27,7 @@ nonisolated enum ProjectStorageIssueKind: String, Codable, Hashable {
     case catalogFileMismatch
     case legacyProjectFile
     case cloudSelectionConflict
+    case pendingTransactionRecoveryFailure
 }
 
 nonisolated enum StorageRecoveryAction: String, Codable, Hashable, CaseIterable, Identifiable {

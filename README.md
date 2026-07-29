@@ -15,9 +15,9 @@
 
 <p>
   <a href="https://www.apple.com/macos/"><img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-111827?style=for-the-badge&logo=apple&logoColor=white&labelColor=000000"></a>
-  <a href="https://swift.org/"><img alt="Swift" src="https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white&labelColor=1f2937"></a>
+  <a href="https://swift.org/"><img alt="Swift 6" src="https://img.shields.io/badge/Swift-6.0-F05138?style=for-the-badge&logo=swift&logoColor=white&labelColor=1f2937"></a>
   <a href="https://developer.apple.com/xcode/swiftui/"><img alt="SwiftUI" src="https://img.shields.io/badge/SwiftUI-Native%20Experience-0A84FF?style=for-the-badge&logo=swift&logoColor=white&labelColor=1f2937"></a>
-  <img alt="License GPL v3" src="https://img.shields.io/badge/License-GPL%20v3-10B981?style=for-the-badge&labelColor=1f2937">
+  <a href="LICENSE"><img alt="License GPL v3" src="https://img.shields.io/badge/License-GPL%20v3-10B981?style=for-the-badge&labelColor=1f2937"></a>
 </p>
 
 <p>
@@ -268,9 +268,15 @@ Common scripts:
 | `./scripts/build-debug.sh` | Debug build |
 | `./scripts/run-debug.sh` | Run the Debug app |
 | `./scripts/git-preflight.sh` | Local Git ref/default-branch preflight |
+| `./scripts/check-index-coverage.sh` | Verify `INDEX.md` source coverage |
+| `./scripts/verify-xctest-membership.sh` | Verify XCTest target membership |
+| `./scripts/run-hosted-xctest-guard.sh` | Verify hosted XCTest launch behavior |
+| `./scripts/run-tests.sh` | Build and run the complete XCTest suite once |
 | `./scripts/run-smoke-checks.sh` | Smoke checks |
 | `./scripts/run-longform-quality-checks.sh` | Long-form quality checks |
 | `./scripts/run-longform-evals.sh` | Long-form pipeline evaluations |
+| `./scripts/run-memory-continuity-soak.sh` | Long-form memory continuity soak |
+| `./scripts/run-codex-pr-review-checks.sh` | Local Codex review workflow checks |
 | `./scripts/run-all-checks.sh` | Aggregated checks |
 
 ---
@@ -303,6 +309,7 @@ OpenWriting/
 │  ├─ ProjectExportService.swift
 │  └─ AccountSync.swift
 ├─ LongformEvals/
+├─ promo-video/
 ├─ Tests/
 ├─ scripts/
 ├─ INDEX.md
@@ -346,7 +353,7 @@ Before contributing, read:
 
 ## License
 
-OpenWriting is released under GPL v3.
+OpenWriting is released under the [GNU General Public License v3.0 only](LICENSE).
 
 ---
 

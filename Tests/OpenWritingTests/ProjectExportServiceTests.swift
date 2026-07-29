@@ -14,6 +14,7 @@ final class ProjectExportServiceTests: XCTestCase {
         try? FileManager.default.removeItem(at: testDirectory)
     }
 
+    @MainActor
     func testExportValidateAndImportProject() throws {
         let chapter = ChapterDraft(
             volumeNumber: 1,
@@ -56,6 +57,7 @@ final class ProjectExportServiceTests: XCTestCase {
         XCTAssertEqual(imported.chapterDrafts.first?.content, chapter.content)
     }
 
+    @MainActor
     func testValidateExportFailsWhenListedFileIsMissing() throws {
         let project = NovelProject(
             id: "missing-file-test",
@@ -88,6 +90,7 @@ final class ProjectExportServiceTests: XCTestCase {
         }
     }
 
+    @MainActor
     func testEPUBMimetypeIsFirstStoredEntry() throws {
         let chapter = ChapterDraft(
             volumeNumber: 1,

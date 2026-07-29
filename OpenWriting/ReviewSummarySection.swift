@@ -3,6 +3,8 @@ import SwiftUI
 // MARK: - Review Summary Section
 
 struct ReviewSummarySection: View {
+    @Environment(\.appAccentInkColor) private var accentInkColor
+    @Environment(\.appAccentStrokeColor) private var accentStrokeColor
     let grade: ReviewGrade
     let overallSummary: String
     let palette: DashboardPalette
@@ -16,11 +18,19 @@ struct ReviewSummarySection: View {
         }
     }
 
+    private var gradeForegroundColor: Color {
+        grade == .good ? accentInkColor : gradeColor
+    }
+
+    private var gradeBorderColor: Color {
+        grade == .good ? accentStrokeColor : gradeColor.opacity(0.30)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
                 Image(systemName: "text.quote")
-                    .foregroundStyle(palette.coolAccent)
+                    .foregroundStyle(.appAccentInk)
 
                 Text("📋 审查总结")
                     .font(.headline.weight(.bold))
@@ -30,13 +40,13 @@ struct ReviewSummarySection: View {
 
                 Text(grade.rawValue)
                     .font(.subheadline.weight(.bold))
-                    .foregroundStyle(gradeColor)
+                    .foregroundStyle(gradeForegroundColor)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 5)
                     .background(Capsule().fill(gradeColor.opacity(palette.isDark ? 0.18 : 0.12)))
                     .overlay(
                         Capsule()
-                            .strokeBorder(gradeColor.opacity(0.30), lineWidth: 1)
+                            .strokeBorder(gradeBorderColor, lineWidth: 1)
                     )
             }
 

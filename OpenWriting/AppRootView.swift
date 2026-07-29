@@ -250,6 +250,7 @@ private final class AccountPortalState {
 private struct AccountPortalSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appAccentInkColor) private var accentInkColor
     @Bindable var appState: AppState
     @Bindable var portalState: AccountPortalState
     @State private var isDataCleanupConfirmationPresented = false
@@ -468,7 +469,12 @@ private struct AccountPortalSheet: View {
 
             Label(appState.cloudSyncStatusMessage, systemImage: appState.cloudSyncSymbolName)
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(AccountSyncPill.tint(for: appState.cloudSyncSymbolName))
+                .foregroundStyle(
+                    AccountSyncPill.tint(
+                        for: appState.cloudSyncSymbolName,
+                        accentInkColor: accentInkColor
+                    )
+                )
 
             if !portalState.iCloudCapabilityAvailability.isAvailable {
                 Label(portalState.iCloudCapabilityAvailability.message, systemImage: "info.circle")
@@ -629,6 +635,7 @@ private struct NativeAccountCard<Content: View>: View {
 
 private struct AccountAvatarView: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appAccentForegroundColor) private var accentForegroundColor
     let displayName: String
     let secondaryLabel: String
     let isSignedIn: Bool
@@ -645,7 +652,7 @@ private struct AccountAvatarView: View {
             if isSignedIn {
                 Text(monogram)
                     .font(.system(size: size * 0.34, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(accentForegroundColor)
             } else {
                 Image(systemName: "person.crop.circle.fill")
                     .font(.system(size: size * 0.52, weight: .regular))
@@ -660,8 +667,8 @@ private struct AccountAvatarView: View {
         if isSignedIn {
             return LinearGradient(
                 colors: [
-                    Color(nsColor: .controlAccentColor).opacity(0.95),
-                    Color(nsColor: .selectedControlColor).opacity(0.72)
+                    Color.accentColor,
+                    Color.accentColor
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -726,32 +733,43 @@ private struct AccountAvatarView: View {
 }
 
 private struct AccountSyncPill: View {
+    @Environment(\.appAccentInkColor) private var accentInkColor
     let title: String
     let symbolName: String
 
     var body: some View {
         Label(title, systemImage: symbolName)
             .font(.caption.weight(.semibold))
-            .foregroundStyle(Self.tint(for: symbolName))
+            .foregroundStyle(tint)
             .lineLimit(1)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(
                 Capsule(style: .continuous)
-                    .fill(Self.tint(for: symbolName).opacity(0.12))
+                    .fill(tint.opacity(0.12))
             )
     }
 
-    static func tint(for symbolName: String) -> Color {
+    private var tint: Color {
+        Self.tint(
+            for: symbolName,
+            accentInkColor: accentInkColor
+        )
+    }
+
+    static func tint(
+        for symbolName: String,
+        accentInkColor: Color
+    ) -> Color {
         if symbolName.contains("slash") {
             return .secondary
         }
 
-        if symbolName.contains("triangle") || symbolName.contains("arrow") {
+        if symbolName.contains("exclamationmark.triangle") {
             return .orange
         }
 
-        return Color(nsColor: .controlAccentColor)
+        return accentInkColor
     }
 }
 

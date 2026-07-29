@@ -3,6 +3,7 @@ import SwiftUI
 // MARK: - Non-Blocking Issue Row
 
 struct NonBlockingIssueRow: View {
+    @Environment(\.appAccentInkColor) private var accentInkColor
     let issue: ReviewIssue
     let palette: DashboardPalette
 
@@ -24,12 +25,16 @@ struct NonBlockingIssueRow: View {
         }
     }
 
+    private var severityForegroundColor: Color {
+        issue.severity == .medium ? accentInkColor : severityColor
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: severityIcon)
                     .font(.caption)
-                    .foregroundStyle(severityColor)
+                    .foregroundStyle(severityForegroundColor)
 
                 Text(issue.dimension.displayName)
                     .font(.caption.weight(.semibold))
@@ -39,7 +44,7 @@ struct NonBlockingIssueRow: View {
 
                 Text(issue.severity.displayName)
                     .font(.caption2.weight(.bold))
-                    .foregroundStyle(severityColor)
+                    .foregroundStyle(severityForegroundColor)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(Capsule().fill(severityColor.opacity(palette.isDark ? 0.18 : 0.12)))
